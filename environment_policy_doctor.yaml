@@ -1,0 +1,37 @@
+# Conda environment for standalone policy_doctor (editable installs for code; deps here).
+#
+# Create and install editables:
+#   conda env create -f environment_policy_doctor.yaml
+#   conda activate policy_doctor
+#   ./scripts/install_policy_doctor_env.sh
+#
+name: policy_doctor
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pyyaml
+  - h5py
+  - matplotlib
+  - pandas
+  - scikit-learn
+  - dill
+  - click
+  - tqdm
+  - einops
+  - omegaconf
+  - hydra-core
+  - numba
+  - pyvis
+  - plotly
+  - streamlit
+  - zarr
+  - pillow
+  - cython
+  - pytest
+  - opencv
+  - imageio
+  - imagecodecs

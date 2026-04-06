@@ -1,0 +1,17 @@
+# Evaluation: run eval_save_episodes.py for baseline policy
+task: lift_mh
+state: low_dim
+method: diffusion_policy_cnn
+policy: diffusion_unet_lowdim
+
+train_date: jan18
+eval_date: jan18  # usually same as train_date for baseline
+train_ckpt: latest
+num_episodes: 100
+test_start_seed: 100000
+overwrite: false
+device: cuda:0
+
+# Output: data/outputs/eval_save_episodes/${eval_date}/${train_name}/${train_ckpt}
+eval_output_dir: data/outputs/eval_save_episodes
+train_output_dir: data/outputs/train

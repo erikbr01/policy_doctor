@@ -1,0 +1,102 @@
+# @package _global_
+# VLM slice annotation (optional pipeline step + Streamlit). Override via CLI or prompts_file.
+#
+# RTX 4090 (24GB) — prefer bfloat16 over float16 when possible (often better numerics; Ampere+).
+# With ~4 frames/slice, batch 1:
+#   - Qwen/Qwen3-VL-8B-Instruct       — default below if you have VRAM headroom (better than 4B for accuracy)
+#   - Qwen/Qwen3-VL-4B-Instruct       — lighter fallback
+#   - Qwen/Qwen2-VL-2B-Instruct       — plenty of headroom
+#   - Qwen/Qwen2.5-VL-3B-Instruct     — good quality / VRAM tradeoff
+#   - Qwen/Qwen2-VL-7B-Instruct       — reduce max_frames_per_slice if OOM
+# Too large for 24GB at full precision: 32B / 72B VL variants (use AWQ/GPTQ or a bigger GPU).
+#
+# Qwen VL example (Qwen3-VL):
+#   annotate_slices_vlm vlm_annotation.backend=qwen3_vl
+# Legacy registry name (same code path; class chosen from model_id):
+#   annotate_slices_vlm vlm_annotation.backend=qwen2_vl
+#
+# Cosmos-Reason2 (NVIDIA; Qwen3-VL–family weights, gated on Hugging Face):
+#   hf auth + accept NVIDIA license on the model card before from_pretrained.
+#   annotate_slices_vlm vlm_annotation.backend=cosmos_reason2
+#   'vlm_annotation.backend_params.model_id=nvidia/Cosmos-Reason2-8B'
+#   Defaults: Cosmos-Reason2-2B, sdpa, bfloat16, max_new_tokens=2048 (raise if CoT truncates).
+#
+# Molmo2 (Ai2; transformers AutoModelForImageTextToText, trust_remote_code):
+#   Requires numpy>=1.24 (HF image processor uses np.stack(..., dtype=...); numpy 1.23 errors).
+#   Slice captioning uses images-before-text + mild sampling by default to reduce greedy mode-collapse
+#   (same canned story every slice). Override: backend_params.do_sample=false for greedy.
+#   Avoid repetition_penalty with Molmo2 unless you verify your transformers build — it has caused CUDA
+#   asserts during generate() on some setups.
+#   annotate_slices_vlm vlm_annotation.backend=molmo2
+#   # or registry alias:
+#   annotate_slices_vlm vlm_annotation.backend=molmo
+#   'vlm_annotation.backend_params.model_id=allenai/Molmo2-8B'
+#
+# Optional VRAM tuning:
+#   'vlm_annotation.backend_params.attn_implementation=sdpa'
+#
+# Custom prompts only:
+#   vlm_annotation.prompts_file=policy_doctor/policy_doctor/configs/vlm/example_prompts.yaml
+#
+# Task-specific defaults (no prompts_file): see configs/vlm/tasks/registry.yaml — map substrings of
+# task_config (YAML stem) to tasks/<name>.yaml (slice + behavior prompts, optional default_task_hint).
+#
+# Qwen3-VL / Cosmos-Reason2 frame modality (explicit — no silent fallback):
+#   backend_params.qwen_frame_input: images | video
+#   Default ``images`` = separate image tokens (bag of frames). ``video`` = frame list + timestamps via
+#   ``qwen-vl-utils`` (``process_vision_info``); missing package or processor errors raise (no fallback).
+# Legacy: ``use_qwen_video_input: true|false`` still maps when ``qwen_frame_input`` is omitted.
+# Detail / resize (images path uses HF ``images_kwargs``; video path passes keys through to qwen_vl_utils):
+#   backend_params.high_detail_pixels: true — sets generous image min/max pixel caps (VRAM-heavy; lower if OOM).
+#   Override explicitly: image_max_pixels, image_min_pixels, video_total_pixels, video_min_pixels, video_max_pixels.
+#
+# Quality levers (slice annotation):
+#   - max_frames_per_slice: null (or ≤0) = every timestep in the window (no subsampling).
+#   - reasoning_effort: high = chain-of-thought system block + parse FINAL: line as the stored label;
+#     raise backend_params.max_new_tokens so the model does not truncate mid-reasoning.
+#   - Stronger checkpoints: Qwen3-VL-8B+; optional HF "Thinking" variants (e.g. Qwen3-VL-*-Thinking).
+#   - Wider windows come from clustering (window_width), not the VLM step.
+#   - save_debug_plots: true to audit frames vs caption; fix prompts before scaling runs.
+
+vlm_annotation:
+  backend: mock
+  # Used when backend is qwen2_vl, qwen3_vl, molmo, or molmo2 (ignored by mock).
+  backend_params:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    device: cuda:0
+    torch_dtype: bfloat16
+    max_new_tokens: 1536
+    qwen_frame_input: images
+    high_detail_pixels: true
+    # attn_implementation: sdpa
+  prompts_file: null
+  prompts:
+    slice_system: null
+    slice_user_template: null
+    behavior_system: null
+    behavior_user_template: null
+  task_hint: null
+  max_slices: null
+  # null or ≤0: use every frame in [window_start, window_end) (recommended for short windows).
+  max_frames_per_slice: null
+  # none | medium | high — high enables CoT instructions and FINAL: extraction (see prompts.py).
+  reasoning_effort: high
+  random_seed: 42
+  clustering_dir: null
+  clustering_name: null
+  # When true, writes annotate_slices_vlm/debug_plots/seed_{N}/slice_*.png (exact frames + prompts + output).
+  #   vlm_annotation.save_debug_plots=true
+  save_debug_plots: false
+
+# Behavior-level summaries from slice captions (run after annotate_slices_vlm).
+# backend / backend_params null → inherit from vlm_annotation.
+vlm_behavior_summarization:
+  backend: null
+  backend_params: null
+  prompts_file: null
+  prompts:
+    behavior_system: null
+    behavior_user_template: null
+  task_hint: null
+  max_slice_labels_per_cluster: null
+  max_clusters: null

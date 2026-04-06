@@ -1,0 +1,7 @@
+# Task-specific VLM prompts: map task_config YAML stems (substring match) → file in this directory.
+# Longest matching substring wins (e.g. transport_mh beats transport if both existed).
+#
+# Add a row here and a matching *.yaml when you introduce prompts for a new benchmark/task family.
+
+by_substring:
+  transport_mh: transport_mh.yaml

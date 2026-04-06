@@ -1,0 +1,19 @@
+# Baseline training: transport_mh low_dim (no curation)
+task: transport_mh
+state: low_dim
+method: diffusion_policy_cnn
+config_dir: configs/low_dim/transport_mh/diffusion_policy_cnn
+config_name: config.yaml
+policy: diffusion_unet_lowdim
+
+seeds: [0, 1, 2]
+num_epochs: 1001
+checkpoint_topk: 10
+checkpoint_every: 50
+
+train_ratio: 0.64
+val_ratio: 0.04
+uniform_quality: true
+
+output_dir: data/outputs/train
+project: influence-clustering

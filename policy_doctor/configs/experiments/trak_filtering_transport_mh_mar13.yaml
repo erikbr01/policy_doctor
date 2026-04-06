@@ -1,0 +1,57 @@
+# TRAK-based curation-filtering experiment for transport_mh_jan28
+# Cluster TRAK influence explanations (sliding windows over influence matrix),
+# UMAP to 100d, K-Means 20 clusters, no normalization, behavior graph,
+# curation-filtering with advantage threshold -0.3, 99th percentile selection.
+#
+# Run:
+#   python -m policy_doctor.scripts.run_pipeline full robomimic low_dim transport_mh \
+#     --steps run_clustering,run_curation_config,train_curated,eval_curated,compare \
+#     task_config=transport_mh_jan28 \
+#     experiment_name=trak_filtering_mar13 \
+#     seeds=[0,1,2] \
+#     clustering_influence_source=trak \
+#     clustering_level=rollout \
+#     clustering_demo_split=train \
+#     clustering_window_width=5 \
+#     clustering_stride=2 \
+#     clustering_umap_n_components=100 \
+#     clustering_n_clusters=20 \
+#     clustering_normalize=none \
+#     clustering_aggregation=sum \
+#     curation_mode=filter \
+#     advantage_threshold=-0.3 \
+#     selection_percentile=99 \
+#     device=cuda:1
+
+task_config: transport_mh_jan28
+experiment_name: trak_filtering_mar13
+seeds: [0, 1, 2]
+
+# Clustering: TRAK influence matrix sliding windows
+clustering_influence_source: trak
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 20
+clustering_normalize: none
+clustering_aggregation: sum
+
+# Behavior graph
+advantage_gamma: 0.99
+advantage_reward_success: 1.0
+advantage_reward_failure: -1.0
+advantage_reward_end: 0.0
+
+# Curation
+curation_mode: filter
+advantage_threshold: -0.3
+selection_percentile: 99
+window_width: 5
+aggregation_method: mean
+curation_output_name: trak_filtering_mar13
+
+# Training / eval
+device: "cuda:1"
+wandb_project: robomimic_transport_mh

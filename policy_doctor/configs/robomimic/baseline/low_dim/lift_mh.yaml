@@ -1,0 +1,23 @@
+# Baseline training: lift_mh low_dim (no curation)
+task: lift_mh
+state: low_dim
+method: diffusion_policy_cnn
+# Path relative to repo root: diffusion policy config dir
+config_dir: configs/low_dim/lift_mh/diffusion_policy_cnn
+config_name: config.yaml
+# Policy name used in output paths (diffusion_unet_lowdim for low_dim CNN)
+policy: diffusion_unet_lowdim
+
+seeds: [0, 1, 2]
+num_epochs: 1001
+checkpoint_topk: 3
+checkpoint_every: 50
+
+# Dataset split (filtering: 0.64 train, selection: 0.16 train)
+train_ratio: 0.64
+val_ratio: 0.04
+uniform_quality: true  # MH tasks
+
+# Logging
+output_dir: data/outputs/train
+project: influence-clustering

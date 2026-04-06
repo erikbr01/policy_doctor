@@ -1,0 +1,13 @@
+# Same paths as influence_visualizer/configs/square_mh_feb15.yaml (baseline / light curation run)
+task: robomimic_square
+name: "Square MH (Feb 15 Light Curation)"
+
+eval_dir: "data/outputs/eval_save_episodes/feb15/feb15_train_diffusion_unet_lowdim_square_mh_0/latest"
+train_dir: "data/outputs/train/feb15/feb15_train_diffusion_unet_lowdim_square_mh_0"
+train_ckpt: "latest"
+exp_date: "default"
+
+image_dataset_path: "data/robomimic/datasets/square/mh/image_abs.hdf5"
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: true

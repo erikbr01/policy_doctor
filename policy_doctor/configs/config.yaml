@@ -1,0 +1,45 @@
+# Policy Doctor pipeline - primary Hydra config.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline steps=[run_clustering,run_curation_config,train_curated]
+#   python -m policy_doctor.scripts.run_pipeline +experiment=trak_filtering_mar13_p96 steps=[train_curated,eval_curated]
+#   python -m policy_doctor.scripts.run_pipeline +experiment=trak_filtering_mar13_p96 train_date=mar16 run_name=myrun
+
+defaults:
+  - _self_                                                 # base defaults (lowest priority — experiment overrides these)
+  - pipeline/config                                        # base pipeline / clustering / curation params
+  - vlm/defaults                                           # VLM slice annotation (optional step)
+  - robomimic/baseline/low_dim@baseline: transport_mh      # → cfg.baseline.*
+  - robomimic/curation_filtering/low_dim@curation_filtering: transport_mh  # → cfg.curation_filtering.*
+  - robomimic/curation_selection/low_dim@curation_selection: transport_mh  # → cfg.curation_selection.*
+  - robomimic/attribution/low_dim@attribution: transport_mh                # → cfg.attribution.*
+  - robomimic/evaluation/low_dim@evaluation: transport_mh                  # → cfg.evaluation.*
+  - experiment: null                                       # experiment config (highest priority — use experiment=name)
+
+# Pipeline identity — override per experiment or on CLI
+env: robomimic
+state: low_dim
+task: transport_mh
+
+# Steps to run (empty = must be specified on CLI or in experiment config)
+steps: []
+
+dry_run: false
+skip_if_done: true   # skip steps whose "done" sentinel already exists (resume support)
+
+# Run folder — results and done-sentinels are written here for resumability.
+# run_name is auto-generated as a timestamp if not set.
+# run_dir defaults to data/pipeline_runs/<run_name> relative to repo root.
+run_name: null
+run_dir: null
+repo_root: null   # auto-detected from package location if null
+
+# Common training overrides (null = use default from baseline config)
+train_date: null
+eval_date: null
+device: null
+seeds: null
+run_tag: null
+curation_config_path: null
+num_epochs: null
+project: cupid

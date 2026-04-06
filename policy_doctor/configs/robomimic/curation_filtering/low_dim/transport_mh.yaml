@@ -1,0 +1,15 @@
+baseline_ref:
+  train_date: jan28
+  task: transport_mh
+  state: low_dim
+  method: diffusion_policy_cnn
+
+curation_config_path: null
+num_epochs: 2301
+checkpoint_topk: 5
+filter_ratio: 0.50
+select_ratio: 0.00
+curation_method: influence_sum_official
+
+output_dir: data/outputs/train
+project: cupid

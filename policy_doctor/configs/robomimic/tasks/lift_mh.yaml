@@ -1,0 +1,8 @@
+# Task-level defaults for lift_mh (RoboMimic)
+task: lift_mh
+dataset_path: data/robomimic/datasets/lift/mh/low_dim_abs.hdf5
+task_name: lift  # env task name
+dataset_type: mh
+# For low_dim diffusion policy
+obs_dim: 19
+action_dim: 10

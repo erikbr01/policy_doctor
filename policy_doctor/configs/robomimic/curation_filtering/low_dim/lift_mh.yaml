@@ -1,0 +1,19 @@
+# Curated training: filtering (exclude bad demos from train set)
+# Extends baseline; add curation_config_path and overrides.
+baseline_ref:
+  train_date: jan18
+  task: lift_mh
+  state: low_dim
+  method: diffusion_policy_cnn
+
+# Curation YAML from run_pipeline or notebook (sample-level filter)
+curation_config_path: null  # e.g. influence_visualizer/configs/lift_mh/curation/remove_bad.yaml
+
+# Retrain overrides (curation_config_dir set from curation_config_path parent)
+num_epochs: 2301  # optional override for filtering
+filter_ratio: 0.50
+select_ratio: 0.00
+curation_method: influence_sum_official  # or from config metadata
+
+output_dir: data/outputs/train
+project: cupid

@@ -1,0 +1,15 @@
+# Optional prompts file for vlm_annotation.prompts_file=...
+# Merge keys under `prompts` (or top-level slice_* for convenience).
+
+prompts:
+  slice_system: null
+  slice_user_template: |
+    Robot rollout segment. Task: {task_hint}
+    Rollout {rollout_idx}, steps [{window_start}, {window_end}), behavior cluster {cluster_id}.
+    {num_frames} frames in order. Reply with one short phrase describing what the robot is doing.
+
+  behavior_system: null
+  behavior_user_template: |
+    Task: {task_hint}. Cluster {cluster_id}: {num_slice_labels} segment descriptions follow.
+    {slice_labels_bulleted}
+    Summarize common behavior and note disagreements in 2–4 sentences.

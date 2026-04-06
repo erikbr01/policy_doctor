@@ -1,0 +1,37 @@
+# Conda environment aligned with MimicGen official install (CoRL 2023 / v1.0.x).
+# https://mimicgen.github.io/docs/introduction/installation.html
+#
+# This is a separate stack from ``environment_policy_doctor.yaml`` (Python 3.10, MuJoCo 3.x, …).
+# Use it for MimicGen ``prepare_src_dataset`` / ``generate_dataset`` and HF ``source/*.hdf5``.
+#
+# Create conda env + install pinned sim + MimicGen (from policy_doctor repo root):
+#   ./scripts/install_mimicgen_env.sh
+#
+# If you only changed this file and the env already exists:
+#   conda env update -f environment_mimicgen.yaml -n mimicgen
+#
+# Optional: GPU PyTorch — edit ``install_mimicgen_env.sh`` and set TORCH_INDEX to a CUDA index.
+#
+name: mimicgen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - pip
+  - numpy>=1.20,<2
+  - scipy
+  - h5py
+  - pyyaml
+  - matplotlib
+  - pandas
+  - cython
+  - cmake
+  - ffmpeg
+  - pillow
+  - tqdm
+  - einops
+  - zarr
+  - numba
+  - packaging
+  - setuptools
+  - wheel

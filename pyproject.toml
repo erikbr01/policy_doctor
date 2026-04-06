@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "policy-doctor"
+version = "0.1.0"
+description = "Influence-based policy analysis and curation"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["policy_doctor*"]
+
+[tool.setuptools.package-data]
+policy_doctor = ["configs/**/*.yaml", "configs/**/*.yml"]

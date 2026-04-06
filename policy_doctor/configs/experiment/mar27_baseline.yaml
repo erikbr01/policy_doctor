@@ -1,0 +1,34 @@
+# @package _global_
+# Baseline training for mar27 (transport_mh, low_dim).
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     experiment=mar27_baseline \
+#     steps=[train_baseline,eval_policies,train_attribution]
+
+experiment_name: mar27_baseline
+seeds: [0, 1, 2]
+
+# Match the selection-baseline dataset split used across all mar27 experiments.
+baseline:
+  train_date: mar27
+  train_ratio: 0.16
+  # Match scripts/train/train_policies.sh: transport_mh_low_dim_select (train_select=1).
+  num_epochs: 2501
+
+# Post-training evaluation.
+evaluation:
+  train_date: mar27
+  eval_date: mar27
+  num_episodes: 200
+
+# TRAK attribution.
+attribution:
+  train_date: mar27
+  eval_date: mar27
+  # InfEmbed only (2× default TRAK batch_size=64 from robomimic/attribution transport_mh).
+  infembed_batch_size: 128
+
+device: "cuda:0"
+project: robomimic_selection
+wandb_tags: [transport_mh, baseline, mar27]

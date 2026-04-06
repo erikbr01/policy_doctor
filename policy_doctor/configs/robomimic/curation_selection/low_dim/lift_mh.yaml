@@ -1,0 +1,15 @@
+# Curated training: selection (add selected holdout slices to train)
+baseline_ref:
+  train_date: jan18
+  task: lift_mh
+  state: low_dim
+  method: diffusion_policy_cnn
+
+curation_config_path: null  # e.g. influence_visualizer/configs/lift_mh/curation/holdout_selection.yaml
+num_epochs: 2501  # selection typically needs more epochs
+filter_ratio: 0.00
+select_ratio: 0.10  # or 0.25, 0.50, 0.75, 0.90
+curation_method: influence_sum_official
+
+output_dir: data/outputs/train
+project: cupid

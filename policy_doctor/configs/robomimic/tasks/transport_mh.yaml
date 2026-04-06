@@ -1,0 +1,7 @@
+# Task-level defaults for transport_mh (RoboMimic)
+task: transport_mh
+dataset_path: data/robomimic/datasets/transport/mh/low_dim_abs.hdf5
+task_name: transport
+dataset_type: mh
+obs_dim: 59
+action_dim: 20

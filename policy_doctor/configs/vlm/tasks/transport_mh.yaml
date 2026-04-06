@@ -1,0 +1,82 @@
+# VLM prompts for Robomimic Transport MH (and task configs whose stem contains "transport_mh").
+# Loaded when vlm_annotation.prompts_file / vlm_behavior_summarization.prompts_file are unset.
+
+default_task_hint: >
+  Robomimic Transport MH: dual-arm tabletop scene with boxes, a lid, a cube, and a hammer.
+  Nominal script (rollouts may deviate—describe what you actually see): LEFT arm tends to lift the lid
+  off the box and place it on the table, grasp the hammer, and hand it over to the other arm. RIGHT arm
+  tends to grasp the cube in the right box, place it into the left box, then receive the hammer from
+  the handover and place the hammer into the right box. Name which arm acts and what moves. For each
+  salient object (lid, cube, hammer), say whether it is inside a box, held by a gripper (LEFT or RIGHT),
+  or elsewhere (e.g. table, mid-air, between hands).
+
+prompts:
+  slice_system: |
+    You analyze frames from a simulated dual-arm task: Robomimic Transport MH (two boxes, lid, cube, hammer).
+
+    Nominal role split—use only as loose guidance; the rollout may skip, reorder, or fail steps. Always
+    ground your phrase in visible motion and contact, not the script alone.
+    - Left arm (rough intent): lift the lid off the box and place it on the table; grasp the hammer;
+      hand the hammer over toward the right arm.
+    - Right arm (rough intent): grasp the cube in the right box; place the cube into the left box;
+      receive the hammer from the handover; place the hammer into the right box.
+
+    Spatial layout (check every time): The lid starts on the LEFT wooden box. The cube starts in the
+    RIGHT box. Do not write "lid from the right box" or mirror left/right unless the frames clearly show
+    that configuration—many models confuse this and parrot a wrong script.
+
+    Imaging:
+    - Ignore odd tints or false colors (e.g. green, cyan, magenta on arms/objects): usually simulator
+      or encoding artifacts, not trustworthy surface color or a special "commanded" state.
+    - Rely on shape, pose, contact, and motion; describe geometry and interaction, not hue.
+
+    Spatial language (viewer-centric): Say where things are in the image when it helps disambiguate—
+    left/center/right of the frame, foreground vs background, near which box or table edge. If you
+    refer to fine locations, you may treat the view as a normalized 0–1000 grid (origin top-left) for
+    consistency with spatial-VLM conventions; otherwise plain words are enough.
+
+    Object placement (required when visible): for lid, cube, and hammer, distinguish (1) inside a box
+    (left vs right container if clear), (2) in a gripper / carried by an arm (say LEFT or RIGHT), or
+    (3) elsewhere—on the table, mid-air, between arms during transfer, or not visible.
+
+    Be specific: approach, grasp, lift, place, lid on/off table, cube transfer between boxes, hammer
+    handover, idle/waiting, retries, or clear failures.
+
+    Grounding (critical): Describe ONLY what these frames show. Do NOT repeat the full nominal workflow
+    in every answer. If the clip is an early phase, a pause, or mostly static, say that explicitly (e.g.
+    arms idle, object held still, no handover visible). Do NOT claim handover, cube transfer, or final
+    placements unless they are clearly visible in the frames. Each segment should read differently when
+    the visuals differ.
+
+  slice_user_template: |
+    Task context: {task_hint}
+    Segment: rollout {rollout_idx}, timesteps [{window_start}, {window_end}), behavior cluster {cluster_id}.
+    You see {num_frames} frames in strict time order—they are one short clip, not unrelated stills.
+    On-screen timestamps (if present) mark progression; prefer later frames over earlier when inferring
+    the current state.
+    Compare the first and last frame carefully (object positions, gripper poses, contact). If nothing
+    meaningfully changes, say static or idle and describe the held/resting state—do not narrate future
+    or off-screen steps.
+    First notice whether anything actually moves between first and last frame; if not, say static/idle.
+    Reply with ONE concise phrase (about ~30 words max): name LEFT vs RIGHT arm when possible and what each
+    does with lid, cube, hammer, and boxes. Where each object is, state clearly: in a box, in which
+    gripper, or elsewhere (table / air / between arms). If behavior diverges from the nominal script,
+    say what actually happens. Do not mention cluster id, rollout index, or timestep numbers. Do not
+    infer meaning from artificial coloring.
+
+  behavior_system: |
+    Transport MH cluster summaries: slice captions describe the same dual-arm task (lid, cube between
+    boxes, hammer handoff). Nominal script—left: lid to table, hammer grasp, handover; right: cube from
+    right box to left box, receive hammer, hammer into right box—is only orientation; policies deviate.
+    Prefer visible agreement on arms, objects, contacts, and object state (in-box vs in-gripper vs
+    elsewhere); treat odd color words in captions skeptically.
+
+  behavior_user_template: |
+    Task context: {task_hint}
+    Unsupervised clustering grouped these windows under behavior cluster {cluster_id}.
+    {num_slice_labels} short segment descriptions (one per line):
+    {slice_labels_bulleted}
+    Write 2–4 sentences: common behavior vs disagreements; whether windows align with nominal phases
+    (left: lid/hammer/handoff; right: cube transfer then hammer stow) or show deviations/failures.
+    Note if captions agree on where objects are (in box, in which gripper, or elsewhere). Avoid repeating
+    cluster id or list numbers.

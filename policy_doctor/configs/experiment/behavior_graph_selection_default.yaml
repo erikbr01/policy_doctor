@@ -1,0 +1,66 @@
+# @package _global_
+# Behavior-graph curation-selection for mar10_selection_baseline (transport_mh, low_dim).
+# Uses TRAK-based clustering to build the behavior graph, then selects
+# high-advantage holdout demo slices to augment training.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     experiment=behavior_graph_selection_default \
+#     steps=[run_clustering,run_curation_config,train_curated,eval_curated]
+
+task_config: transport_mh_mar10_selection_baseline
+experiment_name: behavior_graph_selection_default
+seeds: [0, 1, 2]
+
+# Clustering: TRAK-based embeddings, rollout level, train split.
+clustering_influence_source: trak
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 20
+clustering_normalize: none
+clustering_aggregation: sum
+
+# Advantage (behavior graph).
+advantage_gamma: 0.99
+advantage_reward_success: 1.0
+advantage_reward_failure: -1.0
+advantage_reward_end: 0.0
+
+# Curation: selection mode — add high-advantage holdout slices to training.
+curation_mode: selection
+advantage_threshold: 0.1
+selection_percentile: 99.0
+window_width: 5
+aggregation_method: mean
+per_slice_top_k: 100
+use_all_demos_per_slice: true
+ascending: false
+remove_negative_influence: false
+curation_output_name: behavior_graph_selection_default
+
+# Curated training: match the baseline's train_ratio (0.16) so the comparison is fair.
+baseline:
+  train_ratio: 0.16
+
+# Curated training output naming and curation params (also used by eval_curated + compare).
+train_date: behavior_graph_selection_default
+curation_method: influence_sum_official
+filter_ratio: 0.0
+select_ratio: 0.1
+train_ckpt: latest
+
+# Evaluation and attribution: point at the mar10_selection_baseline runs.
+attribution:
+  train_date: mar10_selection_baseline
+  eval_date: mar10_selection_baseline
+
+evaluation:
+  train_date: mar10_selection_baseline
+  eval_date: mar10_selection_baseline
+
+device: "cuda:0"
+project: robomimic_selection
+wandb_tags: [transport_mh, selection, behavior_graph]

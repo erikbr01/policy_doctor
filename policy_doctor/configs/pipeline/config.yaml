@@ -1,0 +1,61 @@
+# @package _global_
+# Default config for run_pipeline — merged at global level via Hydra.
+# Override from CLI: task_config=transport_mh_jan28 clustering_name=... etc.
+
+task_config: transport_mh_jan28
+
+# Policy seeds: run the curation pipeline for each seed (different trained policies).
+# Paths in the task config are for reference_seed; other seeds get derived paths (e.g. .../transport_mh_0 -> .../transport_mh_1).
+policy_seeds: [0, 1, 2]
+reference_seed: 0  # seed that task config eval_dir/train_dir refer to
+# Task/config root: "iv" = influence_visualizer/configs (when in same repo), "pd" = policy_doctor/policy_doctor/configs (standalone)
+config_root: iv
+
+# Clustering: use clustering_dir (explicit path, relative to repo root) or clustering_name (under config_root/.../clustering/).
+# Example explicit path (no dependency on IV package):
+#   clustering_dir: policy_doctor/policy_doctor/configs/transport_mh_jan28/clustering/sliding_window_rollout_k15
+# clustering_dir: null  # set explicitly per-experiment or let run_clustering propagate
+clustering_dir: null
+clustering_name: null  # used when clustering_dir is not set
+
+# Curation output
+curation_output_name: recreated_advantage_selection
+curation_mode: selection  # selection | filter
+demo_split: holdout
+
+# Advantage-based selection (rollout slices): fixed threshold only.
+# Percentiles are used later to select demo slices (selection_percentile).
+advantage_threshold: 0.1  # e.g. 0.1 for "advantage_based_A0.1" — select rollout slices with A >= 0.1
+advantage_gamma: 0.99
+advantage_reward_success: 1.0
+advantage_reward_failure: -1.0
+advantage_reward_end: 0.0
+
+# Slice search (attribution)
+window_width: 5
+aggregation_method: mean
+per_slice_top_k: 100  # max candidates per rollout slice when use_all_demos_per_slice=false
+use_all_demos_per_slice: true  # must be true for n_sigma or percentile selection
+ascending: false  # false = highest influence first
+
+# Selection after slice search: choose ONE of the two modes below.
+# Set exactly one key in experiment configs; do NOT set both.
+#
+# - selection_percentile (default): per-slice empirical percentile threshold.
+#   Keeps the top (100 - percentile)% of demo slices by influence within each rollout slice.
+#   Always selects a fixed fraction regardless of score distribution shape. Preferred
+#   over n_sigma for heavy-tailed TRAK distributions where z-score thresholds are unstable.
+#
+# - selection_n_sigma: per-slice z-score threshold (alternative, matching IV's n_sigma mode).
+#   Keeps demo slices with z = (score - mean) / std >= n_sigma. Adapts to distribution
+#   spread but can select too much or too little on non-Gaussian distributions.
+#
+selection_percentile: 99.0
+# selection_n_sigma: 2.0  # uncomment to use z-score mode instead
+remove_negative_influence: false
+
+# Label and source for saved slices: leave unset to let run_curation_config.py
+# compute the correct defaults based on curation_mode and advantage_threshold.
+# (filter -> "behavior_search_train"; selection -> "behavior_search_holdout")
+# slice_label: null  # auto: "advantage_based_A{threshold}"
+# slice_source: null  # auto: "behavior_search_train" (filter) or "behavior_search_holdout" (selection)

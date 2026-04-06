@@ -1,0 +1,4 @@
+[submodule "third_party/mimicgen"]
+	path = third_party/mimicgen
+	url = git@github.com:erikbr01/mimicgen.git
+

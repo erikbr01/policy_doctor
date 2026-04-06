@@ -1,0 +1,16 @@
+baseline_ref:
+  train_date: jan18
+  task: transport_mh
+  state: low_dim
+  method: diffusion_policy_cnn
+
+# Example: CUPID advantage-based selection config
+curation_config_path: influence_visualizer/configs/transport_mh_jan28/curation/test_advantage_selection.yaml
+num_epochs: 2501
+checkpoint_topk: 10
+filter_ratio: 0.00
+select_ratio: 0.10
+curation_method: influence_sum_official
+
+output_dir: data/outputs/train
+project: cupid

@@ -1,0 +1,7 @@
+# Task-level defaults for square_mh (RoboMimic)
+task: square_mh
+dataset_path: data/robomimic/datasets/square/mh/low_dim_abs.hdf5
+task_name: square
+dataset_type: mh
+obs_dim: 23
+action_dim: 10

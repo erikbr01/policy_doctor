@@ -1,0 +1,13 @@
+# Same paths as influence_visualizer/configs/lift_mh_jan26.yaml (Jan 26 baseline)
+task: robomimic_lift
+name: "Lift MH (Jan 26 Experiment)"
+
+eval_dir: "data/outputs/eval_save_episodes/jan26/jan26_train_diffusion_unet_lowdim_lift_mh_0/latest"
+train_dir: "data/outputs/train/jan26/jan26_train_diffusion_unet_lowdim_lift_mh_0"
+train_ckpt: "latest"
+exp_date: "default"
+
+image_dataset_path: "data/robomimic/datasets/lift/mh/image_abs.hdf5"
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: false

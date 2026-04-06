@@ -1,0 +1,13 @@
+# Task config for Policy Doctor app and pipeline (same paths as influence_visualizer)
+task: robomimic_transport
+name: "Transport MH (Jan 28)"
+
+eval_dir: "data/outputs/eval_save_episodes/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0/latest"
+train_dir: "data/outputs/train/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0"
+train_ckpt: "latest"
+exp_date: "default"
+
+image_dataset_path: "data/robomimic/datasets/transport/mh/image_abs.hdf5"
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: true

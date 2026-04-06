@@ -1,0 +1,15 @@
+task: transport_mh
+state: low_dim
+method: diffusion_policy_cnn
+policy: diffusion_unet_lowdim
+
+train_date: jan18
+eval_date: jan28
+train_ckpt: latest
+num_episodes: 100
+test_start_seed: 100000
+overwrite: false
+device: cuda:0
+
+eval_output_dir: data/outputs/eval_save_episodes
+train_output_dir: data/outputs/train
