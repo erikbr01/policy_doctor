@@ -9,10 +9,15 @@ defaults:
 
 # Override obs_dim for MimicGen D1: object key is 17-dim → total obs 26 (vs 23 in standard robomimic square)
 obs_dim: 26
+# MimicGen square uses delta OSC actions (control_delta=true, 7-DoF), not absolute actions.
+# Do NOT apply the axis_angle→rotation_6d transform; actions stay 7-DoF throughout.
+action_dim: 7
 policy:
   obs_dim: 26
+  action_dim: 7
   model:
     global_cond_dim: 52  # obs_dim * n_obs_steps = 26 * 2
+    input_dim: 7
 
 exp_name: mimicgen_square_lowdim
 logging:
@@ -25,11 +30,11 @@ multi_run:
   run_dir: data/outputs/mimicgen_square_lowdim/train_diffusion_unet_lowdim
   wandb_name_base: mimicgen_square_lowdim_diffusion_unet_lowdim
 task:
-  abs_action: true
-  action_dim: 10
+  abs_action: false
+  action_dim: 7
   dataset:
     _target_: diffusion_policy.dataset.mimicgen_replay_lowdim_dataset.MimicgenReplayLowdimDataset
-    abs_action: true
+    abs_action: false
     dataset_path: data/mimicgen/square_merged.hdf5
     horizon: 16
     max_train_episodes: null
@@ -47,7 +52,7 @@ task:
   dataset_type: ph
   env_runner:
     _target_: diffusion_policy.env_runner.mimicgen_lowdim_runner.MimicgenLowdimRunner
-    abs_action: true
+    abs_action: false
     crf: 22
     dataset_path: data/mimicgen/square_merged.hdf5
     fps: 10
