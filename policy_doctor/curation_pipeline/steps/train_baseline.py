@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.diffusion_overrides import baseline_diffusion_extra_overrides
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_train_name
+from policy_doctor.paths import CUPID_CONDA_ENV_NAME, CUPID_ROOT
 
 
 def _train_baseline_worker(
@@ -39,7 +41,18 @@ def _train_baseline_worker(
 
 
 class TrainBaselineStep(PipelineStep[None]):
-    """Train the baseline policy for each seed using Hydra compose."""
+    """Train the baseline policy for each seed.
+
+    For data sources using the ``cupid`` conda env (robomimic, MimicGen), training
+    runs via ``hydra.initialize_config_dir`` in an isolated child process.
+
+    For data sources that require a different conda env (e.g. ``robocasa`` for
+    RoboCasa image training), training is dispatched via ``conda run`` in a
+    subprocess so that the correct interpreter and packages are used.  Set
+    ``baseline.conda_env: robocasa`` (or the appropriate env name) in the baseline
+    config to activate this path.  The ``data_source.conda_env_train`` field is
+    used as a fallback.
+    """
 
     name = "train_baseline"
 
@@ -78,44 +91,161 @@ class TrainBaselineStep(PipelineStep[None]):
         exp_name = OmegaConf.select(baseline, "exp_name") or f"{script_name}_{policy}"
         device = OmegaConf.select(cfg, "device") or "cuda:0"
 
+        # Determine training dispatch mode.
+        # If the data source requires a conda env other than the cupid default, use subprocess.
+        conda_env = (
+            OmegaConf.select(baseline, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+        )
+        use_subprocess = bool(conda_env) and conda_env != CUPID_CONDA_ENV_NAME
+
         for seed in seeds:
             train_name = get_train_name(train_date, task, policy, seed)
             run_output_dir = str(self.repo_root / output_dir / train_date / train_name)
 
-            overrides = [
-                f"name={exp_name}",
-                f"training.device={device}",
-                f"training.seed={seed}",
-                f"training.num_epochs={num_epochs}",
-                f"checkpoint.topk.k={checkpoint_topk}",
-                f"training.checkpoint_every={checkpoint_every}",
-                f"training.rollout_every={checkpoint_every}",
-                f"task.dataset.seed={seed}",
-                f"task.dataset.val_ratio={val_ratio}",
-                f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
-                f"+task.dataset.dataset_mask_kwargs.uniform_quality={uniform_quality}",
-                f"logging.name={train_name}",
-                f"logging.group={train_date}_{exp_name}_{task}",
-                f"logging.project={project}",
-                f"multi_run.wandb_name_base={train_name}",
-                f"multi_run.run_dir={run_output_dir}",
-            ]
-            overrides.extend(baseline_diffusion_extra_overrides(baseline))
+            if use_subprocess:
+                # Subprocess mode: invoke `conda run -n <env> python train.py` so that
+                # the correct interpreter (e.g. robocasa env) is used.  Skip HDF5-specific
+                # dataset_mask_kwargs overrides which don't apply to image datasets.
+                overrides = self._subprocess_overrides(
+                    exp_name=exp_name,
+                    device=device,
+                    seed=seed,
+                    num_epochs=num_epochs,
+                    checkpoint_topk=checkpoint_topk,
+                    checkpoint_every=checkpoint_every,
+                    val_ratio=val_ratio,
+                    train_name=train_name,
+                    train_date=train_date,
+                    task=task,
+                    policy=policy,
+                    project=project,
+                    run_output_dir=run_output_dir,
+                )
+                overrides.extend(baseline_diffusion_extra_overrides(baseline))
 
-            if self.dry_run:
-                print(f"[dry_run] TrainBaselineStep seed={seed}")
-                print(f"[dry_run]   config_dir={config_dir_abs}  config_name={config_name}")
-                print(f"[dry_run]   output_dir={run_output_dir}")
-                print(f"[dry_run]   overrides={overrides}")
-                continue
+                if self.dry_run:
+                    print(f"[dry_run] TrainBaselineStep (subprocess) seed={seed}")
+                    print(f"[dry_run]   conda_env={conda_env}  config_dir={config_dir}")
+                    print(f"[dry_run]   output_dir={run_output_dir}")
+                    print(f"[dry_run]   overrides={overrides}")
+                    continue
 
-            print(f"  [train_baseline] seed={seed}  output_dir={run_output_dir}")
-            self._run_in_process(
-                _train_baseline_worker,
-                {
-                    "run_output_dir": run_output_dir,
-                    "config_dir_str": config_dir_abs,
-                    "config_name": config_name,
-                    "overrides": overrides,
-                },
+                print(f"  [train_baseline/subprocess] conda_env={conda_env}  seed={seed}  output_dir={run_output_dir}")
+                self._run_subprocess_train(
+                    conda_env=conda_env,
+                    config_dir=config_dir,
+                    config_name=config_name,
+                    overrides=overrides,
+                    run_output_dir=run_output_dir,
+                )
+            else:
+                # In-process (hydra.initialize_config_dir) mode: standard cupid training.
+                overrides = [
+                    f"name={exp_name}",
+                    f"training.device={device}",
+                    f"training.seed={seed}",
+                    f"training.num_epochs={num_epochs}",
+                    f"checkpoint.topk.k={checkpoint_topk}",
+                    f"training.checkpoint_every={checkpoint_every}",
+                    f"training.rollout_every={checkpoint_every}",
+                    f"task.dataset.seed={seed}",
+                    f"task.dataset.val_ratio={val_ratio}",
+                    f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
+                    f"+task.dataset.dataset_mask_kwargs.uniform_quality={uniform_quality}",
+                    f"logging.name={train_name}",
+                    f"logging.group={train_date}_{exp_name}_{task}",
+                    f"logging.project={project}",
+                    f"multi_run.wandb_name_base={train_name}",
+                    f"multi_run.run_dir={run_output_dir}",
+                ]
+                overrides.extend(baseline_diffusion_extra_overrides(baseline))
+
+                if self.dry_run:
+                    print(f"[dry_run] TrainBaselineStep seed={seed}")
+                    print(f"[dry_run]   config_dir={config_dir_abs}  config_name={config_name}")
+                    print(f"[dry_run]   output_dir={run_output_dir}")
+                    print(f"[dry_run]   overrides={overrides}")
+                    continue
+
+                print(f"  [train_baseline] seed={seed}  output_dir={run_output_dir}")
+                self._run_in_process(
+                    _train_baseline_worker,
+                    {
+                        "run_output_dir": run_output_dir,
+                        "config_dir_str": config_dir_abs,
+                        "config_name": config_name,
+                        "overrides": overrides,
+                    },
+                )
+
+    # ------------------------------------------------------------------
+    # Subprocess training helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _subprocess_overrides(
+        exp_name: str,
+        device: str,
+        seed,
+        num_epochs: int,
+        checkpoint_topk: int,
+        checkpoint_every: int,
+        val_ratio: float,
+        train_name: str,
+        train_date: str,
+        task: str,
+        policy: str,
+        project: str,
+        run_output_dir: str,
+    ) -> list:
+        """Build the core Hydra override list for subprocess (non-HDF5) training.
+
+        Intentionally omits ``dataset_mask_kwargs`` and ``train_ratio`` overrides
+        that only apply to HDF5-backed cupid dataset classes.
+        """
+        return [
+            f"name={exp_name}",
+            f"training.device={device}",
+            f"training.seed={seed}",
+            f"training.num_epochs={num_epochs}",
+            f"checkpoint.topk.k={checkpoint_topk}",
+            f"training.checkpoint_every={checkpoint_every}",
+            f"training.rollout_every={checkpoint_every}",
+            f"task.dataset.seed={seed}",
+            f"task.dataset.val_ratio={val_ratio}",
+            f"logging.name={train_name}",
+            f"logging.group={train_date}_{exp_name}_{task}",
+            f"logging.project={project}",
+            f"multi_run.wandb_name_base={train_name}",
+            f"multi_run.run_dir={run_output_dir}",
+        ]
+
+    def _run_subprocess_train(
+        self,
+        conda_env: str,
+        config_dir: str,
+        config_name: str,
+        overrides: list,
+        run_output_dir: str,
+    ) -> None:
+        """Run training in an isolated conda env via ``conda run``.
+
+        ``config_dir`` must be relative to ``CUPID_ROOT`` (e.g.
+        ``configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer``).
+        The subprocess is run with ``cwd=CUPID_ROOT`` so that Hydra's
+        ``--config-path`` resolves correctly.
+        """
+        pathlib.Path(run_output_dir).mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "conda", "run", "-n", conda_env, "--no-capture-output",
+            "python", str(CUPID_ROOT / "train.py"),
+            "--config-path", config_dir,
+            "--config-name", config_name,
+            *overrides,
+        ]
+        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"[train_baseline] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"
             )

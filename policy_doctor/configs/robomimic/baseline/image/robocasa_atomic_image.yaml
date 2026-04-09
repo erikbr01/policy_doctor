@@ -1,0 +1,40 @@
+# Baseline training: RoboCasa atomic tasks — image/hybrid diffusion transformer, robocasa conda env.
+# Dataset: LeRobot v2 export (set diffusion_dataset_path to the lerobot/ directory).
+# Eval: live robosuite env via RobocasaImageRunner (set env_name override as needed).
+#
+# Required override (CLI or experiment config):
+#   baseline.diffusion_dataset_path=/path/to/data/source/robocasa/v1.0/target/atomic/<TASK>/<DATE>/lerobot
+#
+# Optional env name override (default: PickPlaceCounterToCabinet):
+#   'baseline.diffusion_compose_overrides=["task.env_runner.env_name=OpenCabinet"]'
+task: robocasa_atomic_image
+state: image
+method: diffusion_policy_transformer
+config_dir: configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer
+config_name: config.yaml
+policy: diffusion_transformer_hybrid_image
+
+# Conda env for training — triggers subprocess dispatch in train_baseline step.
+conda_env: robocasa
+
+seeds: [0, 1, 2]
+num_epochs: 800
+checkpoint_topk: 3
+checkpoint_every: 25
+
+# LeRobot datasets don't use train_ratio / uniform_quality (HDF5-specific).
+val_ratio: 0.02
+train_ratio: null
+uniform_quality: false
+
+output_dir: data/outputs/train
+project: influence-clustering
+
+# Dataset path: override per task (LeRobot v2 directory, not HDF5).
+diffusion_dataset_path: null
+# RobocasaImageRunner uses env_name for live rollouts — no dataset_path arg.
+skip_runner_dataset_path: true
+
+# Default robocasa env for live rollouts; override with task-specific env name.
+diffusion_compose_overrides:
+  - "task.env_runner.env_name=PickPlaceCounterToCabinet"

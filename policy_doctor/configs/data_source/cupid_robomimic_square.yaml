@@ -1,0 +1,26 @@
+# @package _global_
+# Cupid + RoboMimic Square MH (low-dim, diffusion UNet CNN).
+# Same stack as cupid_robomimic but targeting the Square task instead of Transport.
+
+defaults:
+  - /robomimic/baseline/low_dim@baseline: square_mh
+  - /robomimic/curation_filtering/low_dim@curation_filtering: square_mh
+  - /robomimic/curation_selection/low_dim@curation_selection: square_mh
+  - /robomimic/attribution/low_dim@attribution: square_mh
+  - /robomimic/evaluation/low_dim@evaluation: square_mh
+
+env: robomimic
+state: low_dim
+task: square_mh
+task_config: square_mh_feb15
+
+data_source:
+  id: cupid_robomimic_square
+  label: Cupid + RoboMimic Square MH demonstrations
+  policy_stack: diffusion_unet_lowdim
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: cupid
+  conda_env_datagen: null
+  robocasa_submodule: false
+  mimicgen_submodule: false

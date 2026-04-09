@@ -1,0 +1,32 @@
+# @package _global_
+# RoboCasa atomic tasks: LeRobot v2 image dataset, hybrid diffusion transformer, robocasa conda env.
+# No HDF5 needed; eval runs via live robosuite/robocasa env (RobocasaImageRunner).
+# Requires third_party/robocasa submodule and the ``robocasa`` conda env for training.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=robocasa_atomic_image \
+#     'baseline.diffusion_dataset_path=/path/to/.../lerobot' \
+#     steps=[train_baseline]
+#
+# Override env name (default: PickPlaceCounterToCabinet):
+#   'baseline.diffusion_compose_overrides=["task.env_runner.env_name=OpenCabinet"]'
+
+defaults:
+  - /robomimic/baseline/image@baseline: robocasa_atomic_image
+
+env: robocasa
+state: image
+task: robocasa_atomic_image
+task_config: robocasa_atomic_image
+
+data_source:
+  id: robocasa_atomic_image
+  label: RoboCasa atomic tasks (LeRobot v2, hybrid image)
+  policy_stack: diffusion_transformer_hybrid_image
+  attribution_stack: null
+  visualization: artifact_agnostic
+  conda_env_train: robocasa
+  conda_env_datagen: robocasa
+  robocasa_submodule: true
+  mimicgen_submodule: false

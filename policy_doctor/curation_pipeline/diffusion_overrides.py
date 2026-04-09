@@ -32,5 +32,9 @@ def baseline_diffusion_extra_overrides(baseline: Any) -> List[str]:
         p = str(ds).strip()
         if p:
             extra.append(f"++task.dataset.dataset_path={p}")
-            extra.append(f"++task.env_runner.dataset_path={p}")
+            # Some runners (e.g. RobocasaImageRunner) don't accept dataset_path —
+            # they use env_name + env_kwargs for live rollouts.  Set
+            # ``skip_runner_dataset_path: true`` in the baseline config to omit this.
+            if not OmegaConf.select(baseline, "skip_runner_dataset_path"):
+                extra.append(f"++task.env_runner.dataset_path={p}")
     return extra
