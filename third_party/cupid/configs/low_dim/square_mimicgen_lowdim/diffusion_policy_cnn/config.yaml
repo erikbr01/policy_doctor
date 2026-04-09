@@ -27,8 +27,8 @@ logging:
   - square_mimicgen_lowdim
   - mimicgen
 multi_run:
-  run_dir: data/outputs/mimicgen_square_lowdim/v2_delta/train_diffusion_unet_lowdim
-  wandb_name_base: mimicgen_square_lowdim_v2_delta_diffusion_unet_lowdim
+  run_dir: data/outputs/mimicgen_square_lowdim/train_diffusion_unet_lowdim
+  wandb_name_base: mimicgen_square_lowdim_diffusion_unet_lowdim
 task:
   abs_action: false
   action_dim: 7
