@@ -1,0 +1,9 @@
+algorithm: kmeans
+scaling: none
+influence_source: trak
+representation: sliding_window
+level: rollout
+n_clusters: 20
+n_samples: 3835
+created: '2026-03-16T11:00:57.798378'
+task_config: transport_mh_jan28

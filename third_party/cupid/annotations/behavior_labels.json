@@ -1,0 +1,4370 @@
+{
+  "lift_mh_jan18": {
+    "train": {
+      "0": [
+        {
+          "start": 0,
+          "end": 33,
+          "label": "reaching"
+        },
+        {
+          "start": 34,
+          "end": 40,
+          "label": "grasping"
+        }
+      ]
+    },
+    "holdout": {},
+    "rollout": {
+      "0": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reaching"
+        },
+        {
+          "start": 5,
+          "end": 5,
+          "label": "grasping"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "label": "releasing"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "1": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "2": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "3": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reaching"
+        },
+        {
+          "start": 13,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "4": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "5": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "6": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 9,
+          "label": "grasping"
+        },
+        {
+          "start": 10,
+          "end": 10,
+          "label": "releasing"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "7": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "reaching"
+        },
+        {
+          "start": 4,
+          "end": 5,
+          "label": "grasping"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "label": "releasing"
+        },
+        {
+          "start": 7,
+          "end": 7,
+          "label": "grasping"
+        },
+        {
+          "start": 8,
+          "end": 8,
+          "label": "releasing"
+        },
+        {
+          "start": 9,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "8": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "9": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "10": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "11": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "12": [
+        {
+          "start": 0,
+          "end": 14,
+          "label": "reaching"
+        },
+        {
+          "start": 15,
+          "end": 16,
+          "label": "grasping"
+        }
+      ],
+      "13": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "bad reach"
+        },
+        {
+          "start": 8,
+          "end": 11,
+          "label": "grasping"
+        },
+        {
+          "start": 12,
+          "end": 12,
+          "label": "releasing"
+        },
+        {
+          "start": 13,
+          "end": 13,
+          "label": "grasping"
+        },
+        {
+          "start": 14,
+          "end": 14,
+          "label": "releasing"
+        },
+        {
+          "start": 15,
+          "end": 17,
+          "label": "grasping"
+        }
+      ],
+      "14": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "15": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "idle"
+        },
+        {
+          "start": 3,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "16": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "bad reach"
+        },
+        {
+          "start": 11,
+          "end": 19,
+          "label": "grasping"
+        }
+      ],
+      "17": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 13,
+          "label": "grasping"
+        }
+      ],
+      "18": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "bad reach"
+        },
+        {
+          "start": 11,
+          "end": 13,
+          "label": "grasping"
+        }
+      ],
+      "19": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reaching"
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "20": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 10,
+          "label": "idle"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "reaching"
+        },
+        {
+          "start": 13,
+          "end": 13,
+          "label": "idle"
+        },
+        {
+          "start": 14,
+          "end": 18,
+          "label": "reaching"
+        },
+        {
+          "start": 19,
+          "end": 23,
+          "label": "idle"
+        },
+        {
+          "start": 24,
+          "end": 25,
+          "label": "reaching"
+        },
+        {
+          "start": 26,
+          "end": 28,
+          "label": "grasping"
+        }
+      ],
+      "21": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "22": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "23": [
+        {
+          "start": 0,
+          "end": 22,
+          "label": "bad reach"
+        },
+        {
+          "start": 23,
+          "end": 24,
+          "label": "bad grasp"
+        }
+      ],
+      "24": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "25": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reaching"
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "26": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "27": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "reaching"
+        },
+        {
+          "start": 3,
+          "end": 7,
+          "label": "bad reach"
+        },
+        {
+          "start": 8,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "28": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "29": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "30": [
+        {
+          "start": 0,
+          "end": 0,
+          "label": "bad reach"
+        },
+        {
+          "start": 1,
+          "end": 11,
+          "label": "reaching"
+        },
+        {
+          "start": 12,
+          "end": 12,
+          "label": "bad reach"
+        },
+        {
+          "start": 13,
+          "end": 13,
+          "label": "reaching"
+        },
+        {
+          "start": 14,
+          "end": 14,
+          "label": "grasping"
+        },
+        {
+          "start": 15,
+          "end": 17,
+          "label": "releasing"
+        },
+        {
+          "start": 18,
+          "end": 18,
+          "label": "reaching"
+        },
+        {
+          "start": 19,
+          "end": 23,
+          "label": "grasping"
+        }
+      ],
+      "31": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reaching"
+        },
+        {
+          "start": 5,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "32": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "reaching"
+        },
+        {
+          "start": 4,
+          "end": 11,
+          "label": "bad reach"
+        },
+        {
+          "start": 12,
+          "end": 13,
+          "label": "grasping"
+        }
+      ],
+      "33": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "34": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "reaching"
+        },
+        {
+          "start": 4,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "35": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "36": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 9,
+          "label": "recovery"
+        },
+        {
+          "start": 10,
+          "end": 15,
+          "label": "reaching"
+        },
+        {
+          "start": 16,
+          "end": 18,
+          "label": "grasping"
+        }
+      ],
+      "37": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "reaching"
+        },
+        {
+          "start": 3,
+          "end": 9,
+          "label": "bad reach"
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "38": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "bad reach"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "39": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "40": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "bad reach"
+        },
+        {
+          "start": 9,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "41": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "42": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reaching"
+        },
+        {
+          "start": 5,
+          "end": 6,
+          "label": "grasping"
+        }
+      ],
+      "43": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "label": "recovery"
+        },
+        {
+          "start": 11,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "44": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "label": "grasping"
+        }
+      ],
+      "45": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "46": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "47": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "bad reach"
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "48": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "reaching"
+        },
+        {
+          "start": 3,
+          "end": 3,
+          "label": "bad reach"
+        },
+        {
+          "start": 4,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "49": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "bad reach"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        },
+        {
+          "start": 12,
+          "end": 12,
+          "label": "releasing"
+        },
+        {
+          "start": 13,
+          "end": 13,
+          "label": "grasping"
+        },
+        {
+          "start": 14,
+          "end": 15,
+          "label": "releasing"
+        },
+        {
+          "start": 16,
+          "end": 17,
+          "label": "grasping"
+        }
+      ],
+      "50": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "51": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "52": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "53": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "bad reach"
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "54": [
+        {
+          "start": 0,
+          "end": 14,
+          "label": "reaching"
+        },
+        {
+          "start": 15,
+          "end": 17,
+          "label": "grasping"
+        }
+      ],
+      "55": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "bad reach"
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 13,
+          "label": "grasping"
+        }
+      ],
+      "56": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "57": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "58": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "bad reach"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "59": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "idle"
+        },
+        {
+          "start": 7,
+          "end": 17,
+          "label": "reaching"
+        },
+        {
+          "start": 18,
+          "end": 21,
+          "label": "grasping"
+        }
+      ],
+      "60": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 9,
+          "label": "recovery"
+        },
+        {
+          "start": 10,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "61": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "62": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "bad reach"
+        },
+        {
+          "start": 8,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "63": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "reaching"
+        },
+        {
+          "start": 4,
+          "end": 4,
+          "label": "bad reach"
+        },
+        {
+          "start": 5,
+          "end": 8,
+          "label": "bad reach"
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "64": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "bad reach"
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "65": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "bad reach"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "66": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 13,
+          "label": "recovery"
+        },
+        {
+          "start": 14,
+          "end": 16,
+          "label": "grasping"
+        }
+      ],
+      "67": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "68": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "bad reach"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "69": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 12,
+          "label": "recovery"
+        },
+        {
+          "start": 13,
+          "end": 15,
+          "label": "grasping"
+        }
+      ],
+      "70": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 14,
+          "label": "grasping"
+        }
+      ],
+      "71": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "bad reach"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "72": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 15,
+          "label": "grasping"
+        }
+      ],
+      "73": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "reaching"
+        },
+        {
+          "start": 4,
+          "end": 5,
+          "label": "grasping"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "label": "releasing"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "74": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "bad reach"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "75": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "reaching"
+        },
+        {
+          "start": 3,
+          "end": 5,
+          "label": "grasping"
+        }
+      ],
+      "76": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "bad reach"
+        },
+        {
+          "start": 5,
+          "end": 18,
+          "label": "grasping"
+        }
+      ],
+      "77": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "78": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "label": "bad grasp"
+        },
+        {
+          "start": 7,
+          "end": 7,
+          "label": "recovery"
+        },
+        {
+          "start": 8,
+          "end": 10,
+          "label": "bad grasp"
+        },
+        {
+          "start": 11,
+          "end": 14,
+          "label": "reaching"
+        },
+        {
+          "start": 15,
+          "end": 16,
+          "label": "grasping"
+        }
+      ],
+      "79": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reaching"
+        },
+        {
+          "start": 8,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "80": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reaching"
+        },
+        {
+          "start": 12,
+          "end": 13,
+          "label": "grasping"
+        }
+      ],
+      "81": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "82": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "83": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "label": "grasping"
+        }
+      ],
+      "84": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "bad reach"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "85": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "bad reach"
+        },
+        {
+          "start": 6,
+          "end": 8,
+          "label": "grasping"
+        }
+      ],
+      "86": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "87": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reaching"
+        },
+        {
+          "start": 5,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "88": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reaching"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "89": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "90": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reaching"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "label": "recovery"
+        },
+        {
+          "start": 7,
+          "end": 11,
+          "label": "reaching"
+        },
+        {
+          "start": 12,
+          "end": 13,
+          "label": "grasping"
+        }
+      ],
+      "91": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 9,
+          "label": "grasping"
+        },
+        {
+          "start": 10,
+          "end": 10,
+          "label": "reaching"
+        },
+        {
+          "start": 11,
+          "end": 11,
+          "label": "reaching"
+        },
+        {
+          "start": 12,
+          "end": 13,
+          "label": "releasing"
+        },
+        {
+          "start": 14,
+          "end": 15,
+          "label": "grasping"
+        }
+      ],
+      "92": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "bad reach"
+        },
+        {
+          "start": 5,
+          "end": 7,
+          "label": "grasping"
+        }
+      ],
+      "93": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "bad reach"
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "label": "grasping"
+        }
+      ],
+      "94": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "95": [
+        {
+          "start": 0,
+          "end": 1,
+          "label": "bad reach"
+        },
+        {
+          "start": 2,
+          "end": 6,
+          "label": "reaching"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "bad reach"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "96": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "bad reach"
+        },
+        {
+          "start": 7,
+          "end": 9,
+          "label": "grasping"
+        }
+      ],
+      "97": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reaching"
+        },
+        {
+          "start": 9,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "98": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "bad reach"
+        },
+        {
+          "start": 11,
+          "end": 11,
+          "label": "grasping"
+        }
+      ],
+      "99": [
+        {
+          "start": 0,
+          "end": 1,
+          "label": "reaching"
+        },
+        {
+          "start": 2,
+          "end": 4,
+          "label": "bad reach"
+        },
+        {
+          "start": 5,
+          "end": 7,
+          "label": "bad grasp"
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "label": "releasing"
+        },
+        {
+          "start": 10,
+          "end": 12,
+          "label": "reaching"
+        },
+        {
+          "start": 13,
+          "end": 15,
+          "label": "grasping"
+        }
+      ]
+    },
+    "labels": [
+      "bad grasp",
+      "bad reach",
+      "grasping",
+      "idle",
+      "reaching",
+      "recovery",
+      "releasing"
+    ]
+  },
+  "transport_mh_jan28": {
+    "train": {},
+    "holdout": {},
+    "rollout": {
+      "1": [
+        {
+          "start": 23,
+          "end": 35,
+          "label": "failed handover"
+        },
+        {
+          "start": 36,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "3": [
+        {
+          "start": 0,
+          "end": 21,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 22,
+          "end": 48,
+          "label": "bad lid grasp"
+        }
+      ],
+      "4": [
+        {
+          "start": 21,
+          "end": 40,
+          "label": "failed handover"
+        },
+        {
+          "start": 41,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "6": [
+        {
+          "start": 23,
+          "end": 64,
+          "label": "failed hammer pick"
+        }
+      ],
+      "10": [
+        {
+          "start": 40,
+          "end": 69,
+          "label": "failed handover"
+        },
+        {
+          "start": 70,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "12": [
+        {
+          "start": 0,
+          "end": 19,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 20,
+          "end": 66,
+          "label": "failed hammer pick"
+        },
+        {
+          "start": 67,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "13": [
+        {
+          "start": 42,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "15": [
+        {
+          "start": 0,
+          "end": 31,
+          "label": "bad lid grasp"
+        }
+      ],
+      "19": [
+        {
+          "start": 0,
+          "end": 18,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 0,
+          "end": 87,
+          "label": "failed cube grasp"
+        }
+      ],
+      "20": [
+        {
+          "start": 54,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "21": [
+        {
+          "start": 0,
+          "end": 19,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 42,
+          "end": 49,
+          "label": "failed hammer pick"
+        },
+        {
+          "start": 62,
+          "end": 87,
+          "label": "good inverse hammer handover"
+        }
+      ],
+      "24": [
+        {
+          "start": 23,
+          "end": 43,
+          "label": "failed handover"
+        },
+        {
+          "start": 44,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "25": [
+        {
+          "start": 25,
+          "end": 63,
+          "label": "bad hammer grasp/collision with box"
+        },
+        {
+          "start": 64,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "27": [
+        {
+          "start": 0,
+          "end": 87,
+          "label": "failed cube grasp"
+        }
+      ],
+      "29": [
+        {
+          "start": 0,
+          "end": 87,
+          "label": "failed lid grasp"
+        }
+      ],
+      "30": [
+        {
+          "start": 21,
+          "end": 40,
+          "label": "failed handover"
+        },
+        {
+          "start": 41,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "31": [
+        {
+          "start": 0,
+          "end": 87,
+          "label": "failed lid grasp"
+        }
+      ],
+      "33": [
+        {
+          "start": 0,
+          "end": 23,
+          "label": "waiting on cube"
+        },
+        {
+          "start": 56,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "35": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 0,
+          "end": 12,
+          "label": "waiting on lid"
+        },
+        {
+          "start": 11,
+          "end": 20,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 14,
+          "end": 87,
+          "label": "failed cube grasp"
+        },
+        {
+          "start": 29,
+          "end": 43,
+          "label": "failed handover"
+        }
+      ],
+      "38": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 11,
+          "end": 23,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 14,
+          "end": 87,
+          "label": "failed cube grasp"
+        }
+      ],
+      "40": [
+        {
+          "start": 0,
+          "end": 23,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 0,
+          "end": 87,
+          "label": "failed cube grasp"
+        }
+      ],
+      "41": [
+        {
+          "start": 0,
+          "end": 69,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 11,
+          "end": 87,
+          "label": "failed cube grasp"
+        }
+      ],
+      "43": [
+        {
+          "start": 35,
+          "end": 49,
+          "label": "failed handover"
+        },
+        {
+          "start": 50,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "46": [
+        {
+          "start": 0,
+          "end": 28,
+          "label": "failed lid grasp"
+        }
+      ],
+      "47": [
+        {
+          "start": 43,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "48": [
+        {
+          "start": 0,
+          "end": 24,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 48,
+          "end": 87,
+          "label": "good hammer handover"
+        }
+      ],
+      "51": [
+        {
+          "start": 38,
+          "end": 69,
+          "label": "failed handover"
+        },
+        {
+          "start": 70,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "52": [
+        {
+          "start": 23,
+          "end": 41,
+          "label": "failed handover"
+        },
+        {
+          "start": 42,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "53": [
+        {
+          "start": 0,
+          "end": 17,
+          "label": "waiting on cube"
+        },
+        {
+          "start": 43,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ],
+      "54": [
+        {
+          "start": 20,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ],
+      "55": [
+        {
+          "start": 25,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ],
+      "61": [
+        {
+          "start": 30,
+          "end": 44,
+          "label": "failed hammer pick"
+        },
+        {
+          "start": 45,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "64": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 13,
+          "end": 26,
+          "label": "failed cube grasp"
+        },
+        {
+          "start": 26,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ],
+      "65": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 13,
+          "end": 22,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 62,
+          "end": 81,
+          "label": "good inverse hammer handover"
+        }
+      ],
+      "67": [
+        {
+          "start": 26,
+          "end": 43,
+          "label": "failed handover"
+        },
+        {
+          "start": 44,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "69": [
+        {
+          "start": 44,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ],
+      "71": [
+        {
+          "start": 0,
+          "end": 56,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 4,
+          "end": 25,
+          "label": "failed cube grasp"
+        }
+      ],
+      "75": [
+        {
+          "start": 35,
+          "end": 62,
+          "label": "failed handover"
+        },
+        {
+          "start": 63,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "76": [
+        {
+          "start": 41,
+          "end": 79,
+          "label": "bad handover attempt"
+        }
+      ],
+      "78": [
+        {
+          "start": 36,
+          "end": 64,
+          "label": "failed handover"
+        },
+        {
+          "start": 65,
+          "end": 87,
+          "label": "hammer on the floor"
+        }
+      ],
+      "79": [
+        {
+          "start": 10,
+          "end": 36,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 42,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ],
+      "81": [
+        {
+          "start": 5,
+          "end": 87,
+          "label": "failed cube grasp"
+        }
+      ],
+      "84": [
+        {
+          "start": 0,
+          "end": 30,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 31,
+          "end": 54,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 67,
+          "end": 87,
+          "label": "bad hammer grasp/collision with box"
+        }
+      ],
+      "85": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "waiting on cube"
+        },
+        {
+          "start": 17,
+          "end": 87,
+          "label": "bad lid grasp"
+        }
+      ],
+      "87": [
+        {
+          "start": 33,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "88": [
+        {
+          "start": 4,
+          "end": 20,
+          "label": "bad lid grasp"
+        },
+        {
+          "start": 29,
+          "end": 53,
+          "label": "failed hammer pick"
+        },
+        {
+          "start": 58,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "91": [
+        {
+          "start": 24,
+          "end": 69,
+          "label": "failed hammer pick"
+        }
+      ],
+      "92": [
+        {
+          "start": 0,
+          "end": 23,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 47,
+          "end": 87,
+          "label": "bad handover attempt"
+        }
+      ],
+      "93": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "waiting on cube"
+        },
+        {
+          "start": 1,
+          "end": 35,
+          "label": "failed cube grasp"
+        },
+        {
+          "start": 10,
+          "end": 37,
+          "label": "failed lid grasp"
+        }
+      ],
+      "94": [
+        {
+          "start": 30,
+          "end": 57,
+          "label": "failed hammer pick"
+        },
+        {
+          "start": 63,
+          "end": 87,
+          "label": "bad hammer grasp/collision with box"
+        }
+      ],
+      "98": [
+        {
+          "start": 2,
+          "end": 14,
+          "label": "failed lid grasp"
+        },
+        {
+          "start": 41,
+          "end": 66,
+          "label": "failed hammer pick"
+        }
+      ],
+      "37": [
+        {
+          "start": 17,
+          "end": 87,
+          "label": "failed hammer pick"
+        }
+      ]
+    },
+    "labels": [
+      "bad hammer grasp/collision with box",
+      "bad handover attempt",
+      "bad lid grasp",
+      "failed cube grasp",
+      "failed hammer pick",
+      "failed handover",
+      "failed lid grasp",
+      "good hammer handover",
+      "good inverse hammer handover",
+      "hammer on the floor",
+      "waiting on cube",
+      "waiting on lid"
+    ]
+  },
+  "lift_mh_jan26": {
+    "train": {},
+    "holdout": {},
+    "rollout": {}
+  },
+  "pusht_jan26": {
+    "train": {},
+    "holdout": {},
+    "rollout": {}
+  },
+  "mock": {
+    "train": {},
+    "holdout": {},
+    "rollout": {}
+  },
+  "square_mh_feb5": {
+    "train": {},
+    "holdout": {},
+    "rollout": {
+      "1": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 16,
+          "label": "transport"
+        },
+        {
+          "start": 17,
+          "end": 19,
+          "label": "align"
+        }
+      ],
+      "2": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach noisy"
+        },
+        {
+          "start": 5,
+          "end": 15,
+          "label": "reach"
+        },
+        {
+          "start": 16,
+          "end": 29,
+          "label": "transport"
+        },
+        {
+          "start": 30,
+          "end": 33,
+          "label": "align noisy"
+        },
+        {
+          "start": 34,
+          "end": 37,
+          "label": "align"
+        }
+      ],
+      "3": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reach"
+        },
+        {
+          "start": 6,
+          "end": 15,
+          "label": "reach noisy"
+        },
+        {
+          "start": 16,
+          "end": 22,
+          "label": "transport"
+        },
+        {
+          "start": 22,
+          "end": 24,
+          "label": "align"
+        }
+      ],
+      "4": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach"
+        },
+        {
+          "start": 8,
+          "end": 17,
+          "label": "reach noisy"
+        },
+        {
+          "start": 18,
+          "end": 34,
+          "label": "reach noisy"
+        },
+        {
+          "start": 35,
+          "end": 47,
+          "label": "reach noisy"
+        },
+        {
+          "start": 48,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "5": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 22,
+          "label": "transport"
+        },
+        {
+          "start": 23,
+          "end": 31,
+          "label": "align noisy"
+        },
+        {
+          "start": 32,
+          "end": 50,
+          "label": "align noisy"
+        },
+        {
+          "start": 51,
+          "end": 53,
+          "label": "align noisy"
+        },
+        {
+          "start": 54,
+          "end": 57,
+          "label": "align"
+        }
+      ],
+      "6": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach"
+        },
+        {
+          "start": 5,
+          "end": 16,
+          "label": "reach noisy"
+        },
+        {
+          "start": 17,
+          "end": 27,
+          "label": "reach noisy"
+        },
+        {
+          "start": 28,
+          "end": 32,
+          "label": "transport"
+        },
+        {
+          "start": 33,
+          "end": 40,
+          "label": "align noisy"
+        },
+        {
+          "start": 41,
+          "end": 58,
+          "label": "align noisy"
+        }
+      ],
+      "7": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 19,
+          "label": "reach noisy"
+        },
+        {
+          "start": 20,
+          "end": 23,
+          "label": "reach noisy"
+        },
+        {
+          "start": 24,
+          "end": 29,
+          "label": "reach noisy"
+        },
+        {
+          "start": 30,
+          "end": 36,
+          "label": "reach noisy"
+        },
+        {
+          "start": 37,
+          "end": 41,
+          "label": "reach"
+        },
+        {
+          "start": 42,
+          "end": 55,
+          "label": "transport"
+        },
+        {
+          "start": 56,
+          "end": 59,
+          "label": "align noisy"
+        },
+        {
+          "start": 60,
+          "end": 62,
+          "label": "align"
+        }
+      ],
+      "8": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "reach"
+        },
+        {
+          "start": 3,
+          "end": 18,
+          "label": "reach noisy"
+        },
+        {
+          "start": 19,
+          "end": 25,
+          "label": "reach noisy"
+        },
+        {
+          "start": 26,
+          "end": 28,
+          "label": "reach"
+        },
+        {
+          "start": 29,
+          "end": 33,
+          "label": "transport"
+        },
+        {
+          "start": 34,
+          "end": 50,
+          "label": "align"
+        }
+      ],
+      "9": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 62,
+          "label": "align noisy"
+        }
+      ],
+      "10": [
+        {
+          "start": 0,
+          "end": 17,
+          "label": "reach"
+        },
+        {
+          "start": 18,
+          "end": 25,
+          "label": "transport"
+        },
+        {
+          "start": 26,
+          "end": 29,
+          "label": "align"
+        }
+      ],
+      "11": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reach"
+        },
+        {
+          "start": 6,
+          "end": 13,
+          "label": "reach noisy"
+        },
+        {
+          "start": 14,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "12": [
+        {
+          "start": 0,
+          "end": 14,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 21,
+          "label": "transport"
+        },
+        {
+          "start": 22,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "13": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach"
+        },
+        {
+          "start": 8,
+          "end": 16,
+          "label": "reach noisy"
+        },
+        {
+          "start": 17,
+          "end": 23,
+          "label": "transport"
+        },
+        {
+          "start": 24,
+          "end": 33,
+          "label": "align noisy"
+        },
+        {
+          "start": 34,
+          "end": 44,
+          "label": "align noisy"
+        },
+        {
+          "start": 45,
+          "end": 57,
+          "label": "align noisy"
+        },
+        {
+          "start": 58,
+          "end": 62,
+          "label": "align"
+        }
+      ],
+      "14": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reach"
+        },
+        {
+          "start": 6,
+          "end": 12,
+          "label": "reach noisy"
+        },
+        {
+          "start": 13,
+          "end": 16,
+          "label": "reach noisy"
+        },
+        {
+          "start": 17,
+          "end": 22,
+          "label": "reach"
+        },
+        {
+          "start": 23,
+          "end": 33,
+          "label": "transport"
+        },
+        {
+          "start": 33,
+          "end": 36,
+          "label": "align"
+        }
+      ],
+      "15": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "label": "transport"
+        },
+        {
+          "start": 15,
+          "end": 16,
+          "label": "align"
+        }
+      ],
+      "16": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "label": "reach"
+        },
+        {
+          "start": 15,
+          "end": 24,
+          "label": "transport"
+        },
+        {
+          "start": 25,
+          "end": 26,
+          "label": "align"
+        }
+      ],
+      "17": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach"
+        },
+        {
+          "start": 8,
+          "end": 19,
+          "label": "reach noisy"
+        },
+        {
+          "start": 20,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "18": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "19": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "label": "reach noisy"
+        },
+        {
+          "start": 11,
+          "end": 18,
+          "label": "transport"
+        },
+        {
+          "start": 19,
+          "end": 26,
+          "label": "align noisy"
+        },
+        {
+          "start": 27,
+          "end": 36,
+          "label": "align noisy"
+        }
+      ],
+      "20": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reach"
+        },
+        {
+          "start": 9,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 24,
+          "label": "transport noisy"
+        },
+        {
+          "start": 25,
+          "end": 62,
+          "label": "transport noisy"
+        }
+      ],
+      "21": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "transport noisy"
+        },
+        {
+          "start": 10,
+          "end": 18,
+          "label": "transport noisy"
+        },
+        {
+          "start": 19,
+          "end": 23,
+          "label": "transport noisy"
+        }
+      ],
+      "22": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 15,
+          "label": "transport"
+        },
+        {
+          "start": 16,
+          "end": 43,
+          "label": "align noisy"
+        },
+        {
+          "start": 44,
+          "end": 48,
+          "label": "align noisy"
+        },
+        {
+          "start": 49,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "23": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 15,
+          "label": "reach noisy"
+        },
+        {
+          "start": 16,
+          "end": 18,
+          "label": "reach"
+        },
+        {
+          "start": 19,
+          "end": 25,
+          "label": "transport"
+        },
+        {
+          "start": 26,
+          "end": 27,
+          "label": "align"
+        }
+      ],
+      "24": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "25": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach"
+        },
+        {
+          "start": 5,
+          "end": 15,
+          "label": "reach noisy"
+        },
+        {
+          "start": 16,
+          "end": 20,
+          "label": "reach"
+        },
+        {
+          "start": 21,
+          "end": 45,
+          "label": "reach noisy"
+        },
+        {
+          "start": 46,
+          "end": 50,
+          "label": "reach noisy"
+        },
+        {
+          "start": 51,
+          "end": 56,
+          "label": "reach"
+        },
+        {
+          "start": 57,
+          "end": 62,
+          "label": "transport"
+        }
+      ],
+      "26": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reach"
+        },
+        {
+          "start": 6,
+          "end": 17,
+          "label": "reach noisy"
+        },
+        {
+          "start": 18,
+          "end": 31,
+          "label": "reach noisy"
+        },
+        {
+          "start": 32,
+          "end": 36,
+          "label": "reach noisy"
+        },
+        {
+          "start": 37,
+          "end": 44,
+          "label": "transport"
+        },
+        {
+          "start": 45,
+          "end": 55,
+          "label": "align noisy"
+        },
+        {
+          "start": 56,
+          "end": 57,
+          "label": "align"
+        }
+      ],
+      "0": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "27": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach"
+        },
+        {
+          "start": 5,
+          "end": 9,
+          "label": "reach noisy"
+        },
+        {
+          "start": 10,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 26,
+          "label": "reach noisy"
+        },
+        {
+          "start": 27,
+          "end": 50,
+          "label": "reach noisy"
+        },
+        {
+          "start": 51,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "28": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach noisy"
+        },
+        {
+          "start": 5,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 19,
+          "label": "transport"
+        },
+        {
+          "start": 20,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "29": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach noisy"
+        },
+        {
+          "start": 7,
+          "end": 17,
+          "label": "reach"
+        },
+        {
+          "start": 18,
+          "end": 24,
+          "label": "transport"
+        },
+        {
+          "start": 25,
+          "end": 28,
+          "label": "transport noisy"
+        },
+        {
+          "start": 29,
+          "end": 36,
+          "label": "transport"
+        },
+        {
+          "start": 37,
+          "end": 42,
+          "label": "align"
+        }
+      ],
+      "30": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 25,
+          "label": "transport"
+        },
+        {
+          "start": 26,
+          "end": 29,
+          "label": "align"
+        }
+      ],
+      "31": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 26,
+          "label": "transport"
+        },
+        {
+          "start": 27,
+          "end": 32,
+          "label": "align"
+        }
+      ],
+      "32": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 17,
+          "label": "transport"
+        },
+        {
+          "start": 18,
+          "end": 20,
+          "label": "align"
+        }
+      ],
+      "33": [
+        {
+          "start": 0,
+          "end": 15,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 16,
+          "end": 22,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 23,
+          "end": 29,
+          "label": "align - bad grasp"
+        }
+      ],
+      "34": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 19,
+          "label": "transport"
+        },
+        {
+          "start": 20,
+          "end": 22,
+          "label": "align"
+        }
+      ],
+      "35": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 17,
+          "label": "transport"
+        },
+        {
+          "start": 18,
+          "end": 20,
+          "label": "transport noisy"
+        },
+        {
+          "start": 21,
+          "end": 24,
+          "label": "transport"
+        },
+        {
+          "start": 25,
+          "end": 32,
+          "label": "align"
+        }
+      ],
+      "36": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 19,
+          "label": "reach - slow"
+        },
+        {
+          "start": 20,
+          "end": 29,
+          "label": "transport"
+        },
+        {
+          "start": 30,
+          "end": 33,
+          "label": "transport noisy"
+        },
+        {
+          "start": 34,
+          "end": 38,
+          "label": "transport"
+        },
+        {
+          "start": 39,
+          "end": 41,
+          "label": "align"
+        }
+      ],
+      "37": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 22,
+          "label": "transport"
+        },
+        {
+          "start": 23,
+          "end": 29,
+          "label": "align"
+        }
+      ],
+      "38": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach"
+        },
+        {
+          "start": 5,
+          "end": 17,
+          "label": "reach noisy"
+        },
+        {
+          "start": 18,
+          "end": 57,
+          "label": "reach noisy"
+        },
+        {
+          "start": 58,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "39": [
+        {
+          "start": 0,
+          "end": 23,
+          "label": "reach noisy"
+        },
+        {
+          "start": 24,
+          "end": 34,
+          "label": "reach noisy"
+        },
+        {
+          "start": 35,
+          "end": 46,
+          "label": "reach"
+        },
+        {
+          "start": 47,
+          "end": 56,
+          "label": "transport"
+        },
+        {
+          "start": 57,
+          "end": 62,
+          "label": "align"
+        }
+      ],
+      "40": [
+        {
+          "start": 0,
+          "end": 16,
+          "label": "reach noisy"
+        },
+        {
+          "start": 17,
+          "end": 23,
+          "label": "reach noisy"
+        },
+        {
+          "start": 24,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "41": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach"
+        },
+        {
+          "start": 8,
+          "end": 15,
+          "label": "reach - slow"
+        },
+        {
+          "start": 16,
+          "end": 25,
+          "label": "transport"
+        },
+        {
+          "start": 26,
+          "end": 30,
+          "label": "align"
+        }
+      ],
+      "42": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach"
+        },
+        {
+          "start": 8,
+          "end": 12,
+          "label": "reach noisy"
+        },
+        {
+          "start": 13,
+          "end": 24,
+          "label": "transport"
+        },
+        {
+          "start": 25,
+          "end": 25,
+          "label": "align"
+        }
+      ],
+      "43": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 16,
+          "label": "transport"
+        },
+        {
+          "start": 17,
+          "end": 18,
+          "label": "align"
+        }
+      ],
+      "44": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 32,
+          "label": "transport"
+        },
+        {
+          "start": 33,
+          "end": 37,
+          "label": "align"
+        }
+      ],
+      "45": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 24,
+          "label": "transport"
+        },
+        {
+          "start": 24,
+          "end": 24,
+          "label": "align"
+        }
+      ],
+      "46": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach noisy"
+        },
+        {
+          "start": 11,
+          "end": 17,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 18,
+          "end": 24,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 25,
+          "end": 26,
+          "label": "align - bad grasp"
+        }
+      ],
+      "47": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 18,
+          "label": "transport"
+        },
+        {
+          "start": 19,
+          "end": 22,
+          "label": "align"
+        }
+      ],
+      "48": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "label": "transport"
+        },
+        {
+          "start": 15,
+          "end": 16,
+          "label": "align"
+        }
+      ],
+      "49": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 24,
+          "label": "transport"
+        },
+        {
+          "start": 25,
+          "end": 26,
+          "label": "align"
+        }
+      ],
+      "50": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 11,
+          "end": 19,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 20,
+          "end": 22,
+          "label": "align - bad grasp"
+        }
+      ],
+      "51": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "label": "reach"
+        },
+        {
+          "start": 15,
+          "end": 22,
+          "label": "transport"
+        },
+        {
+          "start": 23,
+          "end": 26,
+          "label": "align"
+        }
+      ],
+      "52": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 21,
+          "label": "transport"
+        },
+        {
+          "start": 22,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "53": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "reach"
+        },
+        {
+          "start": 4,
+          "end": 20,
+          "label": "reach noisy"
+        },
+        {
+          "start": 21,
+          "end": 24,
+          "label": "reach"
+        },
+        {
+          "start": 25,
+          "end": 29,
+          "label": "transport"
+        },
+        {
+          "start": 29,
+          "end": 31,
+          "label": "align"
+        }
+      ],
+      "54": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 20,
+          "label": "transport noisy"
+        },
+        {
+          "start": 21,
+          "end": 28,
+          "label": "transport"
+        },
+        {
+          "start": 29,
+          "end": 31,
+          "label": "align"
+        }
+      ],
+      "55": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 21,
+          "label": "transport"
+        },
+        {
+          "start": 22,
+          "end": 24,
+          "label": "align"
+        }
+      ],
+      "56": [
+        {
+          "start": 0,
+          "end": 16,
+          "label": "reach"
+        },
+        {
+          "start": 17,
+          "end": 29,
+          "label": "transport"
+        },
+        {
+          "start": 30,
+          "end": 32,
+          "label": "align"
+        }
+      ],
+      "57": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach"
+        },
+        {
+          "start": 5,
+          "end": 12,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 13,
+          "end": 19,
+          "label": "transport drop"
+        },
+        {
+          "start": 20,
+          "end": 62,
+          "label": "transport drop"
+        }
+      ],
+      "58": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 12,
+          "end": 17,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 18,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "59": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 10,
+          "end": 18,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 19,
+          "end": 33,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 34,
+          "end": 47,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 48,
+          "end": 62,
+          "label": "align - bad grasp"
+        }
+      ],
+      "60": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach noisy"
+        },
+        {
+          "start": 10,
+          "end": 18,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 19,
+          "end": 29,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 30,
+          "end": 62,
+          "label": "align - bad grasp"
+        }
+      ],
+      "61": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach noisy"
+        },
+        {
+          "start": 10,
+          "end": 27,
+          "label": "reach noisy"
+        },
+        {
+          "start": 28,
+          "end": 36,
+          "label": "reach"
+        },
+        {
+          "start": 37,
+          "end": 60,
+          "label": "transport"
+        },
+        {
+          "start": 61,
+          "end": 62,
+          "label": "align"
+        }
+      ],
+      "62": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach noisy"
+        },
+        {
+          "start": 7,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "63": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "reach"
+        },
+        {
+          "start": 3,
+          "end": 3,
+          "label": "reach noisy"
+        },
+        {
+          "start": 4,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 23,
+          "label": "transport"
+        },
+        {
+          "start": 24,
+          "end": 25,
+          "label": "align"
+        }
+      ],
+      "64": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 19,
+          "label": "reach - slow"
+        },
+        {
+          "start": 20,
+          "end": 28,
+          "label": "transport"
+        },
+        {
+          "start": 29,
+          "end": 30,
+          "label": "align"
+        }
+      ],
+      "65": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 18,
+          "label": "transport"
+        },
+        {
+          "start": 19,
+          "end": 19,
+          "label": "align"
+        }
+      ],
+      "66": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reach"
+        },
+        {
+          "start": 9,
+          "end": 14,
+          "label": "transport"
+        },
+        {
+          "start": 15,
+          "end": 15,
+          "label": "align"
+        }
+      ],
+      "67": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reach"
+        },
+        {
+          "start": 9,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 22,
+          "label": "align"
+        }
+      ],
+      "68": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 25,
+          "label": "align"
+        }
+      ],
+      "69": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 19,
+          "label": "transport"
+        },
+        {
+          "start": 20,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "70": [
+        {
+          "start": 0,
+          "end": 15,
+          "label": "reach"
+        },
+        {
+          "start": 16,
+          "end": 21,
+          "label": "transport"
+        },
+        {
+          "start": 22,
+          "end": 23,
+          "label": "align"
+        }
+      ],
+      "71": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 17,
+          "label": "transport"
+        },
+        {
+          "start": 18,
+          "end": 18,
+          "label": "align"
+        }
+      ],
+      "72": [
+        {
+          "start": 0,
+          "end": 14,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 15,
+          "end": 39,
+          "label": "reach noisy"
+        },
+        {
+          "start": 40,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "73": [
+        {
+          "start": 0,
+          "end": 15,
+          "label": "reach"
+        },
+        {
+          "start": 16,
+          "end": 26,
+          "label": "transport"
+        },
+        {
+          "start": 27,
+          "end": 31,
+          "label": "align"
+        }
+      ],
+      "74": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reach"
+        },
+        {
+          "start": 6,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 23,
+          "label": "reach"
+        },
+        {
+          "start": 24,
+          "end": 32,
+          "label": "transport"
+        },
+        {
+          "start": 33,
+          "end": 35,
+          "label": "align"
+        }
+      ],
+      "75": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 13,
+          "label": "reach noisy"
+        },
+        {
+          "start": 14,
+          "end": 16,
+          "label": "reach"
+        },
+        {
+          "start": 17,
+          "end": 25,
+          "label": "transport"
+        },
+        {
+          "start": 26,
+          "end": 27,
+          "label": "align"
+        }
+      ],
+      "76": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 16,
+          "label": "transport"
+        },
+        {
+          "start": 17,
+          "end": 25,
+          "label": "align"
+        }
+      ],
+      "77": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach"
+        },
+        {
+          "start": 8,
+          "end": 42,
+          "label": "reach noisy"
+        },
+        {
+          "start": 43,
+          "end": 46,
+          "label": "reach"
+        },
+        {
+          "start": 47,
+          "end": 58,
+          "label": "transport"
+        },
+        {
+          "start": 59,
+          "end": 61,
+          "label": "align"
+        }
+      ],
+      "78": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 26,
+          "label": "transport"
+        },
+        {
+          "start": 27,
+          "end": 30,
+          "label": "align"
+        }
+      ],
+      "79": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach"
+        },
+        {
+          "start": 11,
+          "end": 16,
+          "label": "reach noisy"
+        },
+        {
+          "start": 17,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "80": [
+        {
+          "start": 0,
+          "end": 19,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 20,
+          "end": 30,
+          "label": "transport - bad grasp"
+        },
+        {
+          "start": 31,
+          "end": 62,
+          "label": "align - bad grasp"
+        }
+      ],
+      "81": [
+        {
+          "start": 0,
+          "end": 11,
+          "label": "reach"
+        },
+        {
+          "start": 12,
+          "end": 16,
+          "label": "transport"
+        },
+        {
+          "start": 17,
+          "end": 20,
+          "label": "transport noisy"
+        },
+        {
+          "start": 21,
+          "end": 33,
+          "label": "align"
+        }
+      ],
+      "82": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 23,
+          "label": "transport"
+        },
+        {
+          "start": 24,
+          "end": 29,
+          "label": "align"
+        }
+      ],
+      "83": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 24,
+          "label": "align"
+        }
+      ],
+      "84": [
+        {
+          "start": 0,
+          "end": 5,
+          "label": "reach"
+        },
+        {
+          "start": 6,
+          "end": 13,
+          "label": "reach noisy"
+        },
+        {
+          "start": 14,
+          "end": 17,
+          "label": "reach"
+        },
+        {
+          "start": 18,
+          "end": 27,
+          "label": "transport"
+        }
+      ],
+      "85": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 19,
+          "label": "transport"
+        },
+        {
+          "start": 20,
+          "end": 21,
+          "label": "align"
+        }
+      ],
+      "86": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 22,
+          "label": "transport"
+        },
+        {
+          "start": 23,
+          "end": 25,
+          "label": "align noisy"
+        },
+        {
+          "start": 26,
+          "end": 35,
+          "label": "align"
+        }
+      ],
+      "87": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reach"
+        },
+        {
+          "start": 9,
+          "end": 11,
+          "label": "reach noisy"
+        },
+        {
+          "start": 12,
+          "end": 15,
+          "label": "reach"
+        },
+        {
+          "start": 16,
+          "end": 23,
+          "label": "transport"
+        },
+        {
+          "start": 24,
+          "end": 25,
+          "label": "align"
+        }
+      ],
+      "88": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 12,
+          "label": "transport"
+        }
+      ],
+      "89": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 20,
+          "label": "transport"
+        },
+        {
+          "start": 21,
+          "end": 22,
+          "label": "align"
+        }
+      ],
+      "90": [
+        {
+          "start": 0,
+          "end": 9,
+          "label": "reach"
+        },
+        {
+          "start": 10,
+          "end": 20,
+          "label": "transport noisy"
+        },
+        {
+          "start": 21,
+          "end": 62,
+          "label": "align noisy"
+        }
+      ],
+      "91": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "reach"
+        },
+        {
+          "start": 5,
+          "end": 62,
+          "label": "reach noisy"
+        }
+      ],
+      "92": [
+        {
+          "start": 0,
+          "end": 6,
+          "label": "reach"
+        },
+        {
+          "start": 7,
+          "end": 15,
+          "label": "reach noisy"
+        },
+        {
+          "start": 16,
+          "end": 26,
+          "label": "reach noisy"
+        },
+        {
+          "start": 27,
+          "end": 36,
+          "label": "reach"
+        },
+        {
+          "start": 37,
+          "end": 45,
+          "label": "transport"
+        },
+        {
+          "start": 46,
+          "end": 51,
+          "label": "align"
+        }
+      ],
+      "93": [
+        {
+          "start": 0,
+          "end": 10,
+          "label": "reach - bad grasp"
+        },
+        {
+          "start": 11,
+          "end": 17,
+          "label": "transport"
+        },
+        {
+          "start": 18,
+          "end": 20,
+          "label": "align"
+        }
+      ],
+      "94": [
+        {
+          "start": 0,
+          "end": 15,
+          "label": "reach noisy"
+        },
+        {
+          "start": 16,
+          "end": 34,
+          "label": "reach"
+        },
+        {
+          "start": 35,
+          "end": 45,
+          "label": "transport"
+        },
+        {
+          "start": 46,
+          "end": 49,
+          "label": "align"
+        }
+      ],
+      "95": [
+        {
+          "start": 0,
+          "end": 12,
+          "label": "reach"
+        },
+        {
+          "start": 13,
+          "end": 17,
+          "label": "transport"
+        },
+        {
+          "start": 18,
+          "end": 26,
+          "label": "align"
+        }
+      ],
+      "96": [
+        {
+          "start": 0,
+          "end": 7,
+          "label": "reach noisy"
+        },
+        {
+          "start": 8,
+          "end": 19,
+          "label": "reach noisy"
+        },
+        {
+          "start": 20,
+          "end": 24,
+          "label": "reach noisy"
+        },
+        {
+          "start": 25,
+          "end": 42,
+          "label": "transport"
+        },
+        {
+          "start": 43,
+          "end": 46,
+          "label": "align"
+        }
+      ],
+      "97": [
+        {
+          "start": 0,
+          "end": 8,
+          "label": "reach"
+        },
+        {
+          "start": 9,
+          "end": 15,
+          "label": "transport"
+        },
+        {
+          "start": 16,
+          "end": 17,
+          "label": "align"
+        }
+      ],
+      "98": [
+        {
+          "start": 0,
+          "end": 13,
+          "label": "reach"
+        },
+        {
+          "start": 14,
+          "end": 21,
+          "label": "transport"
+        },
+        {
+          "start": 22,
+          "end": 25,
+          "label": "align"
+        }
+      ],
+      "99": [
+        {
+          "start": 0,
+          "end": 14,
+          "label": "reach"
+        },
+        {
+          "start": 15,
+          "end": 23,
+          "label": "transport"
+        },
+        {
+          "start": 24,
+          "end": 62,
+          "label": "align noisy"
+        }
+      ]
+    },
+    "labels": [
+      "align",
+      "align - bad grasp",
+      "align noisy",
+      "reach",
+      "reach - bad grasp",
+      "reach - slow",
+      "reach noisy",
+      "transport",
+      "transport - bad grasp",
+      "transport drop",
+      "transport noisy"
+    ]
+  },
+  "square_mh_feb15": {
+    "train": {},
+    "holdout": {},
+    "rollout": {},
+    "labels": []
+  },
+  "transport_mh_feb19": {
+    "train": {},
+    "holdout": {},
+    "rollout": {},
+    "labels": []
+  }
+}

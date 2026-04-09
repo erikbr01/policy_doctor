@@ -1,0 +1,340 @@
+# RoboCasa atomic task: train on LeRobot v2 export, eval rollouts via live robosuite env.
+#
+# Dataset adapter: diffusion_policy.dataset.lerobot_robocasa_dataset.LerobotRobocasaImageDataset
+# Env adapter:    diffusion_policy.env_runner.robocasa_image_runner.RobocasaImageRunner
+#
+# Set paths / task (absolute recommended):
+#   ++task.dataset.dataset_path=/path/to/.../lerobot   (LeRobot dataset root)
+#   ++task.env_runner.env_name=PickPlaceCounterToCabinet  (registered robosuite/robocasa env)
+#
+# No HDF5 needed for eval: env_name + env_kwargs are used to instantiate the env directly.
+# Requires robocasa registered on sys.path (use the robocasa conda env).
+
+_target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
+checkpoint:
+  save_last_ckpt: true
+  save_last_snapshot: false
+  topk:
+    format_str: epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt
+    k: 5
+    mode: max
+    monitor_key: test_mean_score
+dataloader:
+  batch_size: 32
+  num_workers: 4
+  persistent_workers: false
+  pin_memory: true
+  shuffle: true
+dataset_obs_steps: 2
+ema:
+  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+exp_name: default
+horizon: 10
+keypoint_visible_rate: 1.0
+logging:
+  group: null
+  id: null
+  mode: online
+  name: train_diffusion_transformer_hybrid_robocasa_lerobot_atomic
+  project: diffusion_policy_debug
+  resume: true
+  tags:
+  - train_diffusion_transformer_hybrid
+  - robocasa_lerobot_atomic
+  - default
+multi_run:
+  run_dir: data/outputs/robocasa_lerobot_atomic/train_diffusion_transformer_hybrid
+  wandb_name_base: robocasa_lerobot_atomic_transformer
+n_action_steps: 8
+n_latency_steps: 0
+n_obs_steps: 2
+name: train_diffusion_transformer_hybrid
+obs_as_cond: true
+optimizer:
+  betas:
+  - 0.9
+  - 0.95
+  learning_rate: 0.0001
+  obs_encoder_weight_decay: 1.0e-06
+  transformer_weight_decay: 0.001
+past_action_visible: false
+policy:
+  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_policy.DiffusionTransformerHybridImagePolicy
+  causal_attn: true
+  crop_shape:
+  - 76
+  - 76
+  eval_fixed_crop: true
+  horizon: 10
+  n_action_steps: 8
+  n_cond_layers: 0
+  n_emb: 256
+  n_head: 4
+  n_layer: 8
+  n_obs_steps: 2
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    beta_start: 0.0001
+    clip_sample: true
+    num_train_timesteps: 100
+    prediction_type: epsilon
+    variance_type: fixed_small
+  num_inference_steps: 100
+  obs_as_cond: true
+  obs_encoder_group_norm: true
+  p_drop_attn: 0.3
+  p_drop_emb: 0.0
+  shape_meta:
+    action:
+      shape:
+      - 12
+    obs:
+      robot0_agentview_right_image:
+        shape:
+        - 3
+        - 256
+        - 256
+        type: rgb
+      robot0_eye_in_hand_image:
+        shape:
+        - 3
+        - 256
+        - 256
+        type: rgb
+      robot0_base_to_eef_pos:
+        shape:
+        - 3
+      robot0_base_to_eef_quat:
+        shape:
+        - 4
+      robot0_gripper_qpos:
+        shape:
+        - 2
+  time_as_cond: true
+shape_meta:
+  action:
+    shape:
+    - 12
+  obs:
+    robot0_agentview_right_image:
+      shape:
+      - 3
+      - 256
+      - 256
+      type: rgb
+    robot0_eye_in_hand_image:
+      shape:
+      - 3
+      - 256
+      - 256
+      type: rgb
+    robot0_base_to_eef_pos:
+      shape:
+      - 3
+    robot0_base_to_eef_quat:
+      shape:
+      - 4
+    robot0_gripper_qpos:
+      shape:
+      - 2
+task:
+  abs_action: false
+  dataset:
+    _target_: diffusion_policy.dataset.lerobot_robocasa_dataset.LerobotRobocasaImageDataset
+    abs_action: false
+    dataset_path: data/robocasa/lerobot/atomic_task
+    embodiment_tag: oxe_droid
+    filter_key: null
+    horizon: 10
+    n_obs_steps: 2
+    pad_after: 7
+    pad_before: 1
+    rotation_rep: rotation_6d
+    seed: 42
+    shape_meta:
+      action:
+        lerobot_keys:
+        - action.end_effector_position
+        - action.end_effector_rotation
+        - action.gripper_close
+        - action.base_motion
+        - action.control_mode
+        shape:
+        - 12
+      obs:
+        robot0_agentview_right_image:
+          lerobot_keys:
+          - video.robot0_agentview_right
+          shape:
+          - 3
+          - 256
+          - 256
+          type: rgb
+        robot0_eye_in_hand_image:
+          lerobot_keys:
+          - video.robot0_eye_in_hand
+          shape:
+          - 3
+          - 256
+          - 256
+          type: rgb
+        robot0_base_to_eef_pos:
+          lerobot_keys:
+          - state.end_effector_position_relative
+          shape:
+          - 3
+          type: low_dim
+        robot0_base_to_eef_quat:
+          lerobot_keys:
+          - state.end_effector_rotation_relative
+          shape:
+          - 4
+          type: low_dim
+        robot0_gripper_qpos:
+          lerobot_keys:
+          - state.gripper_qpos
+          shape:
+          - 2
+          type: low_dim
+    use_cache: false
+    use_legacy_normalizer: false
+    val_ratio: 0.02
+  dataset_path: data/robocasa/lerobot/atomic_task
+  env_runner:
+    _target_: diffusion_policy.env_runner.robocasa_image_runner.RobocasaImageRunner
+    abs_action: false
+    crf: 22
+    # env_name: override per task, e.g. PickPlaceCounterToCabinet
+    # No dataset_path needed — env is created directly from env_name + env_kwargs.
+    env_name: PickPlaceCounterToCabinet
+    env_kwargs:
+      robots: PandaOmron
+      controller_configs:
+        type: OSC_POSE
+        input_max: 1
+        input_min: -1
+        output_max: [0.05, 0.05, 0.05, 0.5, 0.5, 0.5]
+        output_min: [-0.05, -0.05, -0.05, -0.5, -0.5, -0.5]
+        kp: 150
+        damping_ratio: 1
+        impedance_mode: fixed
+        kp_limits: [0, 300]
+        damping_ratio_limits: [0, 10]
+        position_limits: null
+        orientation_limits: null
+        uncouple_pos_ori: true
+        control_delta: true
+        interpolation: null
+        ramp_ratio: 0.2
+      has_renderer: false
+      has_offscreen_renderer: true
+      use_camera_obs: true
+      camera_names:
+      - robot0_agentview_right
+      - robot0_eye_in_hand
+      camera_heights: 256
+      camera_widths: 256
+      camera_depths: false
+      ignore_done: true
+      reward_shaping: false
+      use_object_obs: true
+      clutter_mode: 1
+    fps: 10
+    max_steps: 800
+    n_action_steps: 8
+    n_envs: 1
+    n_obs_steps: 2
+    n_test: 10
+    n_test_vis: 2
+    n_train: 0
+    n_train_vis: 0
+    past_action: false
+    render_obs_key: robot0_agentview_right_image
+    shape_meta:
+      action:
+        shape:
+        - 12
+      obs:
+        robot0_agentview_right_image:
+          shape:
+          - 3
+          - 256
+          - 256
+          type: rgb
+        robot0_eye_in_hand_image:
+          shape:
+          - 3
+          - 256
+          - 256
+          type: rgb
+        robot0_base_to_eef_pos:
+          shape:
+          - 3
+        robot0_base_to_eef_quat:
+          shape:
+          - 4
+        robot0_gripper_qpos:
+          shape:
+          - 2
+    test_start_seed: 100000
+    tqdm_interval_sec: 1.0
+    train_start_idx: 0
+  name: robocasa_lerobot_atomic
+  shape_meta:
+    action:
+      shape:
+      - 12
+    obs:
+      robot0_agentview_right_image:
+        shape:
+        - 3
+        - 256
+        - 256
+        type: rgb
+      robot0_eye_in_hand_image:
+        shape:
+        - 3
+        - 256
+        - 256
+        type: rgb
+      robot0_base_to_eef_pos:
+        shape:
+        - 3
+      robot0_base_to_eef_quat:
+        shape:
+        - 4
+      robot0_gripper_qpos:
+        shape:
+        - 2
+  task_name: robocasa_atomic
+task_name: robocasa_lerobot_atomic_image
+training:
+  checkpoint_every: 25
+  debug: false
+  device: cuda:0
+  gradient_accumulate_every: 1
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  max_train_steps: null
+  max_val_steps: null
+  num_epochs: 800
+  resume: true
+  rollout_every: 25
+  sample_every: 5
+  seed: 42
+  tqdm_interval_sec: 1.0
+  use_ema: true
+  val_every: 1
+val_dataloader:
+  batch_size: 32
+  num_workers: 4
+  persistent_workers: false
+  pin_memory: true
+  shuffle: false

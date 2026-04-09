@@ -1,153 +1,292 @@
 # policy_doctor
 
-Influence-based policy analysis and curation. Refactor of the influence_visualizer package with strict separation of data, computation, and visualization.
+Influence-based policy analysis and curation. This repo refactors **influence_visualizer** with a clear split between data, computation, and visualization.
 
-This tree is a **standalone repository**. Training, eval scripts, and Hydra configs come from vendored **cupid** under `third_party/cupid/`. Task YAMLs, clustering artifacts, and `influence_visualizer` live under `third_party/influence_visualizer/`. `policy_doctor.paths.REPO_ROOT` points at `third_party/cupid` when that directory exists (data paths such as `data/outputs/...` in configs are relative to that root). IV task configs are resolved via `iv_task_configs_base()` (`third_party/influence_visualizer/configs` in this layout).
+**Standalone layout:** training and eval live in vendored **cupid** (`third_party/cupid/`). Task YAMLs and clustering trees used by the app often live in **influence_visualizer** (`third_party/influence_visualizer/`). Hydra configs for the pipeline ship inside the **`policy_doctor`** package (`policy_doctor/configs/`).
 
-## Layout
+`policy_doctor.paths.REPO_ROOT` points at `third_party/cupid` when that directory exists, so paths such as `data/outputs/train/...` in task YAMLs are resolved from the cupid tree. IV-style task configs are resolved via `iv_task_configs_base()` (typically `third_party/influence_visualizer/configs`).
 
-- **/** (this directory) — Repository root: `pyproject.toml`, `README.md`, `tests/`, `third_party/`
-- **policy_doctor/** — Importable Python package `policy_doctor` (code + bundled `configs/`)
-- **third_party/cupid/** — Vendored cupid (training stack, `eval_save_episodes.py`, `configs/` for Robomimic, etc.); packaged as editable **`cupid-workspace`** (`pyproject.toml`: namespace `diffusion_policy/*`, `influence_embeddings`, and root script modules). Excludes nested `policy_doctor` / `influence_visualizer`
-- **third_party/influence_visualizer/** — Vendored influence_visualizer (data loading, clustering persistence, Streamlit helpers)
+## Quick start
 
-Source tree (high level):
+1. Create the conda env and install the three editable packages (requires `third_party/cupid` and `third_party/influence_visualizer`):
 
-- **data/** — Data structures (Trajectory, Segment, Sample), influence matrix wrappers (GlobalInfluenceMatrix, LocalInfluenceMatrix), backing store, loaders, aggregation
-- **computations/** — Slice influence, embeddings, trajectory-level explanations
-- **behaviors/** — Clustering (KNN, HDBSCAN, Gaussian Mixture; UMAP, PCA), behavior graph, slice values
-- **curation/** — Curation config (save/load, fingerprint), attribution (slice search)
-- **plotting/** — Pure Plotly figures (heatmaps, clusters, behavior graph, frames) and **Pyvis** interactive behavior graph (vis.js; returns HTML for st.components.v1.html). No Streamlit; used by streamlit_app and scripts. Ported from influence_visualizer.
-- **streamlit_app/** — Streamlit UI (orchestration only): sidebar config, tabs (Clustering, Behavior graph, Annotation, Learning). Uses data/, computations/, behaviors/, curation/, and **plotting/** for figures.
-- **scripts/** — `run_pipeline.py`: single CLI entry point for all pipeline steps (training, eval, attribution, infembed, clustering, curation, comparison)
-- **curation_pipeline/** — Config loaders, path resolution, and step runners for the full curation flow (train baseline → eval → attribution → curation config → train curated)
-- **configs/** — Task YAMLs, pipeline defaults, and **configs/robomimic/** for env-specific configs (baseline, evaluation, attribution, curation_filtering, curation_selection)
-- **tests/** (under project root) — Unit tests for data, computations, behaviors, curation
-- **third_party/mimicgen/** — Git submodule: NVlabs MimicGen (data-generation code). Used with a **dedicated** conda env (see below), not mixed into the cupid training stack.
-- **policy_doctor/datagen/mimicgen/** — Scaffolding to turn rollouts into robomimic-shaped source HDF5 and call MimicGen scripts; safe to develop against the **mimicgen** env. Attribution / curation code is unchanged until we explicitly wire it to MimicGen outputs.
+   ```bash
+   conda env create -f environment_policy_doctor.yaml
+   ./scripts/install_policy_doctor_env.sh
+   conda activate policy_doctor
+   ```
 
-## Conda environments (three stacks)
+2. Run tests from the **policy_doctor project root** (directory that contains `pyproject.toml`):
 
-We deliberately use **separate conda envs** for three concerns. Training data and rollouts are tied to a **specific MuJoCo + robosuite + robomimic** combination; NVlabs’ released MimicGen assets target an **older** stack (MuJoCo 2.3.2 and pinned robosuite/robomimic). Putting everything in one env would force either broken dataset replay or abandoned MimicGen compatibility.
+   ```bash
+   # Full discover in one env (needs all optional deps — often impractical):
+   python run_tests.py --suite all
 
-| Env name | File / entrypoint | Role |
-|----------|-------------------|------|
-| **`policy_doctor`** | `environment_policy_doctor.yaml`, `scripts/install_policy_doctor_env.sh` | Package dev: tests, Streamlit, pipeline CLI, editable `policy_doctor` + vendored cupid + influence_visualizer. Python 3.10; PyTorch from `requirements_policy_doctor.txt` (CPU index by default). **Not** the full cupid sim pin set. |
-| **`cupid`** | `third_party/cupid/conda_environment.yaml` (or top-level `cupid/`), `scripts/install_cupid_env.sh` | **Diffusion training and robomimic experiments** (e.g. transport, `eval_save_episodes`): Python 3.9, PyTorch 1.12 / CUDA 11.6, robosuite fork, robomimic 0.2, MuJoCo 3.2.6, editable `diffusion_policy` via the yaml `pip:` section. |
-| **`mimicgen`** | `environment_mimicgen.yaml`, `scripts/install_mimicgen_env.sh` | **MimicGen data generation** aligned with [their install docs](https://mimicgen.github.io/docs/introduction/installation.html): Python 3.8, `mujoco==2.3.2`, robosuite + robomimic at the commits they specify, then `pip install -e third_party/mimicgen`. |
+   # Recommended: stack-matched conda envs
+   ./scripts/run_tests_policy_doctor.sh   # orchestration (data, curation, plotting, VLM, …)
+   ./scripts/run_tests_cupid.sh           # mar27 transport / diffusion_policy integration
+   ./scripts/run_tests_mimicgen.sh        # MimicGen seeds (+ MIMICGEN_E2E=1 for HF + sim)
+   ```
 
-Constants for tooling: `policy_doctor.paths.CUPID_CONDA_ENV_NAME` / `MIMICGEN_CONDA_ENV_NAME`.
+   Same suites without shell wrappers: `conda activate <env>` then `python run_tests.py --suite policy_doctor|cupid|mimicgen`.
 
-**Workflow in practice**
+3. Training, rollouts, TRAK, and InfEmbed expect the separate **`cupid`** sim stack (see [Conda environments](#conda-environments)):
 
-- Day-to-day curation and UI: `conda activate policy_doctor` (and install PyTorch3D if you load real diffusion checkpoints; see below).
-- Train or eval policies, reproduce mar27-style transport runs: `conda activate cupid` after `./scripts/install_cupid_env.sh` (from this repo) or `./scripts/install_cupid_env.sh` from the cupid checkout.
-- Run `prepare_src_dataset` / `generate_dataset` on NVlabs-style data: `conda activate mimicgen`. Future work: run attribution against artifacts produced here without merging the sim stacks.
+   ```bash
+   ./scripts/install_cupid_env.sh
+   conda activate cupid
+   ```
 
-**Cupid install (create or update)**
+## Curation pipeline (Hydra)
+
+The single entry point is `policy_doctor.scripts.run_pipeline`. It uses **Hydra** (`policy_doctor/configs/config.yaml` plus optional `+experiment=...`). There is **no** positional `STEP ENV STATE TASK` CLI anymore.
+
+**Defaults:** `steps: []` in the base config is treated as “run the full ordered sequence” (see [Pipeline step order](#pipeline-step-order)). To run a subset, pass `steps=[...]` on the command line or in an experiment YAML under `policy_doctor/configs/experiment/`.
+
+**Run directory:** Unless you set an absolute `run_dir`, it defaults to `<REPO_ROOT>/data/pipeline_runs/<run_name>/`. With vendored cupid, `REPO_ROOT` is `third_party/cupid`, so run metadata and per-step folders sit beside `data/outputs/`. Each completed step writes `<step_name>/done` and usually `<step_name>/result.json`. With `skip_if_done=true` (default), re-running resumes from the last incomplete step.
+
+**Common flags (Hydra overrides):**
+
+| Override | Meaning |
+|----------|---------|
+| `+experiment=name` | Merge `policy_doctor/configs/experiment/<name>.yaml` (note leading `+` when adding a new defaults group) |
+| `steps=[a,b]` | Run only those steps, in order |
+| `dry_run=true` | Print planned work; no heavy compute |
+| `skip_if_done=false` | Ignore `done` sentinels and re-execute |
+| `run_name=myrun` | Stable name for `run_dir` (default is a timestamp) |
+| `run_dir=/abs/path` | Fixed run folder (absolute path) |
+
+**Examples** (from the policy_doctor project root, with the appropriate conda env active — usually **`cupid`** for anything that trains or hits the sim):
 
 ```bash
-# From policy_doctor (discovers third_party/cupid or ../cupid)
-./scripts/install_cupid_env.sh
-./scripts/install_cupid_env.sh --update   # conda env update --prune
+# Full pipeline (all steps, default order) with explicit dates
+python -m policy_doctor.scripts.run_pipeline train_date=jan28 eval_date=jan28
 
-# Or from the cupid repo root
-./scripts/install_cupid_env.sh
+# Same as many experiment YAMLs comment blocks: clustering → curation configs → curated train/eval
+python -m policy_doctor.scripts.run_pipeline +experiment=trak_filtering_mar13_p96 \
+  steps=[run_clustering,run_curation_config,train_curated,eval_curated]
+
+# Resume later (re-uses completed steps under the same run_dir)
+python -m policy_doctor.scripts.run_pipeline +experiment=trak_filtering_mar13_p96 \
+  run_dir=third_party/cupid/data/pipeline_runs/myrun \
+  steps=[train_curated,eval_curated]
+
+# Dry-run one step
+python -m policy_doctor.scripts.run_pipeline steps=[eval_policies] dry_run=true train_date=jan28 eval_date=jan28
 ```
 
-System packages for `free-mujoco-py` (see `conda_environment.yaml`): e.g. Debian/Ubuntu `libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf`.
+Switching **task** (e.g. lift vs transport) requires consistent Hydra groups: see `policy_doctor/configs/config.yaml` defaults (`baseline`, `evaluation`, `attribution`, `curation_filtering`, `curation_selection`) and override them together with top-level `task` and `task_config` (the YAML stem under `influence_visualizer/configs` or `policy_doctor/configs`, e.g. `transport_mh_jan28`).
 
-**Mimicgen install**
+### Pipeline step order
+
+Ordered list (from `policy_doctor.curation_pipeline.pipeline.ALL_STEPS`):
+
+1. `train_baseline` → `eval_policies` → `train_attribution` → `finalize_attribution` → `compute_demonstration_scores` → `compute_infembed` → `run_clustering` → `export_markov_report` → `annotate_slices_vlm` → `summarize_behaviors_vlm` → `evaluate_cluster_coherency_vlm` → `run_curation_config` → `train_curated` → `eval_curated` → `compare`
+
+Optional VLM steps are no-ops unless configured; `finalize_attribution` skips when `attribution.num_ckpts <= 1`. `export_markov_report` reads `run_clustering/result.json`; `evaluate_cluster_coherency_vlm` requires `annotate_slices_vlm` outputs in the same `run_dir`.
+
+<details>
+<summary><strong>Per-step: how to run and how to verify</strong></summary>
+
+Unless noted, run from the project root with `python -m policy_doctor.scripts.run_pipeline steps=[<step>] ...` plus your `train_date`, `eval_date`, `task_config`, `+experiment`, etc. **Artifacts under `data/outputs/`** are relative to **`REPO_ROOT`** (vendored cupid). **Pipeline metadata** is under `<run_dir>/<step_name>/` (see [Curation pipeline](#curation-pipeline-hydra)).
+
+| Step | Typical conda env | Run (example pattern) | Verify |
+|------|-------------------|------------------------|--------|
+| `train_baseline` | `cupid` | `steps=[train_baseline] train_date=jan28` | Checkpoints under `third_party/cupid/data/outputs/train/<train_date>/<train_date>_train_<policy>_<task>_<seed>/` (layout from `get_train_dir` in `curation_pipeline/paths.py`). |
+| `eval_policies` | `cupid` | `steps=[eval_policies] train_date=jan28 eval_date=jan28` | Rollout dir: `.../data/outputs/eval_save_episodes/<eval_date>/<name>/<train_ckpt>/` with episode pickles / logs (used by later steps). |
+| `train_attribution` | `cupid` | `steps=[train_attribution] train_date=jan28 eval_date=jan28` | TRAK / attribution outputs under the eval rollout tree per cupid conventions (see `attribution` config). |
+| `finalize_attribution` | `cupid` | `steps=[finalize_attribution] ...` | Only runs when `attribution.num_ckpts > 1`; otherwise prints skipped. |
+| `compute_demonstration_scores` | `cupid` | `steps=[compute_demonstration_scores] ...` | Demonstration score artifacts under eval/train paths per `eval_demonstration_scores` (see attribution config `result_date`, `exp_name`). |
+| `compute_infembed` | `cupid` | `steps=[compute_infembed] ...` | InfEmbed outputs next to eval rollouts / checkpoints per `compute_infembed_embeddings`. |
+| `run_clustering` | `policy_doctor` or `cupid` | `steps=[run_clustering] task_config=transport_mh_jan28` (+ clustering hyperparameters or `+experiment`) | `run_clustering/result.json` maps each seed to a directory under `third_party/influence_visualizer/configs/<task_config>/clustering/<slug>/` with `manifest.yaml`, `cluster_labels.npy`, `metadata.json`. |
+| `export_markov_report` | `policy_doctor` | `steps=[export_markov_report] ...` | Reads clustering from `run_clustering`; writes `<run_dir>/export_markov_report/markov_report_seed*.json`. Tuning: `markov_export.*` in `configs/pipeline/config.yaml`. |
+| `annotate_slices_vlm` | `policy_doctor` | `steps=[annotate_slices_vlm] ...` | Configure `policy_doctor/configs/vlm/`. Outputs under `<run_dir>/annotate_slices_vlm/` (e.g. `annotations_seed*.jsonl`). |
+| `summarize_behaviors_vlm` | `policy_doctor` | `steps=[summarize_behaviors_vlm] ...` | Uses VLM defaults; outputs under `<run_dir>/summarize_behaviors_vlm/`. |
+| `evaluate_cluster_coherency_vlm` | `policy_doctor` | `steps=[evaluate_cluster_coherency_vlm] ...` | After `annotate_slices_vlm`; per-cluster JSON judgments under `<run_dir>/evaluate_cluster_coherency_vlm/`. Config: `vlm_coherency_eval` in `configs/vlm/defaults.yaml`. |
+| `run_curation_config` | `policy_doctor` | `steps=[run_curation_config] ...` (often after `run_clustering`) | `run_curation_config/result.json` lists generated YAML paths (per seed). If `clustering_dir` is unset, paths from the prior `run_clustering` step in the same `run_dir` are used. |
+| `train_curated` | `cupid` | `steps=[train_curated] ...` | If `curation_config_path` unset, loads paths from `run_curation_config` in the same run. New training dirs under `data/outputs/train/` with curated naming from Hydra workspace. |
+| `eval_curated` | `cupid` | `steps=[eval_curated] ...` | New eval dirs under `data/outputs/eval_save_episodes/`. |
+| `compare` | `policy_doctor` | `steps=[compare] ...` | Reads `eval_log.json` for baseline vs curated runs; result in `compare/result.json` and printed table. |
+
+</details>
+
+## Diffusion policy training
+
+Three scripts under `scripts/experiments/` launch full diffusion policy training runs directly (bypassing the curation pipeline). Each wraps `third_party/cupid/train.py` with the right conda env, config directory, and data paths. Any extra arguments are passed through as Hydra overrides.
+
+### Data sources and environments
+
+| Script | Conda env | Data source | Policy type |
+|--------|-----------|-------------|-------------|
+| `train_robomimic_square.sh` | `cupid` | Robomimic Square MH (`low_dim_abs.hdf5`) | Transformer, low-dim |
+| `train_mimicgen_square.sh` | `cupid` | MimicGen Square D1 (`demo.hdf5`) | CNN, low-dim |
+| `train_robocasa_atomic.sh` | `robocasa` | RoboCasa LeRobot v2 (no HDF5) | Transformer, image/hybrid |
+
+The **robocasa** env uses robosuite 1.5.2 and evaluates entirely via live rollouts — no eval HDF5 is needed or used.
+
+### Quick start
 
 ```bash
-./scripts/install_mimicgen_env.sh   # creates conda env mimicgen if missing, then pip pins
+# Robomimic Square MH — full training run
+./scripts/experiments/train_robomimic_square.sh
+
+# MimicGen Square D1 — full training run
+./scripts/experiments/train_mimicgen_square.sh
+
+# RoboCasa atomic — PickPlaceCounterToCabinet (default)
+./scripts/experiments/train_robocasa_atomic.sh
+
+# RoboCasa atomic — different task (dataset auto-discovered from data/source/robocasa/)
+./scripts/experiments/train_robocasa_atomic.sh OpenCabinet
+```
+
+### Overriding Hydra parameters
+
+All extra positional arguments are forwarded as Hydra overrides:
+
+```bash
+# Custom output directory and W&B project
+./scripts/experiments/train_robomimic_square.sh \
+  multi_run.run_dir=/data/outputs/my_run \
+  logging.project=corl_experiments
+
+# Shorter run for debugging
+./scripts/experiments/train_mimicgen_square.sh \
+  training.num_epochs=10 \
+  training.device=cuda:1
+
+# RoboCasa with explicit dataset path (overrides auto-discovery)
+./scripts/experiments/train_robocasa_atomic.sh PickPlaceCounterToCabinet \
+  "task.dataset.dataset_path=/mnt/ssdB/erik/robocasa_data/v1.0/target/atomic/PickPlaceCounterToCabinet/20250811/lerobot"
+```
+
+Common Hydra keys across all three scripts:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `training.num_epochs` | 800 | Total training epochs |
+| `training.device` | `cuda:0` | PyTorch device |
+| `multi_run.run_dir` | `data/outputs/...` (relative to `third_party/cupid`) | Output directory |
+| `logging.project` | `diffusion_policy_debug` | W&B project name |
+| `logging.mode` | `online` | Set to `offline` to disable W&B upload |
+| `task.dataset.dataset_path` | set by script | Dataset path (HDF5 or LeRobot root) |
+| `task.dataset_path` | set by script | Top-level alias (also set by script) |
+| `task.env_runner.dataset_path` | set by script | Eval HDF5 path (robomimic/mimicgen only) |
+| `task.env_runner.n_test` | 50 (varies) | Number of eval rollout episodes |
+
+### Environment variables
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MUJOCO_GL` | `egl` | MuJoCo rendering backend (`egl`, `osmesa`, `glfw`) |
+| `WANDB_MODE` | `online` | Set to `offline` to skip W&B cloud sync |
+
+### Data paths
+
+Scripts resolve datasets from **`data/source/`** at the project root (symlinks to `/mnt/ssdB/erik/`):
+
+| Script | Dataset path |
+|--------|-------------|
+| `train_robomimic_square.sh` | `data/source/robomimic/datasets/square/mh/low_dim_abs.hdf5` |
+| `train_mimicgen_square.sh` | `data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5` |
+| `train_robocasa_atomic.sh` | `data/source/robocasa/v1.0/target/atomic/<TASK>/<latest-date>/lerobot/` (auto-discovered) |
+
+---
+
+## Shell scripts (this repository)
+
+Scripts below live under **`scripts/`** at the **policy_doctor project root** (next to `pyproject.toml`).
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/install_policy_doctor_env.sh` | After `conda env create -f environment_policy_doctor.yaml`, installs `requirements_policy_doctor.txt` and `pip install -e` for `third_party/cupid`, `third_party/influence_visualizer`, and `.` |
+| `scripts/install_cupid_env.sh` | Creates or updates conda env **`cupid`** from `third_party/cupid/conda_environment.yaml` (or sibling `../cupid`). Same role as `third_party/cupid/scripts/install_cupid_env.sh`; use whichever path you prefer. Flags: `--update` / `-u` |
+| `scripts/install_mimicgen_env.sh` | Creates conda env **`mimicgen`** from `environment_mimicgen.yaml`, then pins MimicGen / robosuite / robomimic per NVlabs docs |
+
+**Related (not in `scripts/`):**
+
+- `python scripts/mimicgen_headless_smoke_test.py` — headless MimicGen / MuJoCo smoke check (`MUJOCO_GL=egl` or `osmesa`).
+
+<details>
+<summary><strong>Repository layout</strong></summary>
+
+- **/** — Project root: `pyproject.toml`, `README.md`, `run_tests.py`, `tests/`, `scripts/`, `environment_*.yaml`, `third_party/`
+- **policy_doctor/** — Importable package: attribution, `data/`, `computations/`, `behaviors/`, `curation/`, `plotting/`, `streamlit_app/`, `curation_pipeline/`, pipeline **`configs/`** (no bundled diffusion_policy / train workspaces)
+- **third_party/cupid/** — Training stack (diffusion_policy, `eval_save_episodes.py`, robomimic Hydra configs); packaged as editable **`cupid-workspace`**
+- **third_party/influence_visualizer/** — Data loading, clustering persistence, Streamlit-oriented helpers
+- **third_party/mimicgen/** — Optional NVlabs MimicGen submodule; **mimicgen** conda env (older MuJoCo / robosuite pin)
+- **third_party/robocasa/** — RoboCasa kitchen sim submodule (`git submodule update --init third_party/robocasa`)
+Source package map (under `policy_doctor/`): **data** (trajectories, influence matrices), **computations**, **behaviors** (clustering, behavior graph), **curation**, **plotting** (Plotly + Pyvis), **streamlit_app** (UI only), **scripts/run_pipeline.py** (Hydra CLI).
+
+</details>
+
+## Conda environments
+
+| Env | Install | Role |
+|-----|---------|------|
+| **`policy_doctor`** | `environment_policy_doctor.yaml` + `./scripts/install_policy_doctor_env.sh` | Package dev, tests, Streamlit, pipeline orchestration, clustering/curation steps that only need Python deps |
+| **`cupid`** | `./scripts/install_cupid_env.sh` | Diffusion training, `eval_save_episodes`, TRAK, InfEmbed, curated retraining (Py 3.9, pinned sim stack) |
+| **`mimicgen`** | `./scripts/install_mimicgen_env.sh` | MimicGen data generation (Py 3.8, MuJoCo 2.3.2, pinned robosuite / robomimic) |
+
+Constants: `policy_doctor.paths.CUPID_CONDA_ENV_NAME`, `MIMICGEN_CONDA_ENV_NAME`, `POLICY_DOCTOR_CONDA_ENV_NAME`.
+
+**Paths:** training and eval use `policy_doctor.paths.REPO_ROOT` (typically `third_party/cupid`). TRAK / InfEmbed settings live under Hydra `cfg.attribution` (`configs/robomimic/attribution/`) and pipeline steps `compute_demonstration_scores`, `compute_infembed`, `finalize_attribution`.
+
+<details>
+<summary><strong>Install details (system packages, CUDA, submodule)</strong></summary>
+
+**Cupid**
+
+```bash
+./scripts/install_cupid_env.sh
+./scripts/install_cupid_env.sh --update
+```
+
+System packages for `free-mujoco-py` (see cupid `conda_environment.yaml`): e.g. Debian/Ubuntu `libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf`.
+
+**MimicGen**
+
+```bash
+./scripts/install_mimicgen_env.sh
 conda activate mimicgen
 ```
 
-If you only changed `environment_mimicgen.yaml` and the env exists: `conda env update -f environment_mimicgen.yaml -n mimicgen`, then re-run the install script for pip steps.
+Optional CUDA PyTorch: set `TORCH_INDEX` (see script header). Submodule: `git submodule update --init third_party/mimicgen`.
 
-Optional CUDA PyTorch for mimicgen: set `TORCH_INDEX` (see script header). Submodule: `git submodule update --init third_party/mimicgen`.
+Headless: `MUJOCO_GL=egl python scripts/mimicgen_headless_smoke_test.py` (or `MUJOCO_GL=osmesa`).
 
-Headless / no `DISPLAY`: `MUJOCO_GL=egl python scripts/mimicgen_headless_smoke_test.py` (or `MUJOCO_GL=osmesa`). The upstream `demo_random_action.py` needs X11 because it imports keyboard utilities.
+Optional E2E (HF + sim): `MIMICGEN_E2E=1 python -m unittest tests.integration.test_mimicgen_square_e2e -v`.
 
-The install script copies robosuite `macros_private.py` and installs `robosuite_task_zoo` (pinned, `--no-deps`) so `import mimicgen` is quiet. If you created the env earlier, re-run `./scripts/install_mimicgen_env.sh` once to pick that up.
+**policy_doctor**
 
-**MimicGen E2E tests** (optional, Hugging Face + sim): `MIMICGEN_E2E=1 python -m unittest tests.integration.test_mimicgen_square_e2e -v`.
+- **CUDA PyTorch:** adjust `requirements_policy_doctor.txt` (drop CPU index, install GPU wheels), then re-run editable installs.
+- **PyTorch3D:** needed when loading real diffusion checkpoints in Streamlit / some tests; install to match your torch build (e.g. `conda install pytorch3d -c pytorch3d`).
+- **Monorepo fallback:** if `third_party/cupid` is missing, `REPO_ROOT` can fall back to a parent tree that contains sibling `influence_visualizer/` (legacy layout).
 
-### Conda environment `policy_doctor` (analysis / dev)
-
-Editable installs for all three **code** trees — no `PYTHONPATH` or `sys.path` injection for normal development.
-
-```bash
-conda env create -f environment_policy_doctor.yaml
-./scripts/install_policy_doctor_env.sh   # uses .../envs/policy_doctor/bin/python -m pip
-conda activate policy_doctor
-```
-
-The script installs, in order: `requirements_policy_doctor.txt` (PyTorch CPU wheels by default), then `pip install -e third_party/cupid`, `pip install -e third_party/influence_visualizer`, `pip install -e .`.
-
-- **CUDA PyTorch:** edit `requirements_policy_doctor.txt` — remove the `--extra-index-url …/cpu` line and install `torch` / `torchvision` the way you usually do for your GPU stack, then re-run the three `pip install -e` lines (or the whole script after commenting the duplicate torch install).
-
-- **PyTorch3D:** `load_influence_data` pulls in diffusion_policy modules that import `pytorch3d`. For integration tests and Streamlit on real checkpoints, install it the usual way for your platform (e.g. `conda install pytorch3d -c pytorch3d`, matching your CUDA PyTorch build).
-
-- **Monorepo fallback:** if `third_party/cupid` is missing, `REPO_ROOT` in `policy_doctor.paths` falls back to the parent directory when it contains a sibling `influence_visualizer/` (legacy cupid layout). You still need `influence_visualizer` and `diffusion_policy` importable (e.g. editable installs from those repos).
-
-## Running tests
-
-From the repo root with `conda activate policy_doctor`:
-
-```bash
-python run_tests.py
-```
-
-Or with pytest:
-
-```bash
-pytest tests/ -v
-```
+</details>
 
 ## Streamlit app
 
-From the repo root:
+From the project root, with `policy_doctor` env active:
 
 ```bash
-streamlit run policy_doctor.streamlit_app.app
+streamlit run policy_doctor/streamlit_app/app.py
 ```
 
-Select a task config from the sidebar (e.g. `transport_mh_jan28`). Data loading uses `policy_doctor.data.influence_loader` (requires influence_visualizer when not using a native loader). The Clustering tab shows an influence heatmap preview via `policy_doctor.plotting`. Static figures use Plotly; the interactive draggable behavior graph uses **Pyvis** (vis.js) — same as influence_visualizer. Install with `pip install pyvis` for the interactive graph view.
+The Clustering tab and plotting stack expect `pyvis` for the interactive behavior graph when enabled.
 
-## Config layout and curation pipeline
+## Config layout
 
-Configs are under **configs/robomimic/** (and optionally other envs later):
+Hydra defaults: **`policy_doctor/configs/config.yaml`**. **Data source** (which simulator / HDF5 family): Hydra group **`data_source`** in **`policy_doctor/configs/data_source/`** — default **`cupid_robomimic`** (transport MH + cupid); switch with `data_source=mimicgen_square` or `data_source=robocasa_layout`. Canonical diffusion / datagen YAMLs stay under **`third_party/cupid`** and **`third_party/mimicgen`**; policy_doctor composes them via `baseline.config_dir` and optional `baseline.diffusion_dataset_path` / `baseline.diffusion_compose_overrides`.
 
-- **tasks/** — Task-level defaults (dataset_path, obs_dim, action_dim) for lift_mh, square_mh, transport_mh
-- **baseline/** — Baseline training (no curation): one YAML per state/task (e.g. low_dim/lift_mh.yaml) with method, seeds, epochs, dataset splits
-- **evaluation/** — Params for eval_save_episodes (train_date, eval_date, num_episodes, device, etc.)
-- **attribution/** — Params for train_trak, finalize_trak, eval_demonstration_scores (TRAK and scoring flags)
-- **curation_filtering/** — Retrain with filtered train set; references baseline + optional curation_config_path
-- **curation_selection/** — Retrain with train + selected holdout; references baseline + curation_config_path (e.g. from run_pipeline)
-- **configs/pipeline/** — Defaults for run_pipeline (clustering → behavior graph → slice search → save curation YAML)
+Robomimic task slices: **`policy_doctor/configs/robomimic/`** (`tasks/`, `baseline/`, `evaluation/`, `attribution/`, `curation_filtering/`, `curation_selection/`). Pipeline slice search / curation defaults: **`policy_doctor/configs/pipeline/config.yaml`**. Experiment presets (Hydra group **`experiment`**): **`policy_doctor/configs/experiment/`** — select with `experiment=name` or `+experiment=name` (e.g. `trak_filtering_mar13_p96`, `auto_pipeline_test_mar13`).
 
-Override any key via the CLI when running the pipeline (e.g. `train_date=jan18`).
+**Experiment shell wrappers** (conda `run_pipeline` with the right `data_source`): **`scripts/experiments/`** — e.g. `./scripts/experiments/run_cupid_robomimic_transport.sh cupid steps=[run_clustering] dry_run=true`. Direct diffusion training scripts (bypassing the pipeline) are also in `scripts/experiments/` — see [Diffusion policy training](#diffusion-policy-training).
 
-### Running one step or the full pipeline
+**RoboCasa submodule:** `git submodule update --init third_party/robocasa` — path constant `policy_doctor.paths.ROBOCASA_ROOT`.
 
-From the **repo root**:
+**Local data (not committed):** put HDF5 / exports under **`data/source/robomimic`**, **`data/source/robocasa`**, **`data/source/mimicgen`** at the **project root** (next to `pyproject.toml`). Constant `policy_doctor.paths.DATA_SOURCE_ROOT` points there. Diffusion and eval still read **`data/...` relative to `REPO_ROOT`** (vendored **`third_party/cupid`**), so either symlink (e.g. `third_party/cupid/data/source` → `../../../data/source` or per-dataset links into `cupid/data/robomimic/...`), or set **`baseline.diffusion_dataset_path`** / Hydra `++task.dataset.dataset_path=...` to an **absolute** path under `data/source/...`.
 
-```bash
-# Single step (positional: step, env, state, task; then KEY=VALUE overrides)
-python -m policy_doctor.scripts.run_pipeline train_baseline robomimic low_dim lift_mh train_date=jan18
-python -m policy_doctor.scripts.run_pipeline eval_policies robomimic low_dim lift_mh train_date=jan18
-python -m policy_doctor.scripts.run_pipeline train_attribution robomimic low_dim lift_mh train_date=jan18 eval_date=jan18
-python -m policy_doctor.scripts.run_pipeline compute_infembed robomimic low_dim transport_mh seeds=[1,2] train_date=jan28 eval_date=jan28
-python -m policy_doctor.scripts.run_pipeline compute_demonstration_scores robomimic low_dim lift_mh train_date=jan18
-# Curation config (requires task_config and clustering_dir in overrides)
-python -m policy_doctor.scripts.run_pipeline run_curation_config robomimic low_dim transport_mh task_config=transport_mh_jan28 clustering_dir=../influence_visualizer/configs/transport_mh_jan28/clustering/sliding_window_rollout_kmeans_k15_2026_03_05
-# Curated training (set curation_config_path in config or overrides); paths are relative to third_party/cupid when using the default repo_root
-python -m policy_doctor.scripts.run_pipeline train_curated robomimic low_dim transport_mh train_date=jan18 curation_config_path=../influence_visualizer/configs/transport_mh_jan28/curation/test_advantage_selection.yaml
+---
 
-# Full pipeline (all steps in order)
-python -m policy_doctor.scripts.run_pipeline full robomimic low_dim transport_mh train_date=jan18 eval_date=jan28
-```
-
-Steps: `train_baseline` → `eval_policies` → `train_attribution` → `finalize_attribution` (if multi-ckpt) → `compute_demonstration_scores` → `compute_infembed` → `run_clustering` → `run_curation_config` → `train_curated` → `eval_curated` → `compare`. Use `--dry-run` to print commands without running.
+*If anything here disagrees with the code, treat the implementation (`run_pipeline.py`, `curation_pipeline/pipeline.py`, `configs/config.yaml`) as canonical.*

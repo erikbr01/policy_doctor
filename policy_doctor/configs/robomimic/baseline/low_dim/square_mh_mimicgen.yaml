@@ -1,0 +1,19 @@
+# Baseline training: square_mh_mimicgen low_dim (no curation)
+task: square_mh_mimicgen
+state: low_dim
+method: diffusion_policy_cnn
+config_dir: configs/low_dim/square_mimicgen_lowdim/diffusion_policy_cnn
+config_name: config.yaml
+policy: diffusion_unet_lowdim
+
+seeds: [0, 1, 2]
+num_epochs: 1751
+checkpoint_topk: 3
+checkpoint_every: 50
+
+train_ratio: 0.64
+val_ratio: 0.04
+uniform_quality: true
+
+output_dir: data/outputs/train
+project: influence-clustering

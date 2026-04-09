@@ -11,8 +11,8 @@ from policy_doctor.behaviors.behavior_graph import (
     START_NODE_ID,
     SUCCESS_NODE_ID,
     get_rollout_slices_for_paths,
-    test_markov_property,
-    test_markov_property_pooled,
+    test_markov_property as markov_property_check,
+    test_markov_property_pooled as markov_property_check_pooled,
 )
 
 
@@ -159,7 +159,7 @@ def _generate_markov_episodes(
 ) -> tuple:
     """Simulate episodes from a first-order Markov chain.
 
-    Returns (labels, metadata) suitable for test_markov_property.
+    Returns (labels, metadata) suitable for markov_property_check.
     """
     n_states = transition_matrix.shape[0]
     labels_list = []
@@ -214,8 +214,7 @@ def _generate_non_markov_episodes(
 
 
 class TestMarkovProperty(unittest.TestCase):
-    """Verify that test_markov_property correctly identifies Markov and
-    non-Markov transition dynamics."""
+    """Verify Markov property checks correctly identify Markov vs non-Markov dynamics."""
 
     def test_true_markov_chain_passes(self):
         """Data generated from a genuine Markov chain should not be rejected."""
@@ -228,7 +227,7 @@ class TestMarkovProperty(unittest.TestCase):
         labels, metadata = _generate_markov_episodes(
             P, num_episodes=500, min_len=15, max_len=25, rng=rng
         )
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, significance_level=0.01, exclude_terminals=True,
         )
         self.assertIsNotNone(result["markov_holds"])
@@ -252,7 +251,7 @@ class TestMarkovProperty(unittest.TestCase):
         labels, metadata = _generate_non_markov_episodes(
             num_episodes=300, rng=rng
         )
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, significance_level=0.05, exclude_terminals=True,
         )
         self.assertIsNotNone(result["markov_holds"])
@@ -268,7 +267,7 @@ class TestMarkovProperty(unittest.TestCase):
         labels, metadata = _generate_non_markov_episodes(
             num_episodes=300, rng=rng
         )
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, significance_level=0.05, exclude_terminals=True,
         )
         state1_result = result["per_state"].get(1)
@@ -285,7 +284,7 @@ class TestMarkovProperty(unittest.TestCase):
         labels, metadata = _generate_non_markov_episodes(
             num_episodes=300, rng=rng
         )
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, significance_level=0.05, exclude_terminals=False,
         )
         self.assertIsNotNone(result["markov_holds"])
@@ -298,7 +297,7 @@ class TestMarkovProperty(unittest.TestCase):
             {"rollout_idx": i // 5, "timestep": i % 5, "success": True}
             for i in range(20)
         ]
-        result = test_markov_property(labels, metadata)
+        result = markov_property_check(labels, metadata)
         self.assertEqual(result["num_states_tested"], 0)
         self.assertIsNone(result["markov_holds"])
 
@@ -309,7 +308,7 @@ class TestMarkovProperty(unittest.TestCase):
             {"rollout_idx": 0, "timestep": 0},
             {"rollout_idx": 0, "timestep": 1},
         ]
-        result = test_markov_property(labels, metadata)
+        result = markov_property_check(labels, metadata)
         self.assertEqual(result["num_states_tested"], 0)
 
     def test_result_structure(self):
@@ -323,7 +322,7 @@ class TestMarkovProperty(unittest.TestCase):
         labels, metadata = _generate_markov_episodes(
             P, num_episodes=200, min_len=10, max_len=20, rng=rng
         )
-        result = test_markov_property(labels, metadata, exclude_terminals=True)
+        result = markov_property_check(labels, metadata, exclude_terminals=True)
         self.assertIn("markov_holds", result)
         self.assertIn("significance_level", result)
         self.assertIn("num_states_tested", result)
@@ -351,7 +350,7 @@ class TestMarkovProperty(unittest.TestCase):
         )
         for m in metadata:
             del m["success"]
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, significance_level=0.01, exclude_terminals=True,
         )
         self.assertIsNotNone(result["markov_holds"])
@@ -380,10 +379,10 @@ class TestMarkovProperty(unittest.TestCase):
         labels, metadata = _generate_markov_episodes(
             P, num_episodes=500, min_len=15, max_len=25, rng=rng
         )
-        result_with = test_markov_property(
+        result_with = markov_property_check(
             labels, metadata, exclude_terminals=False,
         )
-        result_without = test_markov_property(
+        result_without = markov_property_check(
             labels, metadata, exclude_terminals=True,
         )
         for state_id in result_without["per_state"]:
@@ -411,7 +410,7 @@ class TestMarkovExactMethod(unittest.TestCase):
         labels, metadata = _generate_markov_episodes(
             P, num_episodes=500, min_len=15, max_len=25, rng=rng,
         )
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, method="exact", n_permutations=2000,
             exclude_terminals=True, significance_level=0.01, random_state=0,
         )
@@ -424,7 +423,7 @@ class TestMarkovExactMethod(unittest.TestCase):
     def test_exact_non_markov_rejected(self):
         rng = np.random.RandomState(123)
         labels, metadata = _generate_non_markov_episodes(300, rng)
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, method="exact", n_permutations=2000,
             exclude_terminals=True, significance_level=0.05, random_state=0,
         )
@@ -446,8 +445,8 @@ class TestMarkovExactMethod(unittest.TestCase):
         labels, metadata = _generate_markov_episodes(
             P, num_episodes=100, min_len=8, max_len=12, rng=rng,
         )
-        r_chi2 = test_markov_property(labels, metadata, method="chi2", exclude_terminals=True)
-        r_exact = test_markov_property(
+        r_chi2 = markov_property_check(labels, metadata, method="chi2", exclude_terminals=True)
+        r_exact = markov_property_check(
             labels, metadata, method="exact", n_permutations=500,
             exclude_terminals=True, random_state=0,
         )
@@ -467,7 +466,7 @@ class TestMarkovModalMethod(unittest.TestCase):
         labels, metadata = _generate_markov_episodes(
             P, num_episodes=500, min_len=15, max_len=25, rng=rng,
         )
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, method="modal", n_permutations=2000,
             exclude_terminals=True, significance_level=0.01, random_state=0,
         )
@@ -482,7 +481,7 @@ class TestMarkovModalMethod(unittest.TestCase):
         predecessor at state 1, so the modal test should catch it."""
         rng = np.random.RandomState(123)
         labels, metadata = _generate_non_markov_episodes(300, rng)
-        result = test_markov_property(
+        result = markov_property_check(
             labels, metadata, method="modal", n_permutations=2000,
             exclude_terminals=True, significance_level=0.05, random_state=0,
         )
@@ -496,7 +495,7 @@ class TestMarkovModalMethod(unittest.TestCase):
 
 
 class TestMarkovPooled(unittest.TestCase):
-    """Tests for test_markov_property_pooled."""
+    """Tests for pooled Markov property checks."""
 
     def _make_split_datasets(self):
         """Generate data from one Markov chain and split into two halves."""
@@ -520,9 +519,9 @@ class TestMarkovPooled(unittest.TestCase):
     def test_pooled_more_power_than_halves(self):
         """Pooling two halves should test at least as many states as either half alone."""
         ds_a, ds_b, _ = self._make_split_datasets()
-        r_a = test_markov_property(ds_a[0], ds_a[1], exclude_terminals=True)
-        r_b = test_markov_property(ds_b[0], ds_b[1], exclude_terminals=True)
-        r_pooled = test_markov_property_pooled(
+        r_a = markov_property_check(ds_a[0], ds_a[1], exclude_terminals=True)
+        r_b = markov_property_check(ds_b[0], ds_b[1], exclude_terminals=True)
+        r_pooled = markov_property_check_pooled(
             [ds_a, ds_b], exclude_terminals=True,
         )
         max_half = max(r_a["num_states_tested"], r_b["num_states_tested"])
@@ -534,10 +533,10 @@ class TestMarkovPooled(unittest.TestCase):
     def test_pooled_agrees_with_full(self):
         """Pooling both halves should give similar results to using all data."""
         ds_a, ds_b, (full_labels, full_meta) = self._make_split_datasets()
-        r_full = test_markov_property(
+        r_full = markov_property_check(
             full_labels, full_meta, exclude_terminals=True, significance_level=0.01,
         )
-        r_pooled = test_markov_property_pooled(
+        r_pooled = markov_property_check_pooled(
             [ds_a, ds_b], exclude_terminals=True, significance_level=0.01,
         )
         self.assertEqual(r_full["markov_holds"], r_pooled["markov_holds"])
@@ -545,7 +544,7 @@ class TestMarkovPooled(unittest.TestCase):
     def test_pooled_with_exact_method(self):
         """Pooled + exact method should work without error."""
         ds_a, ds_b, _ = self._make_split_datasets()
-        result = test_markov_property_pooled(
+        result = markov_property_check_pooled(
             [ds_a, ds_b], method="exact", n_permutations=500,
             exclude_terminals=True, random_state=0,
         )

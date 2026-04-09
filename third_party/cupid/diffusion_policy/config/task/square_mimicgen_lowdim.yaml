@@ -1,0 +1,55 @@
+# MimicGen square — **standalone** task slice (no ``defaults: square_lowdim``).
+# Same low-dim *observation keys* as classic robomimic square exports, but **different**
+# dataset/runner/env stack: MimicGen robosuite tasks (Square_D0, …) and merged MimicGen HDF5.
+#
+# Full experiment: ``configs/low_dim/square_mimicgen_lowdim/diffusion_policy_cnn``
+# Shared U-Net only: ``configs/low_dim/_shared/diffusion_unet_lowdim_square_arch.yaml``
+#
+#   python train.py --config-dir=. --config-name=train_diffusion_unet_lowdim_workspace \
+#     task=square_mimicgen_lowdim task.dataset_path=/abs/path/to/square_merged.hdf5
+
+name: square_mimicgen_lowdim
+
+obs_dim: 23
+action_dim: 10
+keypoint_dim: 3
+
+obs_keys: &obs_keys ['object', 'robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_qpos']
+task_name: square_mimicgen
+dataset_type: ph
+dataset_path: &dataset_path data/mimicgen/square_merged.hdf5
+abs_action: true
+
+env_runner:
+  _target_: diffusion_policy.env_runner.mimicgen_lowdim_runner.MimicgenLowdimRunner
+  dataset_path: *dataset_path
+  obs_keys: *obs_keys
+  n_train: 6
+  n_train_vis: 2
+  train_start_idx: 0
+  n_test: 50
+  n_test_vis: 4
+  test_start_seed: 100000
+  max_steps: 500
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  n_latency_steps: ${n_latency_steps}
+  render_hw: [128, 128]
+  fps: 10
+  crf: 22
+  past_action: ${past_action_visible}
+  abs_action: true
+  n_envs: 28
+
+dataset:
+  _target_: diffusion_policy.dataset.mimicgen_replay_lowdim_dataset.MimicgenReplayLowdimDataset
+  dataset_path: *dataset_path
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  obs_keys: *obs_keys
+  abs_action: true
+  use_legacy_normalizer: false
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: null

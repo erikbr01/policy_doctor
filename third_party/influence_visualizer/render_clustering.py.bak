@@ -1,0 +1,770 @@
+"""Clustering analysis functions for exploring influence embedding patterns.
+
+This module provides tools for:
+1. Extracting influence embeddings at different aggregation levels
+2. Visualizing embeddings using t-SNE for cluster discovery
+3. Suggesting methods for embedding full influence matrix pairs
+"""
+
+from typing import Dict, List, Literal, Optional, Tuple
+
+import numpy as np
+import plotly.graph_objects as go
+import streamlit as st
+from sklearn.manifold import TSNE
+
+from influence_visualizer.data_loader import InfluenceData
+from influence_visualizer.render_heatmaps import SplitType, get_split_data
+
+
+def extract_demo_embeddings(
+    data: InfluenceData,
+    split: SplitType = "train",
+) -> Tuple[np.ndarray, List[Dict]]:
+    """Extract influence embeddings for training demonstrations.
+
+    Each demonstration gets an embedding vector representing its influence
+    across all rollout samples (aggregate over rollout length).
+
+    Args:
+        data: InfluenceData object
+        split: Which demo split to use ("train", "holdout", or "both")
+
+    Returns:
+        Tuple of (embeddings, metadata) where:
+        - embeddings: shape (num_demos, num_rollout_samples)
+        - metadata: list of dicts with demo_idx, quality_label, num_samples
+    """
+    influence_matrix, demo_episodes, ep_idxs, ep_lens = get_split_data(data, split)
+
+    # For each demo episode, extract its influence across all rollout samples
+    embeddings = []
+    metadata = []
+
+    for demo_ep_idx, demo_ep in enumerate(demo_episodes):
+        demo_sample_idxs = ep_idxs[demo_ep_idx]
+
+        # Get influence matrix for this demo: shape (num_rollout_samples, num_demo_timesteps)
+        demo_influence = influence_matrix[:, demo_sample_idxs]
+
+        # Aggregate over demo timesteps to get one vector per demo
+        # Shape: (num_rollout_samples,)
+        demo_embedding = np.mean(demo_influence, axis=1)
+
+        embeddings.append(demo_embedding)
+
+        # Get quality label if available
+        quality_label = "unknown"
+        if data.demo_quality_labels is not None:
+            quality_label = data.demo_quality_labels.get(demo_ep.index, "unknown")
+
+        metadata.append(
+            {
+                "demo_idx": demo_ep.index,
+                "quality_label": quality_label,
+                "num_samples": demo_ep.num_samples,
+                "raw_length": demo_ep.raw_length,
+            }
+        )
+
+    return np.array(embeddings), metadata
+
+
+def extract_rollout_embeddings(
+    data: InfluenceData,
+    split: SplitType = "train",
+) -> Tuple[np.ndarray, List[Dict]]:
+    """Extract influence embeddings for rollout episodes.
+
+    Each rollout gets an embedding vector representing influences from
+    all demonstration samples (aggregate over training demonstration length).
+
+    Args:
+        data: InfluenceData object
+        split: Which demo split to use ("train", "holdout", or "both")
+
+    Returns:
+        Tuple of (embeddings, metadata) where:
+        - embeddings: shape (num_rollouts, num_demo_samples)
+        - metadata: list of dicts with rollout_idx, success, num_samples
+    """
+    influence_matrix, demo_episodes, ep_idxs, ep_lens = get_split_data(data, split)
+
+    # For each rollout episode, extract its influence from all demo samples
+    embeddings = []
+    metadata = []
+
+    for rollout_ep in data.rollout_episodes:
+        rollout_sample_indices = np.arange(
+            rollout_ep.sample_start_idx, rollout_ep.sample_end_idx
+        )
+
+        # Get influence matrix for this rollout: shape (num_rollout_timesteps, num_demo_samples)
+        rollout_influence = influence_matrix[rollout_sample_indices, :]
+
+        # Aggregate over rollout timesteps to get one vector per rollout
+        # Shape: (num_demo_samples,)
+        rollout_embedding = np.mean(rollout_influence, axis=0)
+
+        embeddings.append(rollout_embedding)
+
+        metadata.append(
+            {
+                "rollout_idx": rollout_ep.index,
+                "success": rollout_ep.success,
+                "num_samples": rollout_ep.num_samples,
+            }
+        )
+
+    return np.array(embeddings), metadata
+
+
+def render_tsne_plot(
+    embeddings: np.ndarray,
+    metadata: List[Dict],
+    title: str,
+    color_by: str = "success",
+    key_suffix: str = "",
+):
+    """Render an interactive t-SNE scatter plot for influence embeddings.
+
+    Args:
+        embeddings: Embedding vectors, shape (num_samples, embedding_dim)
+        metadata: List of metadata dicts for each sample
+        title: Plot title
+        color_by: Metadata field to color by ("success" or "quality_label")
+        key_suffix: Unique suffix for streamlit component key
+    """
+    if len(embeddings) < 2:
+        st.warning("Need at least 2 samples for t-SNE visualization.")
+        return
+
+    # Perform t-SNE
+    with st.spinner(f"Computing t-SNE for {len(embeddings)} samples..."):
+        # Adjust perplexity based on sample size
+        perplexity = min(30, max(5, len(embeddings) // 3))
+
+        tsne = TSNE(
+            n_components=2,
+            perplexity=perplexity,
+            random_state=42,
+            max_iter=1000,
+        )
+        embeddings_2d = tsne.fit_transform(embeddings)
+
+    # Create scatter plot
+    fig = go.Figure()
+
+    if color_by == "success":
+        # Color by success/failure
+        success_mask = np.array([m.get("success", None) for m in metadata])
+
+        for success_val, color, label in [
+            (True, "green", "Success"),
+            (False, "red", "Failure"),
+            (None, "gray", "Unknown"),
+        ]:
+            mask = success_mask == success_val
+            if not np.any(mask):
+                continue
+
+            x_vals = embeddings_2d[mask, 0]
+            y_vals = embeddings_2d[mask, 1]
+
+            hover_text = []
+            for i, m in enumerate([metadata[j] for j in np.where(mask)[0]]):
+                # Handle different metadata formats
+                if "rollout_idx" in m and "demo_idx" in m:
+                    # Matrix pair metadata
+                    hover_text.append(
+                        f"Rollout {m['rollout_idx']} × Demo {m['demo_idx']}<br>"
+                        f"Rollout samples: {m.get('rollout_samples', 'N/A')}<br>"
+                        f"Demo samples: {m.get('demo_samples', 'N/A')}<br>"
+                        f"Success: {m.get('success', 'Unknown')}"
+                    )
+                else:
+                    # Rollout metadata
+                    hover_text.append(
+                        f"Rollout {m['rollout_idx']}<br>"
+                        f"Samples: {m.get('num_samples', 'N/A')}<br>"
+                        f"Success: {m.get('success', 'Unknown')}"
+                    )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=y_vals,
+                    mode="markers",
+                    name=label,
+                    marker=dict(
+                        size=10,
+                        color=color,
+                        line=dict(width=1, color="white"),
+                        opacity=0.7,
+                    ),
+                    text=hover_text,
+                    hovertemplate="%{text}<extra></extra>",
+                )
+            )
+
+    elif color_by == "quality_label":
+        # Color by quality label
+        quality_labels = [m.get("quality_label", "unknown") for m in metadata]
+        unique_qualities = sorted(set(quality_labels))
+
+        color_map = {
+            "worse": "red",
+            "okay": "orange",
+            "better": "green",
+            "unknown": "gray",
+        }
+
+        for quality in unique_qualities:
+            mask = np.array(quality_labels) == quality
+            x_vals = embeddings_2d[mask, 0]
+            y_vals = embeddings_2d[mask, 1]
+
+            hover_text = []
+            for i, m in enumerate([metadata[j] for j in np.where(mask)[0]]):
+                hover_text.append(
+                    f"Demo {m['demo_idx']}<br>"
+                    f"Quality: {m.get('quality_label', 'unknown')}<br>"
+                    f"Samples: {m['num_samples']}<br>"
+                    f"Raw Length: {m.get('raw_length', 'N/A')}"
+                )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=y_vals,
+                    mode="markers",
+                    name=quality.title(),
+                    marker=dict(
+                        size=10,
+                        color=color_map.get(quality, "gray"),
+                        line=dict(width=1, color="white"),
+                        opacity=0.7,
+                    ),
+                    text=hover_text,
+                    hovertemplate="%{text}<extra></extra>",
+                )
+            )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="t-SNE Dimension 1",
+        yaxis_title="t-SNE Dimension 2",
+        height=600,
+        hovermode="closest",
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99,
+        ),
+    )
+
+    st.plotly_chart(fig, width="stretch", key=f"tsne_{key_suffix}")
+
+
+def extract_matrix_pair_embeddings(
+    data: InfluenceData,
+    split: SplitType = "train",
+    n_components: int = 10,
+    method: str = "singular_values",
+) -> Tuple[np.ndarray, List[Dict]]:
+    """Extract SVD-based embeddings for all rollout-demo matrix pairs.
+
+    For each (rollout, demo) pair, extracts the local influence matrix and
+    embeds it using SVD (singular value decomposition).
+
+    Args:
+        data: InfluenceData object
+        split: Which demo split to use ("train", "holdout", or "both")
+        n_components: Number of singular values to use
+        method: Embedding method to use:
+            - "singular_values": Use top-k singular values as embedding (k-dimensional)
+            - "low_rank_flatten": Reconstruct low-rank matrix using top-k components,
+              then flatten (rollout_len × demo_len dimensional)
+
+    Returns:
+        Tuple of (embeddings, metadata) where:
+        - embeddings: shape (num_rollout_eps * num_demo_eps, embedding_dim)
+        - metadata: list of dicts with rollout_idx, demo_idx, success, quality_label
+    """
+    influence_matrix, demo_episodes, ep_idxs, ep_lens = get_split_data(data, split)
+
+    embeddings = []
+    metadata = []
+
+    # For low_rank_flatten method, determine target shape upfront
+    target_rollout_len = None
+    target_demo_len = None
+    if method == "low_rank_flatten":
+        # Use median episode lengths as target to avoid extreme padding
+        rollout_lengths = [ep.num_samples for ep in data.rollout_episodes]
+        demo_lengths = [ep.num_samples for ep in demo_episodes]
+        target_rollout_len = int(np.median(rollout_lengths))
+        target_demo_len = int(np.median(demo_lengths))
+
+    # For each rollout-demo pair
+    for rollout_ep in data.rollout_episodes:
+        rollout_sample_indices = np.arange(
+            rollout_ep.sample_start_idx, rollout_ep.sample_end_idx
+        )
+
+        for demo_ep_idx, demo_ep in enumerate(demo_episodes):
+            demo_sample_idxs = ep_idxs[demo_ep_idx]
+
+            # Extract the local transition matrix for this pair
+            # Shape: (num_rollout_timesteps, num_demo_timesteps)
+            transition_matrix = influence_matrix[
+                np.ix_(rollout_sample_indices, demo_sample_idxs)
+            ]
+
+            # Apply SVD
+            try:
+                U, s, Vt = np.linalg.svd(transition_matrix, full_matrices=False)
+
+                if method == "singular_values":
+                    # Method 1: Use top-k singular values as embedding
+                    if len(s) < n_components:
+                        embedding = np.zeros(n_components)
+                        embedding[: len(s)] = s
+                    else:
+                        embedding = s[:n_components]
+
+                elif method == "low_rank_flatten":
+                    # Method 2: Reconstruct low-rank matrix to fixed shape and flatten
+                    k = min(n_components, len(s))
+
+                    # Get top-k components
+                    U_k = U[:, :k]
+                    S_k = np.diag(s[:k])
+                    Vt_k = Vt[:k, :]
+
+                    # Adjust U_k to target_rollout_len
+                    if U_k.shape[0] < target_rollout_len:
+                        # Pad with zeros
+                        U_k_padded = np.zeros((target_rollout_len, k))
+                        U_k_padded[: U_k.shape[0], :] = U_k
+                        U_k = U_k_padded
+                    elif U_k.shape[0] > target_rollout_len:
+                        # Truncate
+                        U_k = U_k[:target_rollout_len, :]
+
+                    # Adjust Vt_k to target_demo_len
+                    if Vt_k.shape[1] < target_demo_len:
+                        # Pad with zeros
+                        Vt_k_padded = np.zeros((k, target_demo_len))
+                        Vt_k_padded[:, : Vt_k.shape[1]] = Vt_k
+                        Vt_k = Vt_k_padded
+                    elif Vt_k.shape[1] > target_demo_len:
+                        # Truncate
+                        Vt_k = Vt_k[:, :target_demo_len]
+
+                    # Reconstruct to fixed shape: (target_rollout_len, target_demo_len)
+                    reconstructed = U_k @ S_k @ Vt_k
+
+                    # Flatten the reconstructed matrix
+                    embedding = reconstructed.flatten()
+
+                else:
+                    raise ValueError(f"Unknown method: {method}")
+
+                embeddings.append(embedding)
+
+                # Get quality label if available
+                quality_label = "unknown"
+                if data.demo_quality_labels is not None:
+                    quality_label = data.demo_quality_labels.get(
+                        demo_ep.index, "unknown"
+                    )
+
+                metadata.append(
+                    {
+                        "rollout_idx": rollout_ep.index,
+                        "demo_idx": demo_ep.index,
+                        "success": rollout_ep.success,
+                        "quality_label": quality_label,
+                        "rollout_samples": len(rollout_sample_indices),
+                        "demo_samples": len(demo_sample_idxs),
+                    }
+                )
+
+            except np.linalg.LinAlgError:
+                # Skip if SVD fails
+                continue
+
+    # For low_rank_flatten, padding was needed but we'll use a different approach
+    # All embeddings should already have the same length if we use fixed target shape
+    return np.array(embeddings), metadata
+
+
+def render_matrix_embedding_suggestions():
+    """Render suggestions for embedding full influence matrix pairs."""
+    st.header("Matrix Embedding Methods")
+
+    st.markdown("""
+    For clustering based on local rollout-demonstration influence matrix pairs,
+    you need to embed each matrix into a single vector. Here are several approaches:
+    """)
+
+    methods = [
+        {
+            "Method": "Flatten",
+            "Description": "Vectorize the entire matrix",
+            "Dimensionality": "rollout_len × demo_len",
+            "Pros": "Preserves all information",
+            "Cons": "Very high dimensional, may be sparse",
+            "Use Case": "When you have many matrices but each is small",
+        },
+        {
+            "Method": "Statistics",
+            "Description": "Compute summary statistics (mean, std, min, max, percentiles)",
+            "Dimensionality": "~5-10 features",
+            "Pros": "Low dimensional, interpretable",
+            "Cons": "Loses spatial structure",
+            "Use Case": "Quick exploration, interpretable clusters",
+        },
+        {
+            "Method": "SVD/PCA",
+            "Description": "Low-rank approximation using top-k singular values/components",
+            "Dimensionality": "User-defined k (e.g., 10-50)",
+            "Pros": "Captures main variance, reduces noise",
+            "Cons": "Requires choosing k, less interpretable",
+            "Use Case": "Large matrices, noise reduction",
+        },
+        {
+            "Method": "Row/Col Aggregation",
+            "Description": "Concatenate mean/max along each axis",
+            "Dimensionality": "rollout_len + demo_len",
+            "Pros": "Preserves temporal structure",
+            "Cons": "Loses correlation between axes",
+            "Use Case": "When temporal patterns matter more than interactions",
+        },
+        {
+            "Method": "Structural Features",
+            "Description": "Extract features like diagonal strength, symmetry, peak counts",
+            "Dimensionality": "~10-20 features",
+            "Pros": "Domain-specific, interpretable",
+            "Cons": "Requires domain knowledge to design",
+            "Use Case": "When you have specific hypotheses about matrix structure",
+        },
+    ]
+
+    import pandas as pd
+
+    df = pd.DataFrame(methods)
+    st.table(df)
+
+    st.divider()
+
+    st.subheader("Example Code Snippets")
+
+    with st.expander("1. Flatten Method"):
+        st.code(
+            """
+# Extract a single transition matrix
+rollout_ep = data.rollout_episodes[rollout_idx]
+demo_ep = demo_episodes[demo_idx]
+
+rollout_samples = np.arange(rollout_ep.sample_start_idx, rollout_ep.sample_end_idx)
+demo_samples = ep_idxs[demo_idx]
+
+transition_matrix = influence_matrix[np.ix_(rollout_samples, demo_samples)]
+
+# Flatten to vector
+embedding = transition_matrix.flatten()
+""",
+            language="python",
+        )
+
+    with st.expander("2. Statistics Method"):
+        st.code(
+            """
+# Compute summary statistics
+embedding = np.array([
+    np.mean(transition_matrix),
+    np.std(transition_matrix),
+    np.min(transition_matrix),
+    np.max(transition_matrix),
+    np.percentile(transition_matrix, 25),
+    np.percentile(transition_matrix, 50),
+    np.percentile(transition_matrix, 75),
+])
+""",
+            language="python",
+        )
+
+    with st.expander("3. SVD/PCA Method"):
+        st.code(
+            """
+from sklearn.decomposition import TruncatedSVD
+
+# Apply SVD to get low-rank approximation
+k = 10  # Number of components
+svd = TruncatedSVD(n_components=k)
+
+# Flatten and fit (or use directly if matrix is small)
+flattened = transition_matrix.flatten().reshape(1, -1)
+embedding = svd.fit_transform(flattened).flatten()
+
+# Alternative: use singular values directly
+U, s, Vt = np.linalg.svd(transition_matrix, full_matrices=False)
+embedding = s[:k]  # Top k singular values
+""",
+            language="python",
+        )
+
+    with st.expander("4. Row/Column Aggregation Method"):
+        st.code(
+            """
+# Aggregate along each axis
+row_means = np.mean(transition_matrix, axis=1)  # Mean across demo timesteps
+col_means = np.mean(transition_matrix, axis=0)  # Mean across rollout timesteps
+
+# Concatenate
+embedding = np.concatenate([row_means, col_means])
+
+# Can also use max, std, etc.
+row_max = np.max(transition_matrix, axis=1)
+col_max = np.max(transition_matrix, axis=0)
+embedding_max = np.concatenate([row_max, col_max])
+""",
+            language="python",
+        )
+
+    with st.expander("5. Structural Features Method"):
+        st.code(
+            """
+# Extract structural features
+features = []
+
+# Diagonal strength
+min_dim = min(transition_matrix.shape)
+diagonal = np.array([transition_matrix[i, i] for i in range(min_dim)])
+features.extend([
+    np.mean(diagonal),
+    np.std(diagonal),
+])
+
+# Symmetry (if matrix is square or can be made square)
+if transition_matrix.shape[0] == transition_matrix.shape[1]:
+    symmetry = np.mean(np.abs(transition_matrix - transition_matrix.T))
+    features.append(symmetry)
+
+# Peak counts
+from scipy.ndimage import maximum_filter, minimum_filter
+local_max = transition_matrix == maximum_filter(transition_matrix, size=3)
+local_min = transition_matrix == minimum_filter(transition_matrix, size=3)
+features.extend([
+    np.sum(local_max),
+    np.sum(local_min),
+])
+
+# Gradient magnitude
+grad_x = np.gradient(transition_matrix, axis=0)
+grad_y = np.gradient(transition_matrix, axis=1)
+grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+features.extend([
+    np.mean(grad_mag),
+    np.std(grad_mag),
+])
+
+embedding = np.array(features)
+""",
+            language="python",
+        )
+
+    st.divider()
+
+    st.subheader("Recommendations")
+
+    st.markdown("""
+    **For initial exploration:**
+    - Start with **Statistics** method for quick insights
+    - Use **t-SNE** or **UMAP** on the embeddings to visualize clusters
+
+    **For detailed analysis:**
+    - Try **SVD/PCA** to capture main patterns while reducing noise
+    - Use **Structural Features** if you have specific hypotheses
+
+    **For comparison:**
+    - Implement multiple methods and compare clustering results
+    - Use silhouette scores or other metrics to evaluate cluster quality
+    """)
+
+
+def render_clustering_tab(
+    data: InfluenceData,
+    demo_split: SplitType = "train",
+    annotation_file: Optional[str] = None,
+):
+    """Render the main clustering analysis tab.
+
+    Args:
+        data: InfluenceData object
+        demo_split: Which demo split to use ("train", "holdout", or "both")
+        annotation_file: Path to annotation file (unused for now)
+    """
+    st.header("Clustering Analysis")
+
+    st.markdown("""
+    Explore clustering patterns in influence embeddings using t-SNE visualization.
+
+    **Two clustering views:**
+    1. **Cluster Demonstrations**: Aggregate influence over rollout length → each demo gets an embedding
+    2. **Cluster Rollouts**: Aggregate influence over demo length → each rollout gets an embedding
+    """)
+
+    st.divider()
+
+    # Section 1: Demonstration Clustering
+    @st.fragment
+    def render_demo_clustering():
+        st.subheader("1. Cluster Training Demonstrations")
+
+        st.markdown("""
+        Each demonstration gets an embedding vector representing its influence across all rollout samples.
+
+        **Goal:** Identify whether there are separable clusters of demonstrations based on their influence patterns.
+        """)
+
+        with st.spinner("Extracting demonstration embeddings..."):
+            demo_embeddings, demo_metadata = extract_demo_embeddings(data, demo_split)
+
+        st.caption(
+            f"Extracted {len(demo_embeddings)} demonstration embeddings, each of dimension {demo_embeddings.shape[1]}"
+        )
+
+        render_tsne_plot(
+            demo_embeddings,
+            demo_metadata,
+            title="t-SNE: Demonstration Influence Embeddings",
+            color_by="quality_label",
+            key_suffix=f"demos_{demo_split}",
+        )
+
+    render_demo_clustering()
+
+        st.divider()
+
+    # Section 2: Rollout Clustering
+    @st.fragment
+    def render_rollout_clustering():
+        st.subheader("2. Cluster Rollouts")
+
+        st.markdown("""
+            Each rollout gets an embedding vector representing influences from all demonstration samples.
+
+            **Goal:** Identify whether successes and failures form distinct clusters based on their influence patterns.
+            """)
+
+        with st.spinner("Extracting rollout embeddings..."):
+            rollout_embeddings, rollout_metadata = extract_rollout_embeddings(
+                data, demo_split
+            )
+
+        st.caption(
+            f"Extracted {len(rollout_embeddings)} rollout embeddings, each of dimension {rollout_embeddings.shape[1]}"
+        )
+
+        render_tsne_plot(
+            rollout_embeddings,
+            rollout_metadata,
+            title="t-SNE: Rollout Influence Embeddings",
+            color_by="success",
+            key_suffix=f"rollouts_{demo_split}",
+        )
+
+    render_rollout_clustering()
+
+        st.divider()
+
+    # Section 3: Matrix Pair Clustering
+    @st.fragment
+    def render_matrix_pair_clustering():
+        st.subheader("3. Cluster Rollout-Demo Matrix Pairs (SVD)")
+
+        st.markdown("""
+        Each rollout-demo pair generates a local influence matrix. Using SVD, we extract
+        an embedding vector for each matrix pair.
+
+        **Goal:** Identify whether certain rollout-demo pairs have similar influence structure patterns.
+        """)
+
+        # Get demo episodes for calculations
+        _, demo_episodes, _, _ = get_split_data(data, demo_split)
+
+        # Embedding method selector
+        col1, col2 = st.columns(2)
+
+        with col1:
+            embedding_method = st.radio(
+                    "SVD Embedding Method",
+                    options=["singular_values", "low_rank_flatten"],
+                    format_func=lambda x: "Singular Values"
+                    if x == "singular_values"
+                    else "Low-Rank Reconstruction + Flatten",
+                    help=(
+                        "**Singular Values**: Use top-k singular values as k-dimensional embedding (compact).\n\n"
+                        "**Low-Rank Reconstruction**: Reconstruct matrix using top-k components, then flatten "
+                        "(preserves spatial structure, higher dimensional)."
+                    ),
+                    key=f"svd_method_{demo_split}",
+                )
+
+        with col2:
+            n_components = st.slider(
+                "Number of SVD components",
+                min_value=5,
+                max_value=50,
+                value=10,
+                help="Number of singular values/components to use",
+                key=f"svd_components_{demo_split}",
+            )
+
+        with st.spinner("Extracting SVD embeddings for all rollout-demo pairs..."):
+            matrix_embeddings, matrix_metadata = extract_matrix_pair_embeddings(
+                data, demo_split, n_components=n_components, method=embedding_method
+            )
+
+        # Dynamic caption based on method
+        if embedding_method == "singular_values":
+            dim_desc = f"{n_components}"
+        else:
+            # For low-rank flatten, dimension varies by episode length
+            dim_desc = f"{matrix_embeddings.shape[1]:,} (varies by episode lengths)"
+
+        st.caption(
+            f"Extracted {len(matrix_embeddings)} matrix pair embeddings "
+            f"({len(data.rollout_episodes)} rollouts × {len(demo_episodes)} demos), "
+            f"each of dimension {dim_desc}"
+        )
+
+        # Check if n_components is too large and warn about zero-padding (only for singular_values method)
+        if embedding_method == "singular_values":
+            min_rollout_len = min(ep.num_samples for ep in data.rollout_episodes)
+            min_demo_len = min(ep.num_samples for ep in demo_episodes)
+            max_singular_values = min(min_rollout_len, min_demo_len)
+
+            if n_components > max_singular_values:
+                st.warning(
+                    f"⚠️ **Zero-padding warning**: You requested {n_components} components, but the smallest "
+                    f"matrix has only {max_singular_values} singular values (min rollout length: {min_rollout_len}, "
+                    f"min demo length: {min_demo_len}). Embeddings will be zero-padded, which may cause "
+                    f"smaller episodes to cluster together artificially. Consider reducing the number of components "
+                    f"to ≤ {max_singular_values}."
+                )
+
+        # Color by success/failure
+        render_tsne_plot(
+            matrix_embeddings,
+            matrix_metadata,
+            title=f"t-SNE: Rollout-Demo Matrix Pair Embeddings (SVD - {embedding_method.replace('_', ' ').title()})",
+            color_by="success",
+            key_suffix=f"matrix_pairs_{demo_split}_{n_components}_{embedding_method}",
+        )
+
+    render_matrix_pair_clustering()

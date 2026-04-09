@@ -9,11 +9,8 @@ defaults:
   - _self_                                                 # base defaults (lowest priority — experiment overrides these)
   - pipeline/config                                        # base pipeline / clustering / curation params
   - vlm/defaults                                           # VLM slice annotation (optional step)
-  - robomimic/baseline/low_dim@baseline: transport_mh      # → cfg.baseline.*
-  - robomimic/curation_filtering/low_dim@curation_filtering: transport_mh  # → cfg.curation_filtering.*
-  - robomimic/curation_selection/low_dim@curation_selection: transport_mh  # → cfg.curation_selection.*
-  - robomimic/attribution/low_dim@attribution: transport_mh                # → cfg.attribution.*
-  - robomimic/evaluation/low_dim@evaluation: transport_mh                  # → cfg.evaluation.*
+  # Data profile: cupid RoboMimic | MimicGen square | RoboCasa robomimic-layout (see configs/data_source/*.yaml)
+  - data_source: cupid_robomimic
   - experiment: null                                       # experiment config (highest priority — use experiment=name)
 
 # Pipeline identity — override per experiment or on CLI
@@ -21,7 +18,7 @@ env: robomimic
 state: low_dim
 task: transport_mh
 
-# Steps to run (empty = must be specified on CLI or in experiment config)
+# Steps to run ([] = run full ordered sequence; override with steps=[a,b] on CLI or in experiment)
 steps: []
 
 dry_run: false

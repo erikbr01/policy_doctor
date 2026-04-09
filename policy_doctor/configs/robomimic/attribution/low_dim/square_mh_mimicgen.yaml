@@ -1,0 +1,41 @@
+task: square_mh_mimicgen
+state: low_dim
+method: diffusion_policy_cnn
+policy: diffusion_unet_lowdim
+
+train_date: jan18
+eval_date: jan18
+train_ckpt: latest
+eval_ckpt: latest
+eval_as_train_seed: true
+
+train_output_dir: data/outputs/train
+eval_output_dir: data/outputs/eval_save_episodes
+
+model_keys: "model."
+modelout_fn: DiffusionLowdimFunctionalModelOutput
+gradient_co: DiffusionLowdimFunctionalGradientComputer
+proj_dim: 4000
+proj_max_batch_size: 32
+lambda_reg: 0.0
+use_half_precision: false
+batch_size: 128
+loss_fn: square
+num_timesteps: 64
+featurize_holdout: true
+finalize_scores: true
+device: cuda:0
+seed: 0
+
+num_ckpts: 1
+finalize_on_train: true
+
+result_date: default
+eval_online_trak_influence: true
+eval_offline_policy_loss: false
+eval_offline_action_diversity: false
+eval_offline_state_diversity: false
+eval_online_state_similarity: false
+eval_online_demo_score: false
+compute_holdout: true
+overwrite: false

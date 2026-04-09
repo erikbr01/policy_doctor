@@ -100,3 +100,15 @@ vlm_behavior_summarization:
   task_hint: null
   max_slice_labels_per_cluster: null
   max_clusters: null
+
+# Per-cluster coherency of slice captions (evaluate_cluster_coherency_vlm — after annotate_slices_vlm)
+vlm_coherency_eval:
+  backend: null
+  backend_params: null
+  prompts_file: null
+  prompts:
+    coherency_system: null
+    coherency_user_template: null
+  task_hint: null
+  max_slice_labels_per_cluster: null
+  max_clusters: null

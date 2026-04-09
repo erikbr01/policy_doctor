@@ -341,3 +341,84 @@ def behavior_prompt_fingerprint(
 ) -> str:
     raw = f"{behavior_system or ''}\n{behavior_user_template}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+DEFAULT_COHERENCY_SYSTEM: Optional[str] = (
+    "You evaluate whether short text descriptions of robot behavior refer to the same underlying "
+    "behavior. Reply with a single JSON object only (no markdown fences)."
+)
+
+DEFAULT_COHERENCY_USER_TEMPLATE = """Task context: {task_hint}
+
+Cluster id {cluster_id} contains {num_slice_labels} segment descriptions from unsupervised clustering.
+They may describe the same skill or different ones.
+
+{slice_labels_bulleted}
+
+Output exactly one JSON object with keys:
+- "coherent" (boolean): true if the descriptions are broadly about the same behavior
+- "score" (number 0–1): how strongly they agree
+- "rationale" (string): one short sentence
+
+Example: {{"coherent": true, "score": 0.9, "rationale": "All mention grasping the block."}}"""
+
+
+def merge_coherency_prompt_config(
+    *,
+    prompts_file: Optional[str],
+    prompts_inline: Optional[Dict[str, Any]],
+    repo_root: Optional[pathlib.Path] = None,
+) -> Tuple[Optional[str], str]:
+    """Return (coherency_system, coherency_user_template)."""
+    system: Optional[str] = DEFAULT_COHERENCY_SYSTEM
+    user = DEFAULT_COHERENCY_USER_TEMPLATE
+
+    if prompts_file and str(prompts_file).lower() not in ("null", "none", ""):
+        path = pathlib.Path(prompts_file)
+        if not path.is_absolute() and repo_root is not None:
+            path = repo_root / path
+        blob = load_prompts_yaml(path)
+        pr = blob.get("prompts") or blob
+        if isinstance(pr, dict):
+            if _prompt_value_set(pr.get("coherency_system")):
+                system = pr["coherency_system"]
+            if _prompt_value_set(pr.get("coherency_user_template")):
+                user = str(pr["coherency_user_template"])
+
+    if prompts_inline:
+        pr = prompts_inline.get("prompts", prompts_inline)
+        if isinstance(pr, dict):
+            if _prompt_value_set(pr.get("coherency_system")):
+                system = pr["coherency_system"]
+            if _prompt_value_set(pr.get("coherency_user_template")):
+                user = str(pr["coherency_user_template"])
+
+    return system, user
+
+
+def format_coherency_prompts(
+    *,
+    coherency_system: Optional[str],
+    coherency_user_template: str,
+    task_hint: str,
+    cluster_id: int,
+    slice_labels: Sequence[str],
+) -> Tuple[Optional[str], str]:
+    lines = [f"- {s.strip()}" for s in slice_labels if str(s).strip()]
+    bulleted = "\n".join(lines) if lines else "(no labels)"
+    fmt_kw = {
+        "task_hint": task_hint,
+        "cluster_id": cluster_id,
+        "num_slice_labels": len(lines),
+        "slice_labels_bulleted": bulleted,
+    }
+    user = coherency_user_template.format(**fmt_kw)
+    return coherency_system, user
+
+
+def coherency_prompt_fingerprint(
+    coherency_system: Optional[str],
+    coherency_user_template: str,
+) -> str:
+    raw = f"{coherency_system or ''}\n{coherency_user_template}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

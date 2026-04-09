@@ -1,0 +1,71 @@
+task: robomimic_square
+name: "Square MH (Feb 5 Experiment)"
+
+# Data paths
+eval_dir: "data/outputs/eval_save_episodes/feb5/feb5_train_diffusion_unet_lowdim_square_mh_0/latest"
+train_dir: "data/outputs/train/feb5/feb5_train_diffusion_unet_lowdim_square_mh_0"
+train_ckpt: "latest"
+exp_date: "default"
+seeds: ["0", "1", "2"]
+# Comparison tab: other configs to plot test/mean_score over time (wandb)
+comparison: ["square_mh_feb15"]
+wandb_project: "diffusion_policy_debug"  # set to your wandb project
+image_dataset_path: "data/robomimic/datasets/square/mh/image_abs.hdf5"
+
+# Display settings
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: true # Use lazy loading for large datasets (6.6GB in this case)
+
+# Quality tier masks to load from the HDF5 dataset (in priority order)
+# These correspond to mask groups in the HDF5 file
+quality_labels:
+  - "better"
+  - "okay"
+  - "worse"
+  - "better_operator_1"
+  - "better_operator_2"
+  - "okay_operator_1"
+  - "okay_operator_2"
+  - "worse_operator_1"
+  - "worse_operator_2"
+  - "okay_better"
+  - "worse_okay"
+  - "worse_better"
+
+# State labels (19D single-timestep observation)
+# Order: object(10) + eef_pos(3) + eef_quat(4) + gripper_qpos(2)
+# Note: obs uses raw quaternions (4D), only actions use rotation_6d
+state_labels:
+  - "obj_pos_x"
+  - "obj_pos_y"
+  - "obj_pos_z"
+  - "obj_quat_x"
+  - "obj_quat_y"
+  - "obj_quat_z"
+  - "obj_quat_w"
+  - "obj_7"
+  - "obj_8"
+  - "obj_9"
+  - "eef_pos_x"
+  - "eef_pos_y"
+  - "eef_pos_z"
+  - "eef_quat_x"
+  - "eef_quat_y"
+  - "eef_quat_z"
+  - "eef_quat_w"
+  - "gripper_0"
+  - "gripper_1"
+
+# Action labels (10D with rotation_6d)
+action_labels:
+  - "pos_x"
+  - "pos_y"
+  - "pos_z"
+  - "rot_0"
+  - "rot_1"
+  - "rot_2"
+  - "rot_3"
+  - "rot_4"
+  - "rot_5"
+  - "gripper"

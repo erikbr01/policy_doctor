@@ -308,7 +308,7 @@ def _render_export(
             key="cur_export",
         )
     with col2:
-        default_path = f"policy_doctor/policy_doctor/configs/experiments/{task_config}_{curation_mode}.yaml"
+        default_path = f"policy_doctor/policy_doctor/configs/experiment/{task_config}_{curation_mode}.yaml"
         render_save_to_disk(
             pipeline_config, default_path=default_path,
             label="Save to disk", key="cur_save",

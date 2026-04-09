@@ -1,0 +1,2314 @@
+slices:
+- episode_idx: 1
+  start: 132
+  end: 137
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 1
+  start: 295
+  end: 306
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 4
+  start: 173
+  end: 181
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 5
+  start: 0
+  end: 4
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 5
+  start: 304
+  end: 308
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 6
+  start: 80
+  end: 84
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 6
+  start: 303
+  end: 307
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 11
+  start: 222
+  end: 226
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 15
+  start: 86
+  end: 92
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 15
+  start: 247
+  end: 255
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 15
+  start: 257
+  end: 285
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 15
+  start: 287
+  end: 295
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 15
+  start: 299
+  end: 303
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 16
+  start: 277
+  end: 281
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 23
+  start: 142
+  end: 156
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 26
+  start: 323
+  end: 329
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 27
+  start: 294
+  end: 299
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 29
+  start: 311
+  end: 315
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 29
+  start: 317
+  end: 322
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 30
+  start: 180
+  end: 193
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 31
+  start: 145
+  end: 152
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 37
+  start: 98
+  end: 103
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 37
+  start: 153
+  end: 161
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 41
+  start: 199
+  end: 203
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 46
+  start: 441
+  end: 447
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 50
+  start: 10
+  end: 20
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 50
+  start: 157
+  end: 168
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 50
+  start: 228
+  end: 234
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 50
+  start: 285
+  end: 307
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 50
+  start: 312
+  end: 320
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 51
+  start: 203
+  end: 208
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 51
+  start: 226
+  end: 270
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 51
+  start: 325
+  end: 340
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 52
+  start: 267
+  end: 283
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 54
+  start: 264
+  end: 274
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 54
+  start: 406
+  end: 411
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 54
+  start: 431
+  end: 436
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 54
+  start: 475
+  end: 481
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 59
+  start: 200
+  end: 207
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 59
+  start: 225
+  end: 229
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 59
+  start: 406
+  end: 411
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 59
+  start: 426
+  end: 438
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 75
+  start: 319
+  end: 323
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 76
+  start: 127
+  end: 133
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 76
+  start: 389
+  end: 393
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 76
+  start: 506
+  end: 510
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 79
+  start: 113
+  end: 117
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 79
+  start: 166
+  end: 208
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 79
+  start: 232
+  end: 236
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 79
+  start: 567
+  end: 587
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 80
+  start: 103
+  end: 107
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 80
+  start: 109
+  end: 174
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 80
+  start: 203
+  end: 221
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 80
+  start: 223
+  end: 231
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 80
+  start: 468
+  end: 472
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 81
+  start: 241
+  end: 252
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 82
+  start: 142
+  end: 200
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 82
+  start: 207
+  end: 227
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 84
+  start: 301
+  end: 309
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 84
+  start: 567
+  end: 571
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 87
+  start: 21
+  end: 82
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 88
+  start: 16
+  end: 150
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 88
+  start: 167
+  end: 173
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 88
+  start: 182
+  end: 190
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 88
+  start: 480
+  end: 491
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 91
+  start: 104
+  end: 108
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 92
+  start: 150
+  end: 158
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 95
+  start: 118
+  end: 124
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 96
+  start: 44
+  end: 60
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 96
+  start: 62
+  end: 69
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 96
+  start: 111
+  end: 116
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 99
+  start: 129
+  end: 138
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 100
+  start: 661
+  end: 669
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 101
+  start: 219
+  end: 226
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 101
+  start: 298
+  end: 302
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 105
+  start: 103
+  end: 107
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 105
+  start: 110
+  end: 125
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 105
+  start: 129
+  end: 147
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 105
+  start: 520
+  end: 527
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 110
+  start: 31
+  end: 41
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 110
+  start: 43
+  end: 104
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 110
+  start: 108
+  end: 113
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 110
+  start: 454
+  end: 462
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 114
+  start: 226
+  end: 232
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 119
+  start: 192
+  end: 196
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 121
+  start: 176
+  end: 180
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 122
+  start: 349
+  end: 354
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 123
+  start: 88
+  end: 92
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 123
+  start: 188
+  end: 192
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 123
+  start: 460
+  end: 465
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 125
+  start: 226
+  end: 234
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 128
+  start: 245
+  end: 249
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 129
+  start: 225
+  end: 232
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 129
+  start: 537
+  end: 542
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 131
+  start: 329
+  end: 336
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 137
+  start: 350
+  end: 354
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 139
+  start: 316
+  end: 324
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 145
+  start: 266
+  end: 274
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 145
+  start: 560
+  end: 564
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 149
+  start: 299
+  end: 303
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 150
+  start: 275
+  end: 279
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 150
+  start: 295
+  end: 311
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 150
+  start: 663
+  end: 671
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 150
+  start: 1031
+  end: 1039
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 151
+  start: 389
+  end: 400
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 151
+  start: 515
+  end: 519
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 151
+  start: 1070
+  end: 1078
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 152
+  start: 143
+  end: 153
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 152
+  start: 185
+  end: 193
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 152
+  start: 301
+  end: 306
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 152
+  start: 315
+  end: 342
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 152
+  start: 844
+  end: 848
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 153
+  start: 127
+  end: 131
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 153
+  start: 204
+  end: 211
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 153
+  start: 382
+  end: 389
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 237
+  end: 241
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 245
+  end: 264
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 274
+  end: 279
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 301
+  end: 305
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 309
+  end: 328
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 331
+  end: 423
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 154
+  start: 546
+  end: 554
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 154
+  start: 574
+  end: 580
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 154
+  start: 590
+  end: 594
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 154
+  start: 604
+  end: 673
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 156
+  start: 75
+  end: 192
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 156
+  start: 197
+  end: 297
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 156
+  start: 398
+  end: 406
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 156
+  start: 431
+  end: 487
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 156
+  start: 500
+  end: 506
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 182
+  end: 190
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 196
+  end: 204
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 279
+  end: 295
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 314
+  end: 327
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 339
+  end: 430
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 437
+  end: 468
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 480
+  end: 485
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 490
+  end: 497
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 503
+  end: 507
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 510
+  end: 572
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 592
+  end: 606
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 619
+  end: 629
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 158
+  start: 638
+  end: 647
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 166
+  start: 171
+  end: 178
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 166
+  start: 203
+  end: 209
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 167
+  start: 15
+  end: 63
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 167
+  start: 318
+  end: 323
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 167
+  start: 327
+  end: 344
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 167
+  start: 612
+  end: 625
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 167
+  start: 689
+  end: 700
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 168
+  start: 48
+  end: 52
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 168
+  start: 73
+  end: 79
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 168
+  start: 84
+  end: 127
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 168
+  start: 236
+  end: 288
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 168
+  start: 292
+  end: 302
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 168
+  start: 304
+  end: 358
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 169
+  start: 61
+  end: 67
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 75
+  end: 79
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 118
+  end: 179
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 275
+  end: 281
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 287
+  end: 291
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 296
+  end: 303
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 308
+  end: 314
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 169
+  start: 317
+  end: 328
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 169
+  start: 635
+  end: 645
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 170
+  start: 192
+  end: 201
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 170
+  start: 225
+  end: 231
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 170
+  start: 322
+  end: 330
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 170
+  start: 404
+  end: 415
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 170
+  start: 437
+  end: 457
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 170
+  start: 474
+  end: 485
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 170
+  start: 494
+  end: 500
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 171
+  start: 234
+  end: 256
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 171
+  start: 344
+  end: 358
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 171
+  start: 404
+  end: 417
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 171
+  start: 420
+  end: 428
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 172
+  start: 16
+  end: 46
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 172
+  start: 88
+  end: 95
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 172
+  start: 228
+  end: 234
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 173
+  start: 233
+  end: 237
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 173
+  start: 333
+  end: 344
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 173
+  start: 984
+  end: 992
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 174
+  start: 356
+  end: 363
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 174
+  start: 375
+  end: 387
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 174
+  start: 416
+  end: 493
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 174
+  start: 504
+  end: 575
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 174
+  start: 590
+  end: 595
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 176
+  start: 39
+  end: 43
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 176
+  start: 61
+  end: 66
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 176
+  start: 88
+  end: 96
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 176
+  start: 185
+  end: 201
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 177
+  start: 107
+  end: 111
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 178
+  start: 161
+  end: 165
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 180
+  start: 57
+  end: 77
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 180
+  start: 209
+  end: 214
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 180
+  start: 220
+  end: 235
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 180
+  start: 248
+  end: 394
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 180
+  start: 494
+  end: 508
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 180
+  start: 721
+  end: 726
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 180
+  start: 828
+  end: 834
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 180
+  start: 846
+  end: 947
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 180
+  start: 951
+  end: 957
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 180
+  start: 1016
+  end: 1030
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 180
+  start: 1032
+  end: 1037
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 180
+  start: 1097
+  end: 1101
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 184
+  start: 401
+  end: 414
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 184
+  start: 508
+  end: 513
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 184
+  start: 647
+  end: 656
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 184
+  start: 686
+  end: 690
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 184
+  start: 731
+  end: 736
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 184
+  start: 739
+  end: 745
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 184
+  start: 894
+  end: 900
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 184
+  start: 989
+  end: 997
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 184
+  start: 1009
+  end: 1013
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 184
+  start: 1141
+  end: 1148
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 184
+  start: 1250
+  end: 1254
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 185
+  start: 47
+  end: 53
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 185
+  start: 428
+  end: 444
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 185
+  start: 447
+  end: 454
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 185
+  start: 477
+  end: 492
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 185
+  start: 498
+  end: 502
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 185
+  start: 538
+  end: 542
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 185
+  start: 544
+  end: 552
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 186
+  start: 27
+  end: 37
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 42
+  end: 70
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 86
+  end: 121
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 143
+  end: 162
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 170
+  end: 178
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 194
+  end: 200
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 202
+  end: 270
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 186
+  start: 272
+  end: 323
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 187
+  start: 12
+  end: 16
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 187
+  start: 28
+  end: 39
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 187
+  start: 46
+  end: 83
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 187
+  start: 113
+  end: 117
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 187
+  start: 191
+  end: 201
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 188
+  start: 63
+  end: 68
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 188
+  start: 73
+  end: 77
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 188
+  start: 90
+  end: 106
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 188
+  start: 200
+  end: 205
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 188
+  start: 254
+  end: 263
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 188
+  start: 288
+  end: 297
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 193
+  start: 143
+  end: 147
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 193
+  start: 355
+  end: 374
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 193
+  start: 378
+  end: 382
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 193
+  start: 439
+  end: 456
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 193
+  start: 459
+  end: 538
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 193
+  start: 542
+  end: 600
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 193
+  start: 620
+  end: 627
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 193
+  start: 755
+  end: 762
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 195
+  start: 274
+  end: 278
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 195
+  start: 578
+  end: 594
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 196
+  start: 53
+  end: 57
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 196
+  start: 76
+  end: 80
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 196
+  start: 82
+  end: 90
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 196
+  start: 96
+  end: 145
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 196
+  start: 147
+  end: 153
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 196
+  start: 236
+  end: 257
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 196
+  start: 272
+  end: 276
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 196
+  start: 331
+  end: 343
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 196
+  start: 593
+  end: 606
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 196
+  start: 644
+  end: 654
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 197
+  start: 41
+  end: 48
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 197
+  start: 211
+  end: 215
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 197
+  start: 300
+  end: 308
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 197
+  start: 314
+  end: 318
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 197
+  start: 329
+  end: 357
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 197
+  start: 416
+  end: 428
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 198
+  start: 215
+  end: 219
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 60
+  end: 113
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 116
+  end: 147
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 171
+  end: 203
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 222
+  end: 226
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 436
+  end: 443
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 757
+  end: 775
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 201
+  start: 349
+  end: 354
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 201
+  start: 547
+  end: 552
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 201
+  start: 693
+  end: 697
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 201
+  start: 721
+  end: 725
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 201
+  start: 1032
+  end: 1047
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 205
+  start: 136
+  end: 141
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 206
+  end: 214
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 205
+  start: 227
+  end: 232
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 235
+  end: 239
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 260
+  end: 285
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 294
+  end: 299
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 396
+  end: 404
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 773
+  end: 778
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 797
+  end: 817
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 205
+  start: 828
+  end: 843
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 206
+  start: 345
+  end: 354
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 207
+  start: 234
+  end: 252
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 207
+  start: 258
+  end: 272
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 208
+  start: 104
+  end: 110
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 208
+  start: 112
+  end: 117
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 208
+  start: 121
+  end: 127
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 208
+  start: 130
+  end: 155
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 208
+  start: 183
+  end: 189
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 210
+  start: 219
+  end: 226
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 210
+  start: 327
+  end: 334
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 210
+  start: 346
+  end: 355
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 210
+  start: 658
+  end: 665
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 211
+  start: 22
+  end: 51
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 211
+  start: 54
+  end: 70
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 211
+  start: 88
+  end: 114
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 211
+  start: 118
+  end: 148
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 211
+  start: 239
+  end: 244
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 214
+  start: 294
+  end: 299
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 214
+  start: 321
+  end: 325
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 214
+  start: 327
+  end: 333
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 214
+  start: 487
+  end: 495
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 216
+  start: 112
+  end: 116
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 216
+  start: 217
+  end: 222
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 216
+  start: 848
+  end: 853
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 218
+  start: 9
+  end: 14
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 218
+  start: 251
+  end: 259
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 218
+  start: 278
+  end: 293
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 218
+  start: 417
+  end: 427
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 218
+  start: 649
+  end: 661
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 218
+  start: 687
+  end: 694
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 218
+  start: 701
+  end: 710
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 219
+  start: 695
+  end: 700
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 220
+  start: 148
+  end: 152
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 220
+  start: 169
+  end: 189
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 220
+  start: 191
+  end: 195
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 220
+  start: 219
+  end: 226
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 220
+  start: 393
+  end: 398
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 222
+  start: 27
+  end: 34
+  label: waiting on cube
+  source: behavior_search_train
+- episode_idx: 222
+  start: 201
+  end: 210
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 222
+  start: 334
+  end: 352
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 222
+  start: 621
+  end: 630
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 223
+  start: 168
+  end: 173
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 223
+  start: 176
+  end: 181
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 223
+  start: 198
+  end: 203
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 223
+  start: 259
+  end: 266
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 223
+  start: 429
+  end: 433
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 224
+  start: 157
+  end: 161
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 224
+  start: 196
+  end: 227
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 224
+  start: 345
+  end: 353
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 227
+  start: 86
+  end: 90
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 227
+  start: 105
+  end: 109
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 227
+  start: 138
+  end: 145
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 227
+  start: 184
+  end: 191
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 227
+  start: 756
+  end: 760
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 228
+  start: 16
+  end: 20
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 228
+  start: 22
+  end: 26
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 228
+  start: 92
+  end: 105
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 228
+  start: 131
+  end: 137
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 228
+  start: 339
+  end: 345
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 228
+  start: 733
+  end: 760
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 231
+  start: 97
+  end: 105
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 231
+  start: 295
+  end: 299
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 231
+  start: 324
+  end: 337
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 233
+  start: 36
+  end: 127
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 233
+  start: 274
+  end: 278
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 233
+  start: 385
+  end: 400
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 233
+  start: 404
+  end: 414
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 233
+  start: 417
+  end: 425
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 234
+  start: 185
+  end: 192
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 234
+  start: 194
+  end: 200
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 234
+  start: 690
+  end: 696
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 236
+  start: 189
+  end: 194
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 238
+  start: 679
+  end: 684
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 239
+  start: 191
+  end: 197
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 239
+  start: 241
+  end: 255
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 240
+  start: 29
+  end: 43
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 240
+  start: 114
+  end: 125
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 240
+  start: 198
+  end: 202
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 240
+  start: 204
+  end: 212
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 240
+  start: 218
+  end: 223
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 240
+  start: 240
+  end: 245
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 240
+  start: 365
+  end: 380
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 248
+  start: 140
+  end: 145
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 248
+  start: 315
+  end: 327
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 248
+  start: 537
+  end: 569
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 255
+  start: 63
+  end: 76
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 255
+  start: 143
+  end: 149
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 255
+  start: 172
+  end: 176
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 255
+  start: 195
+  end: 217
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 255
+  start: 366
+  end: 372
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 255
+  start: 379
+  end: 390
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 255
+  start: 541
+  end: 572
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 256
+  start: 72
+  end: 79
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 257
+  start: 131
+  end: 135
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 257
+  start: 211
+  end: 232
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 258
+  start: 149
+  end: 156
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 258
+  start: 199
+  end: 212
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 258
+  start: 342
+  end: 352
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 258
+  start: 427
+  end: 433
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 258
+  start: 441
+  end: 455
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 259
+  start: 51
+  end: 56
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 259
+  start: 210
+  end: 217
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 259
+  start: 269
+  end: 276
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 260
+  start: 175
+  end: 191
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 264
+  start: 102
+  end: 107
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 264
+  start: 109
+  end: 114
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 264
+  start: 122
+  end: 130
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 264
+  start: 152
+  end: 160
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 265
+  start: 69
+  end: 76
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 265
+  start: 83
+  end: 88
+  label: bad lid grasp
+  source: behavior_search_train
+- episode_idx: 265
+  start: 104
+  end: 113
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 265
+  start: 520
+  end: 524
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 265
+  start: 526
+  end: 536
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 266
+  start: 620
+  end: 624
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 267
+  start: 119
+  end: 127
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 267
+  start: 425
+  end: 430
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 269
+  start: 79
+  end: 83
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 270
+  start: 529
+  end: 533
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 270
+  start: 538
+  end: 542
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 271
+  start: 133
+  end: 137
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 272
+  start: 266
+  end: 272
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 272
+  start: 540
+  end: 549
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 274
+  start: 191
+  end: 195
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 275
+  start: 193
+  end: 201
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 276
+  start: 16
+  end: 22
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 276
+  start: 66
+  end: 74
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 276
+  start: 197
+  end: 300
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 276
+  start: 371
+  end: 375
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 276
+  start: 463
+  end: 473
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 276
+  start: 479
+  end: 483
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 277
+  start: 51
+  end: 60
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 278
+  start: 206
+  end: 213
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 278
+  start: 384
+  end: 389
+  label: failed handover
+  source: behavior_search_train
+- episode_idx: 281
+  start: 179
+  end: 186
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 281
+  start: 220
+  end: 230
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 281
+  start: 732
+  end: 740
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 282
+  start: 504
+  end: 509
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 282
+  start: 521
+  end: 526
+  label: bad handover attempt
+  source: behavior_search_train
+- episode_idx: 285
+  start: 47
+  end: 55
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 285
+  start: 72
+  end: 87
+  label: failed lid grasp
+  source: behavior_search_train
+- episode_idx: 295
+  start: 157
+  end: 163
+  label: failed cube grasp
+  source: behavior_search_train
+- episode_idx: 296
+  start: 330
+  end: 334
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 297
+  start: 288
+  end: 296
+  label: failed hammer pick
+  source: behavior_search_train
+- episode_idx: 299
+  start: 107
+  end: 112
+  label: bad lid grasp
+  source: behavior_search_train
+metadata:
+  created: '2026-02-10T11:00:08.060523'
+  task_config: transport_mh_jan28
+  split: train
+  num_slices: 434
+  last_modified: '2026-02-19T15:29:28.621396'
+  dataset_fingerprint: d78958f2a4293127ad5b31f41355aa1a192d8a44dbca010f661710f30faf7f72
+  total_raw_samples: 195800
+episode_lengths:
+  196: 662
+  158: 946
+  180: 1110
+  156: 946
+  169: 660
+  88: 786
+  87: 641
+  200: 940
+  207: 589
+  167: 1123
+  154: 961
+  51: 736
+  152: 864
+  220: 647
+  233: 806
+  211: 583
+  168: 727
+  110: 685
+  187: 668
+  80: 493
+  188: 676
+  186: 669
+  79: 725
+  184: 1651
+  285: 630
+  205: 850
+  255: 757
+  54: 618
+  50: 618
+  259: 615
+  52: 531
+  277: 497
+  206: 709
+  281: 951
+  224: 699
+  276: 624
+  172: 534
+  105: 675
+  228: 766
+  176: 560
+  125: 811
+  101: 1015
+  222: 638
+  240: 566
+  153: 749
+  223: 730
+  121: 712
+  227: 769
+  129: 864
+  123: 617
+  177: 739
+  37: 392
+  214: 1025
+  197: 531
+  15: 439
+  216: 861
+  5: 583
+  149: 598
+  6: 438
+  193: 775
+  150: 1047
+  218: 825
+  145: 582
+  139: 653
+  248: 756
+  131: 654
+  185: 748
+  170: 851
+  122: 793
+  265: 688
+  267: 592
+  91: 642
+  137: 635
+  282: 729
+  76: 676
+  174: 895
+  171: 724
+  299: 697
+  231: 652
+  82: 588
+  173: 999
+  272: 557
+  257: 714
+  258: 516
+  201: 1054
+  81: 561
+  151: 1095
+  99: 482
+  210: 674
+  92: 512
+  166: 876
+  275: 523
+  23: 413
+  295: 467
+  31: 455
+  238: 692
+  198: 425
+  270: 551
+  178: 603
+  195: 894
+  266: 632
+  41: 491
+  234: 708
+  260: 657
+  297: 744
+  100: 2614
+  239: 642
+  256: 668
+  84: 593
+  264: 595
+  4: 438
+  95: 620
+  114: 711
+  96: 621
+  46: 464
+  128: 712
+  59: 600
+  278: 547
+  271: 447
+  1: 424
+  119: 630
+  269: 608
+  75: 589
+  236: 646
+  219: 800
+  208: 757
+  296: 641
+  274: 535
+  26: 490
+  29: 445
+  27: 420
+  30: 512
+  16: 410
+  11: 450

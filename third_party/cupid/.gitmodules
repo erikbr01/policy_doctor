@@ -1,0 +1,13 @@
+[submodule "third_party/trak"]
+	path = third_party/trak
+	url = https://github.com/agiachris/trak.git
+	branch = main
+[submodule "third_party/robomimic"]
+	path = third_party/robomimic
+	url = git@github.com:ARISE-Initiative/robomimic.git
+[submodule "third_party/infembed"]
+	path = third_party/infembed
+	url = git@github.com:erikbr01/infembed.git
+[submodule "third_party/LIBERO"]
+	path = third_party/LIBERO
+	url = git@github.com:Lifelong-Robot-Learning/LIBERO.git

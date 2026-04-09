@@ -36,3 +36,17 @@ class VLMBackend(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement behavior-level text summarization."
         )
+
+    def evaluate_slice_caption_coherency(
+        self,
+        *,
+        cluster_id: int,
+        slice_labels: Sequence[str],
+        task_hint: str,
+        system_prompt: Optional[str],
+        user_prompt: str,
+    ) -> str:
+        """Judge whether per-slice captions in one cluster are mutually coherent (text-only)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement slice-caption coherency judging."
+        )

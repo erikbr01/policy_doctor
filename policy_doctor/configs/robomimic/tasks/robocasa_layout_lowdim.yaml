@@ -1,0 +1,9 @@
+# RoboCasa demos exported to robomimic HDF5 layout (low-dim), same key shape as square MH abs.
+# Prerequisite: obs_keys match square (object, robot0_eef_pos, robot0_eef_quat, robot0_gripper_qpos).
+# Override dataset_path in experiment YAML or CLI when you have a real file.
+task: robocasa_layout_lowdim
+dataset_path: data/robocasa/datasets/kitchen_lowdim_merged.hdf5
+task_name: robocasa_kitchen
+dataset_type: mh
+obs_dim: 23
+action_dim: 10

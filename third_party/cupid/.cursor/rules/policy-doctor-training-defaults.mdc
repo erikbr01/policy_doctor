@@ -1,0 +1,19 @@
+---
+description: Default training settings for policy_doctor curation experiments
+alwaysApply: true
+---
+
+# Policy Doctor Training Defaults
+
+## Checkpoint saving
+
+Always save the **top 5 checkpoints** (`checkpoint_topk: 5`) for all curated training runs.
+
+- Set in `policy_doctor/configs/robomimic/curation_selection/low_dim/transport_mh.yaml`
+- Also set in any experiment config that overrides `checkpoint_topk`
+- The best checkpoint is often significantly better than the latest — top-5 is needed for meaningful evaluation
+
+## Evaluation
+
+- Use **500 rollouts** (`num_episodes: 500`) for post-training evaluation to reduce variance (transport_mh success rates are low and noisy with 50 rollouts)
+- Evaluate the **best checkpoint**, not just `latest`

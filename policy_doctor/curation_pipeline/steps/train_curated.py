@@ -9,6 +9,7 @@ import yaml
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
+from policy_doctor.curation_pipeline.diffusion_overrides import baseline_diffusion_extra_overrides
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_train_name
 
 
@@ -190,6 +191,7 @@ class TrainCuratedStep(PipelineStep[None]):
             if dataset_path_override:
                 overrides.append(f"++task.dataset.dataset_path={dataset_path_override}")
                 overrides.append(f"++task.env_runner.dataset_path={dataset_path_override}")
+            overrides.extend(baseline_diffusion_extra_overrides(baseline))
 
             if self.dry_run:
                 print(f"[dry_run] TrainCuratedStep seed={seed}  output_dir={run_output_dir}")

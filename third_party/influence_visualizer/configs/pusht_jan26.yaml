@@ -1,0 +1,27 @@
+task: pusht
+name: "Push-T (Jan 26 Experiment)"
+
+# Data paths
+eval_dir: "/Users/erik/stanford/asl_rotation/cupid/data/outputs/eval_save_episodes/jan26/jan26_train_diffusion_unet_lowdim_pusht_0/latest/"
+train_dir: "/Users/erik/stanford/asl_rotation/cupid/data/outputs/train/jan26/jan26_train_diffusion_unet_lowdim_pusht_0/"
+train_ckpt: "latest"
+exp_date: "default"
+image_dataset_path: null
+
+# Display settings
+obs_key: "img"
+top_k: 10
+lazy_load_images: false # No image dataset for PushT (uses lowdim only)
+
+# State labels (agent + block state)
+state_labels:
+  - "agent_x"
+  - "agent_y"
+  - "block_x"
+  - "block_y"
+  - "block_angle"
+
+# Action labels (2D delta position)
+action_labels:
+  - "delta_x"
+  - "delta_y"

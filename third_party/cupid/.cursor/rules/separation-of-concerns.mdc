@@ -1,0 +1,38 @@
+---
+description: Enforce strict separation between functional logic and UI/display code
+alwaysApply: true
+---
+
+# Separation of Functionality and Display
+
+**NEVER** put functional/algorithmic code in UI files, or UI code in functional modules. This applies to ALL packages in this repo.
+
+## The Rule
+
+- **Functional code** (data loading, slicing, transformations, algorithms) belongs in dedicated utility/data modules.
+- **Display code** (Streamlit, plotting, rendering) belongs in UI/rendering modules and may only *call* functional modules.
+- If a function does not need `streamlit`, `plotly`, or any UI library, it does NOT belong in a `render_*.py` or UI file.
+
+## Examples
+
+```python
+# BAD: Pure data logic living in a Streamlit render file
+# influence_visualizer/render_heatmaps.py
+import streamlit as st
+def get_split_data(data, split):  # This is pure logic — wrong place!
+    ...
+
+# GOOD: Pure data logic in a data/utility module
+# influence_visualizer/data_utils.py  (or policy_doctor/data/...)
+def get_split_data(data, split):
+    ...
+
+# Then import from the utility module in BOTH pipeline code and UI code
+```
+
+## When Encountering Violations
+
+If existing code (e.g. `influence_visualizer`) mixes concerns:
+- Do NOT import from the UI file in pipeline/functional code.
+- Instead, either extract the function to a proper utility module, or reimplement it locally in the functional module.
+- Flag the violation for future refactoring.

@@ -1,0 +1,16 @@
+task: mock
+name: "Mock Data (Demo)"
+
+# Mock mode - no data paths needed
+eval_dir: null
+train_dir: null
+use_mock: true
+
+# Display settings
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: false # Mock data - no real images
+
+# Empty labels - will use generic dim_0, dim_1, etc.
+state_labels: []
+action_labels: []

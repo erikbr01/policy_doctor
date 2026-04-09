@@ -22,6 +22,12 @@ Examples:
   python -m policy_doctor.scripts.run_pipeline \\
     +experiment=trak_filtering_mar13_p96 \\
     steps=[train_curated] dry_run=true
+
+  # Markov report (needs run_clustering in same run_dir) or set clustering_dir
+  python -m policy_doctor.scripts.run_pipeline steps=[export_markov_report]
+
+  # VLM coherency over slice captions (needs annotate_slices_vlm in same run_dir)
+  python -m policy_doctor.scripts.run_pipeline steps=[evaluate_cluster_coherency_vlm]
 """
 
 from __future__ import annotations

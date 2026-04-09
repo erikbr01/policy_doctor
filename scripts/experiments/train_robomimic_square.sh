@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Train diffusion policy (transformer, low-dim) on cupid/robomimic Square MH.
+# Conda env: cupid  |  Robosuite: 1.2.0  |  Runner: RobomimicLowdimRunner
+#
+# Usage:
+#   ./scripts/experiments/train_robomimic_square.sh [extra hydra overrides...]
+#
+# Examples:
+#   # default full run
+#   ./scripts/experiments/train_robomimic_square.sh
+#
+#   # custom output dir and wandb project
+#   ./scripts/experiments/train_robomimic_square.sh \
+#     multi_run.run_dir=/data/outputs/my_run \
+#     logging.project=my_project
+#
+# Key overridable Hydra keys:
+#   task.dataset.dataset_path=<path>     HDF5 dataset
+#   task.env_runner.dataset_path=<path>  same HDF5 for eval rollouts
+#   training.device=cuda:0
+#   training.num_epochs=800
+#   multi_run.run_dir=<output_dir>
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+CUPID_ROOT="${REPO_ROOT}/third_party/cupid"
+
+# Config path is relative to train.py (in CUPID_ROOT)
+CONFIG_PATH="configs/low_dim/square_mh/diffusion_policy_transformer"
+
+# Absolute path to the source HDF5
+HDF5="${REPO_ROOT}/data/source/robomimic/datasets/square/mh/low_dim_abs.hdf5"
+
+if [[ ! -f "$HDF5" ]]; then
+  echo "ERROR: dataset not found at $HDF5" >&2
+  exit 1
+fi
+
+export MUJOCO_GL="${MUJOCO_GL:-egl}"
+export WANDB_MODE="${WANDB_MODE:-online}"
+
+echo "=== train_robomimic_square: cupid env, Square MH low-dim ==="
+echo "    HDF5:   $HDF5"
+echo "    config: ${CUPID_ROOT}/${CONFIG_PATH}/config.yaml"
+echo ""
+
+cd "$CUPID_ROOT"
+exec conda run -n cupid --no-capture-output \
+  python train.py \
+    --config-path "$CONFIG_PATH" \
+    --config-name config \
+    "task.dataset.dataset_path=${HDF5}" \
+    "task.dataset_path=${HDF5}" \
+    "task.env_runner.dataset_path=${HDF5}" \
+    "$@"

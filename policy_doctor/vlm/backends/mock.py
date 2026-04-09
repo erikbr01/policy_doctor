@@ -42,6 +42,22 @@ class MockVLMBackend(VLMBackend):
             f"task={task_hint!r} first_label={head!r}"
         )
 
+    def evaluate_slice_caption_coherency(
+        self,
+        *,
+        cluster_id: int,
+        slice_labels: Sequence[str],
+        task_hint: str,
+        system_prompt: Optional[str],
+        user_prompt: str,
+    ) -> str:
+        n = len(slice_labels)
+        return (
+            '{"coherent": true, "score": 0.85, "rationale": "mock backend cluster '
+            f"{cluster_id} n_slices={n}"
+            '"}'
+        )
+
 
 def build_mock_backend(params: dict) -> MockVLMBackend:
     return MockVLMBackend(**(params or {}))

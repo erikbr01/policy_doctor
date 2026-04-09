@@ -1,0 +1,28 @@
+# @package _global_
+# RoboCasa demos in robomimic HDF5 layout (low-dim keys aligned with square MH abs for workspace reuse).
+# Submodule: third_party/robocasa. Export / preprocess datasets outside the pipeline, then point HDF5 here.
+# LeRobot v2 image training: third_party/cupid/configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer/config.yaml
+# Override ``task_config`` when you add task-specific clustering under policy_doctor or IV configs.
+
+defaults:
+  - /robomimic/baseline/low_dim@baseline: robocasa_layout_lowdim
+  - /robomimic/curation_filtering/low_dim@curation_filtering: robocasa_layout_lowdim
+  - /robomimic/curation_selection/low_dim@curation_selection: robocasa_layout_lowdim
+  - /robomimic/attribution/low_dim@attribution: robocasa_layout_lowdim
+  - /robomimic/evaluation/low_dim@evaluation: robocasa_layout_lowdim
+
+env: robomimic
+state: low_dim
+task: robocasa_layout_lowdim
+task_config: square_mh_feb15
+
+data_source:
+  id: robocasa_layout
+  label: RoboCasa kitchen (robomimic-layout HDF5) + cupid diffusion
+  policy_stack: diffusion_unet_lowdim
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: cupid
+  conda_env_datagen: robocasa
+  robocasa_submodule: true
+  mimicgen_submodule: false

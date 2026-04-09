@@ -1,0 +1,64 @@
+# LIBERO OBJECT benchmark, task 0: "pick up the alphabet soup and place it in the basket"
+# Uses same RobomimicReplayLowdimDataset + get_dataset_masks (libero path support).
+# Env runner: LiberoLowdimRunner (LIBERO env, same episode output format for TRAK/visualizer).
+name: libero_object_task0_lowdim
+
+obs_dim: 9   # joint_states (7) + gripper_states (2)
+action_dim: 7
+keypoint_dim: 3
+
+obs_keys: &obs_keys ["joint_states", "gripper_states"]
+# Map our obs key names to LIBERO/robosuite env obs keys
+obs_key_mapping: &obs_key_mapping
+  joint_states: robot0_joint_pos
+  gripper_states: robot0_gripper_qpos
+
+benchmark_name: &benchmark_name libero_object
+task_id: &task_id 0
+# Paths: set via override or symlink. Defaults assume CUPID root + LIBERO in third_party.
+libero_datasets_dir: &libero_datasets_dir data/libero
+bddl_folder: &bddl_folder third_party/LIBERO/libero/libero/bddl_files
+init_states_folder: &init_states_folder third_party/LIBERO/libero/libero/init_files
+# Single-task demo file (libero_object task 0)
+dataset_path: &dataset_path data/libero/libero_object/pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo.hdf5
+
+abs_action: &abs_action False
+
+env_runner:
+  _target_: diffusion_policy.env_runner.libero_lowdim_runner.LiberoLowdimRunner
+  benchmark_name: *benchmark_name
+  task_id: *task_id
+  libero_datasets_dir: *libero_datasets_dir
+  bddl_folder: *bddl_folder
+  init_states_folder: *init_states_folder
+  obs_keys: *obs_keys
+  obs_key_mapping: *obs_key_mapping
+  n_train: 0
+  n_train_vis: 0
+  n_test: 22
+  n_test_vis: 6
+  test_start_seed: 100000
+  max_steps: 500
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  n_latency_steps: ${n_latency_steps}
+  render_hw: [128, 128]
+  fps: 10
+  past_action: ${past_action_visible}
+  abs_action: *abs_action
+  tqdm_interval_sec: 5.0
+  save_episodes: false
+
+dataset:
+  _target_: diffusion_policy.dataset.robomimic_replay_lowdim_dataset.RobomimicReplayLowdimDataset
+  dataset_path: *dataset_path
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  obs_keys: *obs_keys
+  abs_action: *abs_action
+  use_legacy_normalizer: False
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: null
+  # Optional: sample_curation_config (filter) and holdout_selection_config (selection from holdout)

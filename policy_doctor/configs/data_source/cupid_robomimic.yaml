@@ -1,0 +1,27 @@
+# @package _global_
+# Default stack: vendored cupid + standard RoboMimic HDF5 (transport MH).
+# Policy: diffusion UNet low-dim only. Attribution: same TRAK / InfEmbed paths as other data_source profiles.
+# Visualization reads artifacts only — agnostic to this choice.
+
+defaults:
+  - /robomimic/baseline/low_dim@baseline: transport_mh
+  - /robomimic/curation_filtering/low_dim@curation_filtering: transport_mh
+  - /robomimic/curation_selection/low_dim@curation_selection: transport_mh
+  - /robomimic/attribution/low_dim@attribution: transport_mh
+  - /robomimic/evaluation/low_dim@evaluation: transport_mh
+
+env: robomimic
+state: low_dim
+task: transport_mh
+task_config: transport_mh_jan28
+
+data_source:
+  id: cupid_robomimic
+  label: Cupid + RoboMimic demonstrations
+  policy_stack: diffusion_unet_lowdim
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: cupid
+  conda_env_datagen: null
+  robocasa_submodule: false
+  mimicgen_submodule: false

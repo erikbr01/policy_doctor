@@ -1,0 +1,1159 @@
+slices:
+- episode_idx: 1
+  start: 109
+  end: 114
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 3
+  start: 115
+  end: 119
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 6
+  start: 122
+  end: 125
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 7
+  start: 0
+  end: 4
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 27
+  start: 56
+  end: 61
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 30
+  start: 96
+  end: 108
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 34
+  start: 146
+  end: 150
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 39
+  start: 110
+  end: 121
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 44
+  start: 27
+  end: 58
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 50
+  start: 134
+  end: 139
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 60
+  start: 210
+  end: 214
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 64
+  start: 106
+  end: 186
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 64
+  start: 334
+  end: 370
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 64
+  start: 376
+  end: 393
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 64
+  start: 441
+  end: 453
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 70
+  start: 61
+  end: 73
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 70
+  start: 102
+  end: 115
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 70
+  start: 125
+  end: 134
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 72
+  start: 110
+  end: 120
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 74
+  start: 45
+  end: 49
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 74
+  start: 101
+  end: 115
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 82
+  start: 56
+  end: 62
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 85
+  start: 1
+  end: 11
+  label: transport drop
+  source: behavior_search_train
+- episode_idx: 86
+  start: 95
+  end: 100
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 86
+  start: 102
+  end: 108
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 90
+  start: 224
+  end: 242
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 90
+  start: 244
+  end: 249
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 93
+  start: 164
+  end: 169
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 100
+  start: 36
+  end: 58
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 105
+  start: 22
+  end: 27
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 105
+  start: 50
+  end: 57
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 106
+  start: 156
+  end: 169
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 106
+  start: 175
+  end: 177
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 110
+  start: 0
+  end: 4
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 110
+  start: 55
+  end: 74
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 110
+  start: 157
+  end: 163
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 110
+  start: 186
+  end: 202
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 124
+  start: 46
+  end: 60
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 126
+  start: 77
+  end: 81
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 126
+  start: 236
+  end: 248
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 127
+  start: 136
+  end: 140
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 132
+  start: 34
+  end: 51
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 132
+  start: 61
+  end: 76
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 132
+  start: 84
+  end: 91
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 132
+  start: 247
+  end: 261
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 134
+  start: 76
+  end: 80
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 134
+  start: 173
+  end: 178
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 136
+  start: 229
+  end: 240
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 138
+  start: 218
+  end: 233
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 140
+  start: 158
+  end: 167
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 142
+  start: 191
+  end: 199
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 142
+  start: 203
+  end: 223
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 142
+  start: 227
+  end: 246
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 145
+  start: 147
+  end: 153
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 151
+  start: 71
+  end: 100
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 164
+  start: 25
+  end: 44
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 171
+  start: 215
+  end: 220
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 174
+  start: 138
+  end: 144
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 175
+  start: 65
+  end: 70
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 178
+  start: 43
+  end: 65
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 179
+  start: 30
+  end: 42
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 179
+  start: 45
+  end: 57
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 185
+  start: 39
+  end: 48
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 185
+  start: 58
+  end: 66
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 185
+  start: 68
+  end: 75
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 186
+  start: 39
+  end: 44
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 187
+  start: 45
+  end: 51
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 188
+  start: 0
+  end: 4
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 194
+  start: 44
+  end: 52
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 194
+  start: 63
+  end: 70
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 198
+  start: 39
+  end: 79
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 200
+  start: 187
+  end: 196
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 200
+  start: 240
+  end: 263
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 201
+  start: 131
+  end: 136
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 201
+  start: 448
+  end: 457
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 201
+  start: 466
+  end: 476
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 201
+  start: 614
+  end: 620
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 201
+  start: 629
+  end: 634
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 201
+  start: 651
+  end: 680
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 203
+  start: 78
+  end: 90
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 204
+  start: 32
+  end: 38
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 204
+  start: 144
+  end: 156
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 204
+  start: 220
+  end: 249
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 204
+  start: 267
+  end: 283
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 204
+  start: 293
+  end: 312
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 206
+  start: 57
+  end: 66
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 209
+  start: 23
+  end: 34
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 210
+  start: 181
+  end: 208
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 211
+  start: 175
+  end: 183
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 213
+  start: 34
+  end: 41
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 213
+  start: 146
+  end: 151
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 215
+  start: 31
+  end: 35
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 215
+  start: 182
+  end: 202
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 215
+  start: 211
+  end: 220
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 216
+  start: 43
+  end: 62
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 216
+  start: 112
+  end: 122
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 217
+  start: 81
+  end: 121
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 219
+  start: 64
+  end: 70
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 219
+  start: 75
+  end: 82
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 220
+  start: 84
+  end: 90
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 221
+  start: 445
+  end: 454
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 222
+  start: 24
+  end: 42
+  label: transport drop
+  source: behavior_search_train
+- episode_idx: 223
+  start: 44
+  end: 56
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 223
+  start: 118
+  end: 128
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 223
+  start: 144
+  end: 151
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 224
+  start: 300
+  end: 309
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 225
+  start: 48
+  end: 56
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 225
+  start: 59
+  end: 65
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 225
+  start: 79
+  end: 114
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 225
+  start: 269
+  end: 283
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 225
+  start: 285
+  end: 289
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 227
+  start: 125
+  end: 160
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 230
+  start: 47
+  end: 87
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 230
+  start: 417
+  end: 447
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 230
+  start: 539
+  end: 546
+  label: transport drop
+  source: behavior_search_train
+- episode_idx: 234
+  start: 320
+  end: 324
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 235
+  start: 146
+  end: 154
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 235
+  start: 190
+  end: 195
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 235
+  start: 204
+  end: 212
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 235
+  start: 232
+  end: 239
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 235
+  start: 249
+  end: 266
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 236
+  start: 62
+  end: 81
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 237
+  start: 60
+  end: 80
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 237
+  start: 89
+  end: 108
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 239
+  start: 341
+  end: 345
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 242
+  start: 90
+  end: 110
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 243
+  start: 47
+  end: 68
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 243
+  start: 73
+  end: 95
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 244
+  start: 30
+  end: 56
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 247
+  start: 47
+  end: 51
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 247
+  start: 88
+  end: 96
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 250
+  start: 28
+  end: 33
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 250
+  start: 138
+  end: 149
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 253
+  start: 32
+  end: 52
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 253
+  start: 54
+  end: 66
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 253
+  start: 91
+  end: 97
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 253
+  start: 107
+  end: 127
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 256
+  start: 55
+  end: 71
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 258
+  start: 53
+  end: 65
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 258
+  start: 67
+  end: 75
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 261
+  start: 252
+  end: 257
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 261
+  start: 359
+  end: 363
+  label: transport drop
+  source: behavior_search_train
+- episode_idx: 262
+  start: 243
+  end: 247
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 263
+  start: 38
+  end: 45
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 263
+  start: 50
+  end: 86
+  label: reach - slow
+  source: behavior_search_train
+- episode_idx: 265
+  start: 222
+  end: 228
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 269
+  start: 79
+  end: 86
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 269
+  start: 362
+  end: 379
+  label: transport noisy
+  source: behavior_search_train
+- episode_idx: 269
+  start: 456
+  end: 466
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 269
+  start: 474
+  end: 480
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 271
+  start: 94
+  end: 114
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 272
+  start: 6
+  end: 12
+  label: transport drop
+  source: behavior_search_train
+- episode_idx: 272
+  start: 19
+  end: 33
+  label: transport drop
+  source: behavior_search_train
+- episode_idx: 273
+  start: 161
+  end: 173
+  label: transport - bad grasp
+  source: behavior_search_train
+- episode_idx: 273
+  start: 185
+  end: 189
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 274
+  start: 77
+  end: 81
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 276
+  start: 157
+  end: 165
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 278
+  start: 214
+  end: 218
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 280
+  start: 63
+  end: 86
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 287
+  start: 113
+  end: 127
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 287
+  start: 227
+  end: 234
+  label: align - bad grasp
+  source: behavior_search_train
+- episode_idx: 289
+  start: 55
+  end: 59
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 289
+  start: 64
+  end: 85
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 289
+  start: 111
+  end: 115
+  label: reach - bad grasp
+  source: behavior_search_train
+- episode_idx: 294
+  start: 57
+  end: 70
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 297
+  start: 46
+  end: 50
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 298
+  start: 27
+  end: 48
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 298
+  start: 88
+  end: 109
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 298
+  start: 112
+  end: 117
+  label: reach noisy
+  source: behavior_search_train
+- episode_idx: 298
+  start: 140
+  end: 149
+  label: reach noisy
+  source: behavior_search_train
+metadata:
+  last_modified: '2026-02-13T17:49:38.656232'
+  task_config: square_mh_feb5
+  num_slices: 170
+  dataset_fingerprint: 3c75df072166d14323056f3ede899bf7bcb057a18a2e2772ae9bf61c584a1528
+  total_raw_samples: 80731
+  migrated_from_dataset: /Users/erik/stanford/asl_rotation/cupid/data/robomimic/datasets/square/mh/low_dim_abs.hdf5
+episode_lengths:
+  0: 127
+  1: 123
+  2: 134
+  3: 127
+  4: 180
+  5: 170
+  6: 133
+  7: 149
+  8: 150
+  9: 167
+  10: 159
+  11: 145
+  12: 154
+  13: 166
+  14: 154
+  15: 189
+  16: 168
+  17: 133
+  18: 181
+  19: 162
+  20: 173
+  21: 152
+  22: 134
+  23: 136
+  24: 148
+  25: 137
+  26: 145
+  27: 171
+  28: 149
+  29: 177
+  30: 136
+  31: 144
+  32: 177
+  33: 191
+  34: 159
+  35: 160
+  36: 160
+  37: 130
+  38: 132
+  39: 154
+  40: 194
+  41: 169
+  42: 149
+  43: 160
+  44: 167
+  45: 142
+  46: 156
+  47: 134
+  48: 143
+  49: 147
+  50: 503
+  51: 553
+  52: 326
+  53: 321
+  54: 302
+  55: 516
+  56: 1051
+  57: 287
+  58: 293
+  59: 700
+  60: 440
+  61: 411
+  62: 355
+  63: 363
+  64: 936
+  65: 288
+  66: 255
+  67: 275
+  68: 350
+  69: 360
+  70: 309
+  71: 448
+  72: 317
+  73: 428
+  74: 283
+  75: 318
+  76: 234
+  77: 290
+  78: 382
+  79: 308
+  80: 252
+  81: 364
+  82: 566
+  83: 462
+  84: 224
+  85: 262
+  86: 300
+  87: 293
+  88: 315
+  89: 526
+  90: 458
+  91: 414
+  92: 306
+  93: 396
+  94: 316
+  95: 335
+  96: 418
+  97: 375
+  98: 374
+  99: 359
+  100: 258
+  101: 298
+  102: 282
+  103: 340
+  104: 170
+  105: 235
+  106: 185
+  107: 213
+  108: 270
+  109: 260
+  110: 218
+  111: 232
+  112: 207
+  113: 227
+  114: 206
+  115: 290
+  116: 199
+  117: 194
+  118: 332
+  119: 197
+  120: 237
+  121: 217
+  122: 168
+  123: 179
+  124: 198
+  125: 155
+  126: 281
+  127: 218
+  128: 259
+  129: 151
+  130: 298
+  131: 220
+  132: 356
+  133: 203
+  134: 190
+  135: 237
+  136: 248
+  137: 223
+  138: 263
+  139: 180
+  140: 175
+  141: 174
+  142: 255
+  143: 176
+  144: 173
+  145: 330
+  146: 193
+  147: 263
+  148: 210
+  149: 200
+  150: 349
+  151: 265
+  152: 167
+  153: 235
+  154: 215
+  155: 234
+  156: 182
+  157: 196
+  158: 317
+  159: 261
+  160: 195
+  161: 215
+  162: 160
+  163: 173
+  164: 188
+  165: 203
+  166: 174
+  167: 158
+  168: 220
+  169: 213
+  170: 189
+  171: 282
+  172: 233
+  173: 199
+  174: 221
+  175: 228
+  176: 164
+  177: 163
+  178: 244
+  179: 321
+  180: 257
+  181: 170
+  182: 194
+  183: 248
+  184: 298
+  185: 207
+  186: 197
+  187: 223
+  188: 300
+  189: 210
+  190: 191
+  191: 218
+  192: 152
+  193: 227
+  194: 198
+  195: 179
+  196: 180
+  197: 184
+  198: 215
+  199: 218
+  200: 322
+  201: 771
+  202: 330
+  203: 276
+  204: 375
+  205: 273
+  206: 264
+  207: 185
+  208: 286
+  209: 210
+  210: 415
+  211: 268
+  212: 571
+  213: 236
+  214: 368
+  215: 229
+  216: 170
+  217: 288
+  218: 214
+  219: 207
+  220: 218
+  221: 462
+  222: 302
+  223: 337
+  224: 329
+  225: 324
+  226: 775
+  227: 196
+  228: 348
+  229: 329
+  230: 565
+  231: 271
+  232: 357
+  233: 178
+  234: 333
+  235: 427
+  236: 213
+  237: 341
+  238: 206
+  239: 366
+  240: 206
+  241: 307
+  242: 303
+  243: 349
+  244: 203
+  245: 284
+  246: 189
+  247: 630
+  248: 220
+  249: 405
+  250: 208
+  251: 283
+  252: 221
+  253: 371
+  254: 245
+  255: 391
+  256: 226
+  257: 321
+  258: 281
+  259: 396
+  260: 266
+  261: 512
+  262: 307
+  263: 235
+  264: 320
+  265: 263
+  266: 279
+  267: 343
+  268: 235
+  269: 488
+  270: 262
+  271: 343
+  272: 219
+  273: 238
+  274: 244
+  275: 289
+  276: 343
+  277: 424
+  278: 264
+  279: 184
+  280: 261
+  281: 241
+  282: 295
+  283: 279
+  284: 437
+  285: 264
+  286: 260
+  287: 280
+  288: 287
+  289: 660
+  290: 259
+  291: 275
+  292: 291
+  293: 274
+  294: 230
+  295: 272
+  296: 232
+  297: 292
+  298: 278
+  299: 345

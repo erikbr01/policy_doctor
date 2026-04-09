@@ -47,6 +47,12 @@ class TestFingerprintEpisodeEnds(unittest.TestCase):
             from influence_visualizer.data_loader import load_influence_data
         except ImportError:
             self.skipTest("influence_visualizer not installed")
+        try:
+            import pytorch3d  # noqa: F401 — diffusion_policy loads this via rotation_transformer
+        except ImportError:
+            self.skipTest(
+                "pytorch3d required for load_influence_data / diffusion_policy dataset chain"
+            )
         self._ref_path, self._eval_dir, self._train_dir = _get_reference_paths()
         if self._ref_path is None:
             self.skipTest("Reference config not found")

@@ -1,0 +1,66 @@
+task: robomimic_transport
+name: "Transport MH (Jan 28 Experiment)"
+
+# Data paths
+eval_dir: "data/outputs/eval_save_episodes/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0/latest"
+train_dir: "data/outputs/train/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0"
+train_ckpt: "latest"
+exp_date: "default"
+seeds: ["0", "1", "2"]
+comparison: ["transport_mh_feb19"]
+wandb_project: "diffusion_policy_debug"
+image_dataset_path: "data/robomimic/datasets/transport/mh/image_abs.hdf5"
+
+# Display settings
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: true # Use lazy loading for large datasets (31GB in this case)
+
+# Quality tier masks to load from the HDF5 dataset (in priority order)
+# These correspond to mask groups in the HDF5 file
+quality_labels:
+  - "better"
+  - "okay_better"
+  - "okay"
+  - "worse_okay"
+  - "worse_better"
+  - "worse"
+
+# TODO: update these with the correct ones for transport
+# State labels (19D single-timestep observation)
+# Order: object(10) + eef_pos(3) + eef_quat(4) + gripper_qpos(2)
+# Note: obs uses raw quaternions (4D), only actions use rotation_6d
+state_labels:
+  - "obj_pos_x"
+  - "obj_pos_y"
+  - "obj_pos_z"
+  - "obj_quat_x"
+  - "obj_quat_y"
+  - "obj_quat_z"
+  - "obj_quat_w"
+  - "obj_7"
+  - "obj_8"
+  - "obj_9"
+  - "eef_pos_x"
+  - "eef_pos_y"
+  - "eef_pos_z"
+  - "eef_quat_x"
+  - "eef_quat_y"
+  - "eef_quat_z"
+  - "eef_quat_w"
+  - "gripper_0"
+  - "gripper_1"
+
+# TODO: update these with the correct ones for transport
+# Action labels (10D with rotation_6d)
+action_labels:
+  - "pos_x"
+  - "pos_y"
+  - "pos_z"
+  - "rot_0"
+  - "rot_1"
+  - "rot_2"
+  - "rot_3"
+  - "rot_4"
+  - "rot_5"
+  - "gripper"

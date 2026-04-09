@@ -2,3 +2,6 @@
 	path = third_party/mimicgen
 	url = git@github.com:erikbr01/mimicgen.git
 
+[submodule "third_party/robocasa"]
+	path = third_party/robocasa
+	url = git@github.com:robocasa/robocasa.git

@@ -8,6 +8,7 @@ from policy_doctor.behaviors.behavior_graph import (
     BehaviorNode,
     MarkovTestResult,
     get_rollout_slices_for_paths,
+    markov_test_result_to_jsonable,
     test_markov_property,
     test_markov_property_pooled,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "compute_mrp_slice_values",
     "get_behavior_graph_and_slice_values",
     "get_rollout_slices_for_paths",
+    "markov_test_result_to_jsonable",
     "slice_indices_to_rollout_slices",
     "test_markov_property",
     "test_markov_property_pooled",

@@ -1,0 +1,36 @@
+# @package _global_
+# Curation-filtering on transport_mh_jan28 with infembed clustering (pipeline default source).
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline experiment=auto_pipeline_test_mar13 \
+#     steps=[run_clustering,run_curation_config,train_curated,eval_curated,compare]
+#
+# Baseline reference (historical): seed0 48%, seed1 40%, seed2 43% success (~43.7% mean).
+
+task_config: transport_mh_jan28
+experiment_name: auto_pipeline_test_mar13
+seeds: [0, 1, 2]
+reference_seed: 0
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 20
+clustering_normalize: none
+clustering_aggregation: sum
+
+curation_mode: filter
+advantage_threshold: -0.3
+selection_percentile: 99.0
+window_width: 5
+aggregation_method: mean
+curation_output_name: auto_pipeline_test_mar13
+
+train_date: auto_pipeline_test_mar13
+project: robomimic_transport_mh
+filter_ratio: 0.50
+select_ratio: 0.00
+num_epochs: 2301

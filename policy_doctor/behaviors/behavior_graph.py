@@ -881,6 +881,50 @@ def test_markov_property(
     return _summarize(per_state, significance_level)
 
 
+def markov_test_result_to_jsonable(result: Dict) -> Dict:
+    """Make :func:`test_markov_property` / :func:`test_markov_property_pooled` output JSON-safe."""
+
+    def _json_bool(x: Optional[bool]) -> Optional[bool]:
+        if x is None:
+            return None
+        return bool(x)
+
+    def _state_dict(r: MarkovTestResult) -> Dict:
+        ct = r.contingency_table
+        return {
+            "state": int(r.state),
+            "testable": bool(r.testable),
+            "chi2": float(r.chi2) if r.chi2 is not None else None,
+            "p_value": float(r.p_value) if r.p_value is not None else None,
+            "dof": int(r.dof) if r.dof is not None else None,
+            "markov_holds": _json_bool(r.markov_holds),
+            "contingency_table": ct.tolist() if ct is not None else None,
+            "previous_states": list(r.previous_states) if r.previous_states else None,
+            "next_states": list(r.next_states) if r.next_states else None,
+            "reason": r.reason,
+        }
+
+    per_state = result.get("per_state") or {}
+    serial_per = {
+        str(k): _state_dict(v) if isinstance(v, MarkovTestResult) else v
+        for k, v in per_state.items()
+    }
+    out = {
+        "markov_holds": _json_bool(result.get("markov_holds")),
+        "significance_level": float(result["significance_level"])
+        if result.get("significance_level") is not None
+        else None,
+        "num_states_tested": int(result["num_states_tested"])
+        if result.get("num_states_tested") is not None
+        else None,
+        "num_states_untestable": int(result["num_states_untestable"])
+        if result.get("num_states_untestable") is not None
+        else None,
+        "per_state": serial_per,
+    }
+    return out
+
+
 def test_markov_property_pooled(
     datasets: List[Tuple[np.ndarray, List[Dict]]],
     level: str = "rollout",

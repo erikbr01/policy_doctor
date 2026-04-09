@@ -10,6 +10,11 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 # Standalone project dir (repo root: pyproject.toml, tests/, third_party/, …)
 PROJECT_ROOT = PACKAGE_ROOT.parent
 
+# Local datasets (typically gitignored): robomimic / robocasa / mimicgen HDF5 or exports.
+# Training resolves ``data/...`` from ``REPO_ROOT`` (usually ``third_party/cupid``), not here —
+# symlink into cupid’s ``data/`` or pass absolute paths via ``baseline.diffusion_dataset_path``.
+DATA_SOURCE_ROOT = PROJECT_ROOT / "data" / "source"
+
 # Vendored dependencies (standalone layout)
 THIRD_PARTY_ROOT = PROJECT_ROOT / "third_party"
 CUPID_ROOT = THIRD_PARTY_ROOT / "cupid"
@@ -19,6 +24,11 @@ INFLUENCE_VISUALIZER_ROOT = THIRD_PARTY_ROOT / "influence_visualizer"
 MIMICGEN_ROOT = THIRD_PARTY_ROOT / "mimicgen"
 # Conda env from ``environment_mimicgen.yaml`` (MuJoCo 2.3.2 + pinned robosuite/robomimic; see MimicGen docs).
 MIMICGEN_CONDA_ENV_NAME = "mimicgen"
+ROBOCASA_ROOT = THIRD_PARTY_ROOT / "robocasa"
+# RoboCasa is typically used with the ``cupid`` or a dedicated kitchen env; no single canonical name here.
+ROBOCASA_CONDA_ENV_NAME = "robocasa"
+# Conda env from ``environment_policy_doctor.yaml`` (orchestration, Streamlit, most unit tests).
+POLICY_DOCTOR_CONDA_ENV_NAME = "policy_doctor"
 IV_CONFIGS_DIR = INFLUENCE_VISUALIZER_ROOT / "configs"
 
 

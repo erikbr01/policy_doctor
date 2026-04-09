@@ -10,23 +10,23 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from policy_doctor.datagen.mimicgen.robomimic_source import (
+from policy_doctor.paths import MIMICGEN_ROOT, PROJECT_ROOT
+from tests.support.mimicgen_seed.pipeline import (
+    ensure_mimicgen_importable,
+    materialize_robomimic_seed_hdf5,
+)
+from tests.support.mimicgen_seed.robomimic_source import (
     LiberoRobomimicSeedMaterializer,
     RobocasaRobomimicSeedMaterializer,
     RobomimicSeedMaterializer,
     SeedDatasetMaterializer,
 )
-from policy_doctor.datagen.mimicgen.schema import (
+from tests.support.mimicgen_seed.schema import (
     MimicGenBinding,
     PolicyRolloutTrajectory,
     SimulationBackend,
     validate_policy_rollout_trajectory,
 )
-from policy_doctor.datagen.mimicgen.pipeline import (
-    ensure_mimicgen_importable,
-    materialize_robomimic_seed_hdf5,
-)
-from policy_doctor.paths import MIMICGEN_ROOT, PROJECT_ROOT
 
 
 def _minimal_env_meta() -> dict:
@@ -138,7 +138,12 @@ class TestEnsureMimicgenImportable(unittest.TestCase):
         ensure_mimicgen_importable()
         import mimicgen  # noqa: F401
 
-        self.assertTrue(Path(mimicgen.__file__).resolve().is_relative_to(PROJECT_ROOT))
+        mf = Path(mimicgen.__file__).resolve()
+        root = PROJECT_ROOT.resolve()
+        try:
+            mf.relative_to(root)
+        except ValueError:
+            self.fail(f"expected mimicgen under project root {root}, got {mf}")
 
 
 class TestRunMimicgenPrepareOptional(unittest.TestCase):

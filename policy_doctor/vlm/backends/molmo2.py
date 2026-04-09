@@ -197,6 +197,52 @@ class Molmo2Backend(VLMBackend):
             raise RuntimeError("Molmo2 processor has no tokenizer for decode")
         return tok.decode(gen_tokens, skip_special_tokens=True).strip()
 
+    def evaluate_slice_caption_coherency(
+        self,
+        *,
+        cluster_id: int,  # noqa: ARG002
+        slice_labels: Sequence[str],  # noqa: ARG002
+        task_hint: str,  # noqa: ARG002
+        system_prompt: Optional[str],
+        user_prompt: str,
+    ) -> str:
+        import torch
+
+        self._lazy_init()
+        assert self._processor is not None and self._model is not None
+
+        text = user_prompt if not system_prompt else f"{system_prompt}\n\n{user_prompt}"
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": text}],
+            }
+        ]
+
+        inputs = self._processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            return_dict=True,
+        )
+        dev = self._model_device()
+        inputs = {k: v.to(dev) if hasattr(v, "to") else v for k, v in inputs.items()}
+
+        gen_kw = {"max_new_tokens": self.max_new_tokens, **self._extra_generate_kwargs()}
+        if "do_sample" not in gen_kw:
+            gen_kw["do_sample"] = False
+
+        with torch.inference_mode():
+            out_ids = self._model.generate(**inputs, **gen_kw)
+
+        in_len = inputs["input_ids"].shape[1]
+        gen_tokens = out_ids[0, in_len:]
+        tok = getattr(self._processor, "tokenizer", None)
+        if tok is None:
+            raise RuntimeError("Molmo2 processor has no tokenizer for decode")
+        return tok.decode(gen_tokens, skip_special_tokens=True).strip()
+
 
 def build_molmo2_backend(params: Optional[Dict[str, Any]] = None) -> Molmo2Backend:
     return Molmo2Backend(**(params or {}))

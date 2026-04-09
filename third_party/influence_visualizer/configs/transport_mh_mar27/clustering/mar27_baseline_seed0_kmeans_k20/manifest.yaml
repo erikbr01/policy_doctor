@@ -1,0 +1,9 @@
+algorithm: kmeans
+scaling: none
+influence_source: infembed
+representation: sliding_window
+level: rollout
+n_clusters: 20
+n_samples: 8091
+created: '2026-04-02T15:04:05.722989'
+task_config: transport_mh_mar27

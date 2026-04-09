@@ -1,10 +1,13 @@
 """Tests for policy_doctor.plotting.pyvis (interactive behavior graph)."""
 
+import importlib.util
 import unittest
 
 import numpy as np
 
 from policy_doctor.behaviors.behavior_graph import BehaviorGraph
+
+_PYVIS_AVAILABLE = importlib.util.find_spec("pyvis") is not None
 
 
 def _minimal_graph():
@@ -21,22 +24,17 @@ def _minimal_graph():
     )
 
 
+@unittest.skipUnless(_PYVIS_AVAILABLE, "pyvis not installed (optional dependency)")
 class TestPyvis(unittest.TestCase):
     def test_create_interactive_behavior_graph_returns_str(self):
-        try:
-            from policy_doctor.plotting.pyvis import create_interactive_behavior_graph
-        except ImportError as e:
-            self.skipTest(f"pyvis not installed: {e}")
+        from policy_doctor.plotting.pyvis import create_interactive_behavior_graph
         graph = _minimal_graph()
         html = create_interactive_behavior_graph(graph, min_probability=0.0)
         self.assertIsInstance(html, str)
         self.assertGreater(len(html), 100)
 
     def test_create_interactive_behavior_graph_contains_vis_network(self):
-        try:
-            from policy_doctor.plotting.pyvis import create_interactive_behavior_graph
-        except ImportError as e:
-            self.skipTest(f"pyvis not installed: {e}")
+        from policy_doctor.plotting.pyvis import create_interactive_behavior_graph
         graph = _minimal_graph()
         html = create_interactive_behavior_graph(graph)
         self.assertTrue(
@@ -45,12 +43,9 @@ class TestPyvis(unittest.TestCase):
         )
 
     def test_create_value_colored_interactive_graph_returns_str(self):
-        try:
-            from policy_doctor.plotting.pyvis import (
-                create_value_colored_interactive_graph,
-            )
-        except ImportError as e:
-            self.skipTest(f"pyvis not installed: {e}")
+        from policy_doctor.plotting.pyvis import (
+            create_value_colored_interactive_graph,
+        )
         graph = _minimal_graph()
         values = {nid: 0.5 for nid in graph.nodes}
         html = create_value_colored_interactive_graph(graph, values)
@@ -58,12 +53,9 @@ class TestPyvis(unittest.TestCase):
         self.assertGreater(len(html), 100)
 
     def test_create_timestep_colored_interactive_graph_returns_str(self):
-        try:
-            from policy_doctor.plotting.pyvis import (
-                create_timestep_colored_interactive_graph,
-            )
-        except ImportError as e:
-            self.skipTest(f"pyvis not installed: {e}")
+        from policy_doctor.plotting.pyvis import (
+            create_timestep_colored_interactive_graph,
+        )
         graph = _minimal_graph()
         html = create_timestep_colored_interactive_graph(graph, min_probability=0.0)
         self.assertIsInstance(html, str)

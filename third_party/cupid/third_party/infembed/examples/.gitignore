@@ -1,0 +1,5 @@
+*/hydra_outputs/*
+*/outputs/*
+*/lightning_logs/*
+*/.hydra/*
+hydra_outputs/

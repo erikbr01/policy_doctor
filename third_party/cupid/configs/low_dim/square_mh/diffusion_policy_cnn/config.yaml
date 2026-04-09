@@ -1,0 +1,73 @@
+# Robomimic square (multi-human) low-dim diffusion. HDF5 / rollouts use **robomimic** env metadata
+# and the robosuite build from **robomimic dataset collection** — not the MimicGen-patched stack.
+defaults:
+  - ../../_shared/diffusion_unet_lowdim_square_arch@_here_
+  - _self_
+
+exp_name: obs_global_rerun
+logging:
+  name: 2023.02.23-19.51.19_train_diffusion_unet_lowdim_square_lowdim
+  tags:
+  - train_diffusion_unet_lowdim
+  - square_lowdim
+  - obs_global_rerun
+multi_run:
+  run_dir: data/outputs/2023.02.23/19.51.19_train_diffusion_unet_lowdim_square_lowdim
+  wandb_name_base: 2023.02.23-19.51.19_train_diffusion_unet_lowdim_square_lowdim
+task:
+  abs_action: true
+  action_dim: 10
+  dataset:
+    _target_: diffusion_policy.dataset.robomimic_replay_lowdim_dataset.RobomimicReplayLowdimDataset
+    abs_action: true
+    dataset_path: data/robomimic/datasets/square/mh/low_dim_abs.hdf5
+    horizon: 16
+    max_train_episodes: null
+    obs_keys:
+    - object
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
+    pad_after: 7
+    pad_before: 1
+    seed: 42
+    use_legacy_normalizer: false
+    val_ratio: 0.02
+  dataset_path: data/robomimic/datasets/square/mh/low_dim_abs.hdf5
+  dataset_type: mh
+  env_runner:
+    _target_: diffusion_policy.env_runner.robomimic_lowdim_runner.RobomimicLowdimRunner
+    abs_action: true
+    crf: 22
+    dataset_path: data/robomimic/datasets/square/mh/low_dim_abs.hdf5
+    fps: 10
+    max_steps: 500
+    n_action_steps: 8
+    n_envs: 28
+    n_latency_steps: 0
+    n_obs_steps: 2
+    n_test: 50
+    n_test_vis: 4
+    n_train: 6
+    n_train_vis: 2
+    obs_keys:
+    - object
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
+    past_action: false
+    render_hw:
+    - 128
+    - 128
+    test_start_seed: 100000
+    train_start_idx: 0
+  keypoint_dim: 3
+  name: square_lowdim
+  obs_dim: 23
+  obs_keys:
+  - object
+  - robot0_eef_pos
+  - robot0_eef_quat
+  - robot0_gripper_qpos
+  task_name: square
+task_name: square_lowdim

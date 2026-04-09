@@ -22,8 +22,10 @@ ALL_STEPS: List[str] = [
     "compute_demonstration_scores",
     "compute_infembed",
     "run_clustering",
+    "export_markov_report",
     "annotate_slices_vlm",
     "summarize_behaviors_vlm",
+    "evaluate_cluster_coherency_vlm",
     "run_curation_config",
     "train_curated",
     "eval_curated",
@@ -40,8 +42,12 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.compute_demonstration_scores import ComputeDemonstrationScoresStep
     from policy_doctor.curation_pipeline.steps.compute_infembed import ComputeInfembedStep
     from policy_doctor.curation_pipeline.steps.run_clustering import RunClusteringStep
+    from policy_doctor.curation_pipeline.steps.export_markov_report import ExportMarkovReportStep
     from policy_doctor.curation_pipeline.steps.annotate_slices_vlm import AnnotateSlicesVLMStep
     from policy_doctor.curation_pipeline.steps.summarize_behaviors_vlm import SummarizeBehaviorsVLMStep
+    from policy_doctor.curation_pipeline.steps.evaluate_cluster_coherency_vlm import (
+        EvaluateClusterCoherencyVLMStep,
+    )
     from policy_doctor.curation_pipeline.steps.run_curation_config import RunCurationConfigStep
     from policy_doctor.curation_pipeline.steps.train_curated import TrainCuratedStep
     from policy_doctor.curation_pipeline.steps.eval_curated import EvalCuratedStep
@@ -55,8 +61,10 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "compute_demonstration_scores": ComputeDemonstrationScoresStep,
         "compute_infembed": ComputeInfembedStep,
         "run_clustering": RunClusteringStep,
+        "export_markov_report": ExportMarkovReportStep,
         "annotate_slices_vlm": AnnotateSlicesVLMStep,
         "summarize_behaviors_vlm": SummarizeBehaviorsVLMStep,
+        "evaluate_cluster_coherency_vlm": EvaluateClusterCoherencyVLMStep,
         "run_curation_config": RunCurationConfigStep,
         "train_curated": TrainCuratedStep,
         "eval_curated": EvalCuratedStep,

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cupid-workspace"
+version = "0.0.0"
+description = "Vendored cupid: diffusion_policy, top-level eval/train scripts, influence_embeddings"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+py-modules = [
+  "compute_infembed_embeddings",
+  "eval",
+  "eval_action_likelihood_diffusion",
+  "eval_action_variance_diffusion",
+  "eval_demonstration_scores",
+  "eval_demo_score",
+  "eval_embeddings",
+  "eval_policy_loss_diffusion",
+  "eval_rollout_scores",
+  "eval_save_episodes",
+  "finalize_trak",
+  "train",
+  "train_trak_diffusion",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["diffusion_policy*", "influence_embeddings*"]
+namespaces = true

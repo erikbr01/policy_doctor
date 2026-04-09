@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
-from omegaconf import DictConfig, OmegaConf
-
 from policy_doctor.vlm.backends.base import VLMBackend
 from policy_doctor.vlm.backends.mock import build_mock_backend
 
@@ -86,11 +84,16 @@ def get_vlm_backend(name: str, params: Any = None) -> VLMBackend:
         )
     p: Dict[str, Any] = {}
     if params is not None:
-        if isinstance(params, DictConfig):
-            c = OmegaConf.to_container(params, resolve=True)
-            p = dict(c) if isinstance(c, dict) else {}
-        elif isinstance(params, dict):
+        if isinstance(params, dict):
             p = dict(params)
         else:
-            raise TypeError(f"backend_params must be dict or DictConfig, got {type(params)}")
+            from omegaconf import DictConfig, OmegaConf
+
+            if isinstance(params, DictConfig):
+                c = OmegaConf.to_container(params, resolve=True)
+                p = dict(c) if isinstance(c, dict) else {}
+            else:
+                raise TypeError(
+                    f"backend_params must be dict or DictConfig, got {type(params)}"
+                )
     return _REGISTRY[key](p)

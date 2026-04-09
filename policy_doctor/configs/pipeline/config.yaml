@@ -59,3 +59,12 @@ remove_negative_influence: false
 # (filter -> "behavior_search_train"; selection -> "behavior_search_holdout")
 # slice_label: null  # auto: "advantage_based_A{threshold}"
 # slice_source: null  # auto: "behavior_search_train" (filter) or "behavior_search_holdout" (selection)
+
+# Markov report (export_markov_report step — after run_clustering)
+markov_export:
+  level: null  # null = use manifest level from clustering result
+  significance_level: 0.05
+  exclude_terminals: false
+  method: chi2
+  n_permutations: 10000
+  random_state: null

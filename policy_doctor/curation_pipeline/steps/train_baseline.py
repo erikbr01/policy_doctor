@@ -7,6 +7,7 @@ import pathlib
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
+from policy_doctor.curation_pipeline.diffusion_overrides import baseline_diffusion_extra_overrides
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_train_name
 
 
@@ -99,6 +100,7 @@ class TrainBaselineStep(PipelineStep[None]):
                 f"multi_run.wandb_name_base={train_name}",
                 f"multi_run.run_dir={run_output_dir}",
             ]
+            overrides.extend(baseline_diffusion_extra_overrides(baseline))
 
             if self.dry_run:
                 print(f"[dry_run] TrainBaselineStep seed={seed}")

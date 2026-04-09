@@ -1,0 +1,7 @@
+# Square (NutAssembly) merged MimicGen HDF5 — same low-dim keys as square MH abs.
+task: square_mh_mimicgen
+dataset_path: data/mimicgen/square_merged.hdf5
+task_name: square
+dataset_type: mh
+obs_dim: 23
+action_dim: 10

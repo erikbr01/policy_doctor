@@ -1,5 +1,6 @@
 # Used by scripts/install_policy_doctor_env.sh after conda env exists.
 # PyTorch wheels (CPU default); replace with CUDA index if needed.
+# Also pins orchestration deps so a minimal conda solve still passes tests (VLM, …).
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 torchvision
@@ -8,3 +9,9 @@ transformers
 huggingface_hub
 wandb
 h5py
+omegaconf>=2.3.0
+hydra-core>=1.3.0
+pandas>=1.5.0
+PyYAML>=6.0
+scipy>=1.9.0
+numpy>=1.23.0

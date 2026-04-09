@@ -31,7 +31,7 @@ def _e2e_requested() -> bool:
     return os.environ.get("MIMICGEN_E2E", "0").strip() in ("1", "true", "yes")
 
 
-def _require_stack() -> None:
+def _require_mimicgen_e2e_deps() -> None:
     if not _e2e_requested():
         raise unittest.SkipTest(
             "Set MIMICGEN_E2E=1 to run MimicGen download + sim (see module docstring)."
@@ -41,7 +41,7 @@ def _require_stack() -> None:
         import robosuite  # noqa: F401
     except ImportError as e:
         raise unittest.SkipTest(f"robomimic/robosuite not available: {e}") from e
-    from policy_doctor.datagen.mimicgen.pipeline import ensure_mimicgen_importable
+    from tests.support.mimicgen_seed.pipeline import ensure_mimicgen_importable
 
     ensure_mimicgen_importable()
     import mimicgen  # noqa: F401
@@ -56,7 +56,7 @@ class TestMimicgenSquareE2E(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        _require_stack()
+        _require_mimicgen_e2e_deps()
 
     def test_01_download_source_square(self):
         global _SOURCE
@@ -89,8 +89,8 @@ class TestMimicgenSquareE2E(unittest.TestCase):
 
         import h5py
 
-        from policy_doctor.datagen.mimicgen.pipeline import run_mimicgen_prepare_src_dataset
-        from policy_doctor.datagen.mimicgen.schema import MimicGenBinding
+        from tests.support.mimicgen_seed.pipeline import run_mimicgen_prepare_src_dataset
+        from tests.support.mimicgen_seed.schema import MimicGenBinding
 
         if _SOURCE is None or not _SOURCE.is_file():
             self.skipTest("Run test_01_download_source_square first.")

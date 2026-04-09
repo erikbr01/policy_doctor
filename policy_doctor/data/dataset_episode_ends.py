@@ -35,15 +35,21 @@ def get_checkpoint_path(train_dir: pathlib.Path, train_ckpt: str = "latest") -> 
     if train_ckpt == "best":
         try:
             from diffusion_policy.common.trak_util import get_best_checkpoint
+
             checkpoints = list(checkpoint_dir.iterdir())
             return get_best_checkpoint(checkpoints)
+        except ImportError:
+            return checkpoint_dir / "latest.ckpt"
         except Exception:
             return checkpoint_dir / "latest.ckpt"
     if train_ckpt.isdigit():
         try:
             from diffusion_policy.common.trak_util import get_index_checkpoint
+
             checkpoints = list(checkpoint_dir.iterdir())
             return get_index_checkpoint(checkpoints, int(train_ckpt))
+        except ImportError:
+            return checkpoint_dir / "latest.ckpt"
         except Exception:
             return checkpoint_dir / "latest.ckpt"
     return checkpoint_dir / f"{train_ckpt}.ckpt"

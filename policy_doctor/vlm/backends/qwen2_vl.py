@@ -359,6 +359,47 @@ class Qwen2VLBackend(VLMBackend):
         decoded = self._processor.batch_decode(trimmed, skip_special_tokens=True)[0]
         return decoded.strip()
 
+    def evaluate_slice_caption_coherency(
+        self,
+        *,
+        cluster_id: int,  # noqa: ARG002
+        slice_labels: Sequence[str],  # noqa: ARG002
+        task_hint: str,  # noqa: ARG002
+        system_prompt: Optional[str],
+        user_prompt: str,
+    ) -> str:
+        import torch
+
+        self._lazy_init()
+        assert self._processor is not None and self._model is not None
+
+        user_content = [{"type": "text", "text": user_prompt}]
+        messages: list = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_content})
+
+        text = self._processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        inputs = self._processor(
+            text=[text],
+            return_tensors="pt",
+            padding=True,
+        )
+        inputs = inputs.to(self.device)
+
+        with torch.inference_mode():
+            out_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+            )
+        trimmed = out_ids[:, inputs["input_ids"].shape[1] :]
+        decoded = self._processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+        return decoded.strip()
+
 
 def build_qwen2_vl_backend(params: Optional[Dict[str, Any]] = None) -> Qwen2VLBackend:
     return Qwen2VLBackend(**(params or {}))

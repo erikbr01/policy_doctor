@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "influence-visualizer"
+version = "0.1.0"
+description = "Influence visualization and data loading (vendored for policy_doctor)"
+requires-python = ">=3.9"
+readme = "notebooks/README.md"
+
+[tool.setuptools]
+package-dir = { influence_visualizer = "." }
+packages = [
+  "influence_visualizer",
+  "influence_visualizer.plotting",
+  "influence_visualizer.configs",
+  "influence_visualizer.scripts",
+]
+
+[tool.setuptools.package-data]
+"influence_visualizer.configs" = ["**/*.yaml", "**/*.yml", "**/*.json"]
+"influence_visualizer" = ["notebooks/**/*.md"]

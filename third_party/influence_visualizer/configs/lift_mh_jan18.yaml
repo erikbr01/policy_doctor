@@ -1,0 +1,67 @@
+task: robomimic_lift
+name: "Lift MH (Jan 18 Experiment)"
+
+# Data paths
+eval_dir: "data/outputs/eval_save_episodes/jan18/jan18_train_diffusion_unet_lowdim_lift_mh_0/latest"
+train_dir: "data/outputs/train/jan18/jan18_train_diffusion_unet_lowdim_lift_mh_0"
+train_ckpt: "latest"
+exp_date: "default"
+image_dataset_path: "data/robomimic/datasets/lift/mh/image_abs.hdf5"
+
+# Display settings
+obs_key: "agentview_image"
+top_k: 10
+lazy_load_images: false # 2.5GB dataset - small enough for full loading
+
+# Quality tier masks to load from the HDF5 dataset (in priority order)
+# Primary tiers take precedence, then operator-specific, then compound tiers
+quality_labels:
+  - "better"
+  - "okay"
+  - "worse"
+  - "better_operator_1"
+  - "better_operator_2"
+  - "okay_operator_1"
+  - "okay_operator_2"
+  - "worse_operator_1"
+  - "worse_operator_2"
+  - "okay_better"
+  - "worse_okay"
+  - "worse_better"
+
+# State labels (19D single-timestep observation)
+# Order: object(10) + eef_pos(3) + eef_quat(4) + gripper_qpos(2)
+# Note: obs uses raw quaternions (4D), only actions use rotation_6d
+state_labels:
+  - "obj_pos_x"
+  - "obj_pos_y"
+  - "obj_pos_z"
+  - "obj_quat_x"
+  - "obj_quat_y"
+  - "obj_quat_z"
+  - "obj_quat_w"
+  - "obj_7"
+  - "obj_8"
+  - "obj_9"
+  - "eef_pos_x"
+  - "eef_pos_y"
+  - "eef_pos_z"
+  - "eef_quat_x"
+  - "eef_quat_y"
+  - "eef_quat_z"
+  - "eef_quat_w"
+  - "gripper_0"
+  - "gripper_1"
+
+# Action labels (10D with rotation_6d)
+action_labels:
+  - "pos_x"
+  - "pos_y"
+  - "pos_z"
+  - "rot_0"
+  - "rot_1"
+  - "rot_2"
+  - "rot_3"
+  - "rot_4"
+  - "rot_5"
+  - "gripper"
