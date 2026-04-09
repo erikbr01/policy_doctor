@@ -66,6 +66,16 @@ def _build_cosmos_reason2(params: Optional[Dict[str, Any]]) -> VLMBackend:
 _REGISTRY["cosmos_reason2"] = _build_cosmos_reason2
 
 
+def _build_gemini(params: Optional[Dict[str, Any]]) -> VLMBackend:
+    from policy_doctor.vlm.backends.gemini import build_gemini_backend
+
+    return build_gemini_backend(params)
+
+
+_REGISTRY["gemini"] = _build_gemini
+_REGISTRY["gemini_flash"] = _build_gemini
+
+
 def register_vlm_backend(name: str, factory: BackendFactory) -> None:
     """Register a custom backend (e.g. from another package)."""
     _REGISTRY[name] = factory

@@ -32,7 +32,7 @@ def _require_clustering(clustering_dir: Path):
 
 
 def _load_clustering(clustering_dir: Path):
-    from influence_visualizer.clustering_results import load_clustering_result_from_path
+    from policy_doctor.data.clustering_loader import load_clustering_result_from_path
 
     return load_clustering_result_from_path(clustering_dir)
 

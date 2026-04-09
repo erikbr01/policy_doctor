@@ -40,6 +40,16 @@ class TestBaselineDiffusionExtraOverrides(unittest.TestCase):
             ],
         )
 
+    def test_skip_runner_dataset_path(self):
+        """Runners like RobocasaImageRunner use env_name+env_kwargs — omit env_runner override."""
+        b = OmegaConf.create(
+            {"diffusion_dataset_path": "/tmp/demo.hdf5", "skip_runner_dataset_path": True}
+        )
+        self.assertEqual(
+            baseline_diffusion_extra_overrides(b),
+            ["++task.dataset.dataset_path=/tmp/demo.hdf5"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
