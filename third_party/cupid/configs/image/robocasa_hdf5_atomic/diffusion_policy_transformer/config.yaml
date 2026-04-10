@@ -1,14 +1,23 @@
-# RoboCasa atomic task: train on LeRobot v2 export, eval rollouts via live robosuite env.
+# RoboCasa atomic task: train on robomimic-layout HDF5 (converted from LeRobot v2).
 #
-# Dataset adapter: diffusion_policy.dataset.lerobot_robocasa_dataset.LerobotRobocasaImageDataset
+# Dataset adapter: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
 # Env adapter:    diffusion_policy.env_runner.robocasa_image_runner.RobocasaImageRunner
 #
-# Set paths / task (absolute recommended):
-#   ++task.dataset.dataset_path=/path/to/.../lerobot   (LeRobot dataset root)
-#   ++task.env_runner.env_name=PickPlaceCounterToCabinet  (registered robosuite/robocasa env)
+# Convert the LeRobot dataset first:
+#   python scripts/convert_lerobot_to_robomimic_hdf5.py \
+#       --input  data/source/robocasa/v1.0/target/atomic/PickPlaceCounterToCabinet/20250811/lerobot \
+#       --output data/robocasa/PickPlaceCounterToCabinet.hdf5
 #
-# No HDF5 needed for eval: env_name + env_kwargs are used to instantiate the env directly.
-# Requires robocasa registered on sys.path (use the robocasa conda env).
+# Then train:
+#   python train.py --config-name=config \
+#       --config-path=configs/image/robocasa_hdf5_atomic/diffusion_policy_transformer \
+#       ++task.dataset.dataset_path=data/robocasa/PickPlaceCounterToCabinet.hdf5 \
+#       ++task.env_runner.env_name=PickPlaceCounterToCabinet
+#
+# shape_meta notes:
+#   robot0_proprioception: full observation.state vector from LeRobot (dim = 16 for PandaOmron)
+#   *_image keys match what RobocasaImageRunner returns (camera_name + "_image" suffix)
+#   Run the converter and check "state_dim" in its output to confirm the proprioception dim.
 
 _target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
 checkpoint:
@@ -20,7 +29,7 @@ checkpoint:
     mode: max
     monitor_key: test_mean_score
 dataloader:
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
   persistent_workers: true
   pin_memory: true
@@ -40,16 +49,16 @@ logging:
   group: null
   id: null
   mode: online
-  name: train_diffusion_transformer_hybrid_robocasa_lerobot_atomic
+  name: train_diffusion_transformer_hybrid_robocasa_hdf5_atomic
   project: diffusion_policy_debug
   resume: true
   tags:
   - train_diffusion_transformer_hybrid
-  - robocasa_lerobot_atomic
+  - robocasa_hdf5_atomic
   - default
 multi_run:
-  run_dir: data/outputs/robocasa_lerobot_atomic/train_diffusion_transformer_hybrid
-  wandb_name_base: robocasa_lerobot_atomic_transformer
+  run_dir: data/outputs/robocasa_hdf5_atomic/train_diffusion_transformer_hybrid
+  wandb_name_base: robocasa_hdf5_atomic_transformer
 n_action_steps: 8
 n_latency_steps: 0
 n_obs_steps: 2
@@ -114,15 +123,9 @@ policy:
         - 256
         - 256
         type: rgb
-      robot0_base_to_eef_pos:
+      robot0_proprioception:
         shape:
-        - 3
-      robot0_base_to_eef_quat:
-        shape:
-        - 4
-      robot0_gripper_qpos:
-        shape:
-        - 2
+        - 16
   time_as_cond: true
 shape_meta:
   action:
@@ -147,24 +150,15 @@ shape_meta:
       - 256
       - 256
       type: rgb
-    robot0_base_to_eef_pos:
+    robot0_proprioception:
       shape:
-      - 3
-    robot0_base_to_eef_quat:
-      shape:
-      - 4
-    robot0_gripper_qpos:
-      shape:
-      - 2
+      - 16
 task:
   abs_action: false
   dataset:
-    _target_: diffusion_policy.dataset.lerobot_robocasa_dataset.CachedLerobotRobocasaImageDataset
+    _target_: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
     abs_action: false
-    dataset_path: data/robocasa/lerobot/atomic_task
-    embodiment_tag: oxe_droid
-    filter_key: null
-    img_resize: null
+    dataset_path: data/robocasa/PickPlaceCounterToCabinet.hdf5
     horizon: 10
     n_obs_steps: 2
     pad_after: 7
@@ -173,67 +167,37 @@ task:
     seed: 42
     shape_meta:
       action:
-        lerobot_keys:
-        - action.end_effector_position
-        - action.end_effector_rotation
-        - action.gripper_close
-        - action.base_motion
-        - action.control_mode
         shape:
         - 12
       obs:
         robot0_agentview_right_image:
-          lerobot_keys:
-          - video.robot0_agentview_right
           shape:
           - 3
           - 256
           - 256
           type: rgb
         robot0_agentview_left_image:
-          lerobot_keys:
-          - video.robot0_agentview_left
           shape:
           - 3
           - 256
           - 256
           type: rgb
         robot0_eye_in_hand_image:
-          lerobot_keys:
-          - video.robot0_eye_in_hand
           shape:
           - 3
           - 256
           - 256
           type: rgb
-        robot0_base_to_eef_pos:
-          lerobot_keys:
-          - state.end_effector_position_relative
+        robot0_proprioception:
           shape:
-          - 3
-          type: low_dim
-        robot0_base_to_eef_quat:
-          lerobot_keys:
-          - state.end_effector_rotation_relative
-          shape:
-          - 4
-          type: low_dim
-        robot0_gripper_qpos:
-          lerobot_keys:
-          - state.gripper_qpos
-          shape:
-          - 2
-          type: low_dim
-    use_cache: false
-    use_legacy_normalizer: false
+          - 16
+    use_cache: true
     val_ratio: 0.02
-  dataset_path: data/robocasa/lerobot/atomic_task
+  dataset_path: data/robocasa/PickPlaceCounterToCabinet.hdf5
   env_runner:
     _target_: diffusion_policy.env_runner.robocasa_image_runner.RobocasaImageRunner
     abs_action: false
     crf: 22
-    # env_name: override per task, e.g. PickPlaceCounterToCabinet
-    # No dataset_path needed — env is created directly from env_name + env_kwargs.
     env_name: PickPlaceCounterToCabinet
     env_kwargs:
       robots: PandaOmron
@@ -302,19 +266,13 @@ task:
           - 256
           - 256
           type: rgb
-        robot0_base_to_eef_pos:
+        robot0_proprioception:
           shape:
-          - 3
-        robot0_base_to_eef_quat:
-          shape:
-          - 4
-        robot0_gripper_qpos:
-          shape:
-          - 2
+          - 16
     test_start_seed: 100000
     tqdm_interval_sec: 1.0
     train_start_idx: 0
-  name: robocasa_lerobot_atomic
+  name: robocasa_hdf5_atomic
   shape_meta:
     action:
       shape:
@@ -338,17 +296,11 @@ task:
         - 256
         - 256
         type: rgb
-      robot0_base_to_eef_pos:
+      robot0_proprioception:
         shape:
-        - 3
-      robot0_base_to_eef_quat:
-        shape:
-        - 4
-      robot0_gripper_qpos:
-        shape:
-        - 2
-  task_name: robocasa_atomic
-task_name: robocasa_lerobot_atomic_image
+        - 16
+  task_name: robocasa_hdf5_atomic
+task_name: robocasa_hdf5_atomic_image
 training:
   checkpoint_every: 25
   debug: false
@@ -367,7 +319,7 @@ training:
   use_ema: true
   val_every: 1
 val_dataloader:
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
   persistent_workers: true
   pin_memory: true

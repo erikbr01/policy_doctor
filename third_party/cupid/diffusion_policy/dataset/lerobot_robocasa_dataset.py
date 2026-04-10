@@ -16,6 +16,7 @@ import torch
 
 from robocasa.utils.groot_utils.groot_dataset import (
     LE_ROBOT_MODALITY_FILENAME,
+    CachedLeRobotSingleDataset,
     LeRobotMixtureDataset,
     LeRobotSingleDataset,
     ModalityConfig,
@@ -42,6 +43,32 @@ def _modality_keys(dataset_path: Path, modality_filename: str) -> dict[str, list
     for key in modality_meta.keys():
         modality_dict[key] = [f"{key}.{m}" for m in modality_meta[key]]
     return modality_dict
+
+
+def _setup_robocasa_keys(dataset, shape_meta: dict, n_obs_steps: int) -> None:
+    """Populate rgb_keys, lowdim_keys, and action metadata on a dataset instance."""
+    rgb_keys: dict[str, list[str]] = {}
+    lowdim_keys: dict[str, list[str]] = {}
+    obs_shape_meta = copy.deepcopy(shape_meta["obs"])
+    if "lang_emb" in obs_shape_meta:
+        raise ValueError(
+            "lang_emb is not supported in LerobotRobocasaImageDataset; remove language keys from shape_meta."
+        )
+    for key, attr in obs_shape_meta.items():
+        typ = attr.get("type", "low_dim")
+        if typ == "rgb":
+            rgb_keys[key] = attr["lerobot_keys"]
+        elif typ == "low_dim":
+            lowdim_keys[key] = attr["lerobot_keys"]
+        else:
+            raise ValueError(f"Unsupported obs type {typ!r} for key {key!r}")
+    dataset.rgb_keys = rgb_keys
+    dataset.lowdim_keys = lowdim_keys
+    dataset.n_obs_steps = n_obs_steps
+    dataset.shape_meta = shape_meta
+    dataset.action_info = shape_meta["action"]
+    dataset.lerobot_action_keys = dataset.action_info["lerobot_keys"]
+    dataset.action_size = int(dataset.action_info["shape"][0])
 
 
 class LerobotRobocasaImageDataset(LeRobotSingleDataset, BaseImageDataset):
@@ -107,30 +134,7 @@ class LerobotRobocasaImageDataset(LeRobotSingleDataset, BaseImageDataset):
             modality_configs=modality_configs,
         )
         self.start_indices = np.cumsum(self.trajectory_lengths) - self.trajectory_lengths
-
-        rgb_keys: dict[str, list[str]] = {}
-        lowdim_keys: dict[str, list[str]] = {}
-        obs_shape_meta = copy.deepcopy(shape_meta["obs"])
-        if "lang_emb" in obs_shape_meta:
-            raise ValueError(
-                "lang_emb is not supported in LerobotRobocasaImageDataset; remove language keys from shape_meta."
-            )
-        for key, attr in obs_shape_meta.items():
-            typ = attr.get("type", "low_dim")
-            if typ == "rgb":
-                rgb_keys[key] = attr["lerobot_keys"]
-            elif typ == "low_dim":
-                lowdim_keys[key] = attr["lerobot_keys"]
-            else:
-                raise ValueError(f"Unsupported obs type {typ!r} for key {key!r}")
-
-        self.rgb_keys = rgb_keys
-        self.lowdim_keys = lowdim_keys
-        self.n_obs_steps = n_obs_steps
-        self.shape_meta = shape_meta
-        self.action_info = self.shape_meta["action"]
-        self.lerobot_action_keys = self.action_info["lerobot_keys"]
-        self.action_size = int(self.action_info["shape"][0])
+        _setup_robocasa_keys(self, shape_meta, n_obs_steps)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         data = LeRobotSingleDataset.__getitem__(self, idx)
@@ -194,6 +198,158 @@ class LerobotRobocasaImageDataset(LeRobotSingleDataset, BaseImageDataset):
                 raise RuntimeError(f"Unsupported lowdim obs key for normalizer: {key!r}")
             normalizer[key] = this_normalizer
 
+        for key in self.rgb_keys:
+            normalizer[key] = get_image_range_normalizer()
+        return normalizer
+
+    def get_validation_dataset(self) -> BaseImageDataset:
+        return self
+
+    def __len__(self) -> int:
+        return len(self.all_steps)
+
+
+class CachedLerobotRobocasaImageDataset(CachedLeRobotSingleDataset, BaseImageDataset):
+    """Like LerobotRobocasaImageDataset but pre-loads all video frames into RAM at init.
+
+    Eliminates per-sample MP4 seek/decode overhead at the cost of upfront loading time
+    and memory (~2–4× compressed video size). Use when GPU utilization is bottlenecked
+    by dataloading and the dataset fits in RAM.
+    """
+
+    def __init__(
+        self,
+        shape_meta: dict,
+        dataset_path: str,
+        horizon: int = 1,
+        pad_before: int = 0,
+        pad_after: int = 0,
+        n_obs_steps: Optional[int] = None,
+        abs_action: bool = False,
+        rotation_rep: str = "rotation_6d",
+        use_legacy_normalizer: bool = False,
+        use_cache: bool = True,
+        seed: int = 42,
+        val_ratio: float = 0.0,
+        filter_key: Optional[str] = None,
+        embodiment_tag: str = "oxe_droid",
+        img_resize: Optional[List[int]] = None,
+    ):
+        assert n_obs_steps and n_obs_steps > 0
+        self.abs_action = abs_action
+        assert not self.abs_action, "abs_action is not supported for LeRobot RoboCasa adapter"
+        dataset_path_p = Path(dataset_path).expanduser().resolve()
+        delta_indices = list(range(-n_obs_steps + 1, horizon - n_obs_steps + 1))
+        delta_indices_obs = list(range(-n_obs_steps + 1, 1))
+
+        modality_keys_dict = _modality_keys(dataset_path_p, LE_ROBOT_MODALITY_FILENAME)
+        video_modality_keys = modality_keys_dict["video"]
+        state_modality_keys = [
+            k for k in modality_keys_dict["state"] if k != "state.dummy_tensor"
+        ]
+        action_modality_keys = modality_keys_dict["action"]
+        modality_configs = {
+            "video": ModalityConfig(
+                delta_indices=delta_indices_obs,
+                modality_keys=video_modality_keys,
+            ),
+            "state": ModalityConfig(
+                delta_indices=delta_indices_obs,
+                modality_keys=state_modality_keys,
+            ),
+            "action": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=action_modality_keys,
+            ),
+        }
+
+        # Only cache cameras referenced in shape_meta — avoids loading unused views.
+        shape_meta_video_keys = [
+            lk
+            for attr in shape_meta["obs"].values()
+            if attr.get("type", "low_dim") == "rgb"
+            for lk in attr["lerobot_keys"]
+        ]
+        modality_configs["video"] = ModalityConfig(
+            delta_indices=delta_indices_obs,
+            modality_keys=[
+                k for k in modality_configs["video"].modality_keys
+                if k in shape_meta_video_keys
+            ],
+        )
+
+        CachedLeRobotSingleDataset.__init__(
+            self,
+            dataset_path=dataset_path_p,
+            filter_key=filter_key,
+            embodiment_tag=embodiment_tag,
+            modality_configs=modality_configs,
+            video_backend="torchvision_av",  # get_all_frames does not support opencv
+            img_resize=tuple(img_resize) if img_resize is not None else None,
+        )
+        _setup_robocasa_keys(self, shape_meta, n_obs_steps)
+
+    # __getitem__, get_normalizer, get_validation_dataset, __len__ are inherited
+    # from LerobotRobocasaImageDataset via mixin — but since we don't share that
+    # base class, copy the diffusion_policy-specific methods here.
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        data = CachedLeRobotSingleDataset.__getitem__(self, idx)
+        T_slice = slice(self.n_obs_steps)
+        obs_dict: dict[str, np.ndarray] = {}
+
+        for key, lerobot_keys in self.rgb_keys.items():
+            assert len(lerobot_keys) == 1, f"multiple lerobot keys for {key} not supported"
+            lerobot_key = lerobot_keys[0]
+            obs_dict[key] = (
+                np.moveaxis(data[lerobot_key][T_slice], -1, 1).astype(np.float32) / 255.0
+            )
+
+        for key, lerobot_keys in self.lowdim_keys.items():
+            assert len(lerobot_keys) == 1, f"multiple lerobot keys for {key} not supported"
+            lerobot_key = lerobot_keys[0]
+            obs_dict[key] = data[lerobot_key][T_slice].astype(np.float32)
+
+        action_parts = []
+        for lr_key in self.lerobot_action_keys:
+            if lr_key not in data:
+                raise KeyError(f"Missing action key {lr_key!r} in LeRobot sample")
+            action_parts.append(data[lr_key])
+        action_concat = np.concatenate(action_parts, axis=-1)
+        assert action_concat.shape[-1] == self.action_size, (
+            f"action_concat shape mismatch: {action_concat.shape[-1]} != {self.action_size}"
+        )
+
+        return {
+            "obs": dict_apply(obs_dict, torch.from_numpy),
+            "action": torch.from_numpy(action_concat.astype(np.float32)),
+        }
+
+    def get_normalizer(self, **kwargs) -> LinearNormalizer:
+        normalizer = LinearNormalizer()
+        scale = np.ones((self.action_size), dtype=np.float32)
+        offset = np.zeros((self.action_size), dtype=np.float32)
+        normalizer["action"] = SingleFieldLinearNormalizer.create_manual(
+            scale=scale, offset=offset, input_stats_dict={},
+        )
+        for key, lerobot_keys in self.lowdim_keys.items():
+            assert len(lerobot_keys) == 1
+            lerobot_key = lerobot_keys[0].replace("state.", "")
+            stat = self._metadata.statistics.state[lerobot_key].model_dump()
+            for k, v in stat.items():
+                if isinstance(v, np.ndarray):
+                    stat[k] = v.astype(np.float32)
+            if key.endswith("pos"):
+                this_normalizer = get_range_normalizer_from_stat(stat)
+            elif key.endswith("quat"):
+                this_normalizer = get_identity_normalizer_from_stat(stat)
+            elif key.endswith("qpos"):
+                this_normalizer = get_range_normalizer_from_stat(stat)
+            elif key.endswith("sin") or key.endswith("cos"):
+                this_normalizer = get_identity_normalizer_from_stat(stat)
+            else:
+                raise RuntimeError(f"Unsupported lowdim obs key for normalizer: {key!r}")
+            normalizer[key] = this_normalizer
         for key in self.rgb_keys:
             normalizer[key] = get_image_range_normalizer()
         return normalizer
