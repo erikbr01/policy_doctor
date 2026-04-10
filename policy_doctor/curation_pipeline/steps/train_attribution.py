@@ -100,6 +100,11 @@ class TrainAttributionStep(PipelineStep[None]):
                 f"--featurize_holdout={featurize_holdout}",
                 f"--finalize_scores={finalize_scores and (num_ckpts == 1 or finalize_on_train)}",
             ]
+            # Optional: override dataset path for MimicGen / RoboCasa when the checkpoint's
+            # stored path is stale (machine migration, renamed directory, fresh generation run).
+            attribution_dataset_path = OmegaConf.select(attribution, "dataset_path")
+            if attribution_dataset_path:
+                cmd_args.append(f"--dataset_path={attribution_dataset_path}")
 
             if self.dry_run:
                 print(f"[dry_run] TrainAttributionStep seed={seed}  model_id={model_id}")

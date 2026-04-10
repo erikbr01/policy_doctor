@@ -39,3 +39,10 @@ eval_online_state_similarity: false
 eval_online_demo_score: false
 compute_holdout: true
 overwrite: false
+
+# Optional: explicit HDF5 path for attribution when the checkpoint's stored path is stale
+# (machine migration, renamed directory, or fresh kitchen export).
+# null = auto-resolve from checkpoint config + fallback search under repo_root.
+# Example:
+#   dataset_path: data/robocasa/datasets/kitchen_lowdim_merged.hdf5
+dataset_path: null

@@ -90,6 +90,11 @@ class ComputeInfembedStep(PipelineStep[None]):
                 cmd_args.append("--featurize_holdout")
             if overwrite:
                 cmd_args.append("--overwrite")
+            # Optional: override dataset path for MimicGen / RoboCasa when the checkpoint's
+            # stored path is stale (machine migration, renamed directory, fresh generation run).
+            attribution_dataset_path = OmegaConf.select(attribution, "dataset_path")
+            if attribution_dataset_path:
+                cmd_args.append(f"--dataset_path={attribution_dataset_path}")
 
             if self.dry_run:
                 print(f"[dry_run] ComputeInfembedStep seed={seed}")

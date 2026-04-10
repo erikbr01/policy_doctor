@@ -184,6 +184,10 @@ def _make_rollout_infembed_loader(
 @click.option("--train_dir", type=str, required=True)
 @click.option("--train_ckpt", type=str, default="latest")
 @click.option("--model_keys", type=str, default=None, help="Comma-separated parameter name prefixes (same as TRAK)")
+@click.option("--dataset_path", type=str, default=None,
+              help="Override the HDF5 dataset path from the checkpoint config. "
+                   "Required when the checkpoint was trained on a different machine or "
+                   "the dataset has been moved (MimicGen / RoboCasa / Robomimic).")
 @click.option("--modelout_fn", type=str, required=True)
 @click.option("--loss_fn", type=str, required=True)
 @click.option("--num_timesteps", type=int, required=True)
@@ -216,6 +220,7 @@ def main(
     train_dir: str,
     train_ckpt: str,
     model_keys: Optional[str],
+    dataset_path: Optional[str],
     modelout_fn: str,
     loss_fn: str,
     num_timesteps: int,
@@ -290,6 +295,19 @@ def main(
     policy, cfg = get_policy_from_checkpoint(checkpoint, device=device)
     if not isinstance(policy, POLICIES):
         raise TypeError(f"Unsupported policy: {type(policy)}")
+
+    # Resolve dataset path: patch stale absolute paths and support explicit overrides.
+    # Handles robomimic / mimicgen / robocasa HDF5 layouts uniformly.
+    try:
+        from policy_doctor.data.adapters import patch_attribution_dataset_path
+        patch_attribution_dataset_path(
+            cfg,
+            repo_root=pathlib.Path(__file__).resolve().parent,
+            dataset_path_override=dataset_path,
+        )
+    except ImportError:
+        # policy_doctor not on sys.path (standalone cupid usage); skip.
+        pass
 
     # Same parameter set as TRAK: grad_wrt for optional logging; layers for InfEmbed.
     key_list = [k.strip() for k in model_keys.split(",")] if model_keys else []

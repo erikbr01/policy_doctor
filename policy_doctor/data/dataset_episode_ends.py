@@ -69,66 +69,39 @@ def load_checkpoint_config(checkpoint_path: pathlib.Path) -> Tuple[Any, dict]:
     return cfg, payload
 
 
-def _fix_robomimic_dataset_path(cfg, train_dir: pathlib.Path, repo_root: pathlib.Path) -> None:
-    """Set dataset_path in cfg to a path relative to repo_root. Must use relative path:
-    get_dataset_masks() uses path.parts[1] as dataset name (e.g. 'robomimic'); absolute
-    paths give wrong part (e.g. 'Users'). Caller must chdir to repo_root before instantiate."""
+def _fix_dataset_path(
+    cfg,
+    train_dir: pathlib.Path,
+    repo_root: pathlib.Path,
+    dataset_path_override: Optional[str] = None,
+) -> None:
+    """Resolve and patch ``cfg.task.dataset.dataset_path`` for all data sources.
+
+    Uses the unified adapter so MimicGen and RoboCasa checkpoints resolve
+    correctly in addition to standard Robomimic layouts.  The path is stored
+    relative to ``repo_root`` so ``get_dataset_masks`` (which inspects
+    ``Path.parts``) correctly identifies the source name.
+
+    Caller must ``os.chdir(repo_root)`` before ``hydra.utils.instantiate``.
+    """
     try:
-        from omegaconf import OmegaConf
+        from policy_doctor.data.adapters import patch_attribution_dataset_path
     except ImportError:
+        # Graceful fallback: adapter module not available; leave cfg unchanged.
         return
-    try:
-        if hasattr(OmegaConf, "set_struct"):
-            OmegaConf.set_struct(cfg, False)
-    except Exception:
-        pass
-    dataset_path_value = ""
-    if hasattr(cfg, "task") and hasattr(cfg.task, "dataset"):
-        dataset_path_value = cfg.task.dataset.get("dataset_path", "") or ""
-    if not dataset_path_value and hasattr(cfg, "task"):
-        dataset_path_value = cfg.task.get("dataset_path", "") or ""
-    needs_fix = not dataset_path_value or not str(dataset_path_value).strip()
-    if not needs_fix:
-        p = pathlib.Path(dataset_path_value)
-        if p.is_absolute():
-            # Convert to relative so sampler sees parts[1] = 'robomimic' not 'Users'
-            try:
-                rel = p.relative_to(repo_root)
-                if (repo_root / rel).exists():
-                    dataset_path_value = str(rel)
-                    needs_fix = False
-            except ValueError:
-                pass
-        if not needs_fix and (repo_root / dataset_path_value).exists():
-            if hasattr(cfg, "task") and hasattr(cfg.task, "dataset"):
-                cfg.task.dataset.dataset_path = dataset_path_value
-            if hasattr(cfg, "task"):
-                cfg.task.dataset_path = dataset_path_value
-            return
-        if not p.is_absolute() and (repo_root / p).exists():
-            return
-        needs_fix = True
-    if not needs_fix:
-        return
-    task_name = (getattr(cfg, "task_name", "") or "").lower()
-    robomimic_tasks = ["transport", "lift", "can", "square", "tool_hang"]
-    matched_task = next((t for t in robomimic_tasks if t in task_name), None)
-    if not matched_task:
-        return
-    data_type = "ph" if "ph" in task_name else "mh"
-    filename = "image_abs.hdf5" if "image" in task_name else "low_dim_abs.hdf5"
-    relative_path = f"data/robomimic/datasets/{matched_task}/{data_type}/{filename}"
-    if (repo_root / relative_path).exists():
-        if hasattr(cfg, "task") and hasattr(cfg.task, "dataset"):
-            cfg.task.dataset.dataset_path = relative_path
-        if hasattr(cfg, "task"):
-            cfg.task.dataset_path = relative_path
+    patch_attribution_dataset_path(cfg, repo_root=repo_root, dataset_path_override=dataset_path_override)
+
+
+# Keep old name as a thin alias so any callers that imported it directly still work.
+def _fix_robomimic_dataset_path(cfg, train_dir: pathlib.Path, repo_root: pathlib.Path) -> None:
+    _fix_dataset_path(cfg, train_dir, repo_root)
 
 
 def load_dataset_episode_ends(
     train_dir: pathlib.Path,
     train_ckpt: str = "latest",
     repo_root: Optional[pathlib.Path] = None,
+    dataset_path_override: Optional[str] = None,
 ) -> np.ndarray:
     """Load the train dataset from checkpoint config and return replay_buffer.episode_ends.
 
@@ -139,6 +112,7 @@ def load_dataset_episode_ends(
         train_dir: Training output directory (contains checkpoints/).
         train_ckpt: Checkpoint name ("latest", "best", or epoch number).
         repo_root: Repo root for resolving relative dataset paths. Default: inferred from train_dir.
+        dataset_path_override: Optional explicit HDF5 path; overrides whatever is in the checkpoint.
 
     Returns:
         episode_ends as int64 array (cumulative timestep counts per episode).
@@ -153,7 +127,7 @@ def load_dataset_episode_ends(
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     cfg, _ = load_checkpoint_config(checkpoint_path)
-    _fix_robomimic_dataset_path(cfg, train_dir, repo_root)
+    _fix_dataset_path(cfg, train_dir, repo_root, dataset_path_override=dataset_path_override)
 
     import os
     import hydra

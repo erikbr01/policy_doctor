@@ -47,10 +47,14 @@ GRADIENT_CO_DIR = "diffusion_policy.data_attribution.gradient_computers"
 @click.option("--train_dir", type=str, required=True)
 @click.option("--train_ckpt", type=str, required=True)
 @click.option("--model_keys", type=str, default=None)
+@click.option("--dataset_path", type=str, default=None,
+              help="Override the HDF5 dataset path from the checkpoint config. "
+                   "Required when the checkpoint was trained on a different machine or "
+                   "the dataset has been moved (MimicGen / RoboCasa / Robomimic).")
 # TRAK params.
 @click.option("--model_id", type=int, required=True)
 @click.option("--modelout_fn", type=str, required=True)
-@click.option("--gradient_co", type=str, required=True) 
+@click.option("--gradient_co", type=str, required=True)
 @click.option("--proj_dim", type=int, default=2048)
 @click.option("--proj_max_batch_size", type=int, default=32)
 @click.option("--lambda_reg", type=float, default=0.0)
@@ -70,9 +74,10 @@ def main(
     # Experiment params.
     exp_name: str,
     eval_dir: str,
-    train_dir: str, 
-    train_ckpt: str, 
+    train_dir: str,
+    train_ckpt: str,
     model_keys: Optional[str],
+    dataset_path: Optional[str],
     # TRAK params.
     model_id: int,
     modelout_fn: str,
@@ -119,6 +124,19 @@ def main(
         assert isinstance(model_keys, str)
         model_keys = model_keys.split(',')
     grad_wrt = get_parameter_names(policy, model_keys) if model_keys is not None else None
+
+    # Resolve dataset path: patch stale absolute paths and support explicit overrides.
+    # Handles robomimic / mimicgen / robocasa HDF5 layouts uniformly.
+    try:
+        from policy_doctor.data.adapters import patch_attribution_dataset_path
+        patch_attribution_dataset_path(
+            cfg,
+            repo_root=pathlib.Path(__file__).resolve().parent,
+            dataset_path_override=dataset_path,
+        )
+    except ImportError:
+        # policy_doctor not on sys.path (standalone cupid usage); skip.
+        pass
 
     # Load training set (no shuffle).
     train_set = hydra.utils.instantiate(cfg.task.dataset)

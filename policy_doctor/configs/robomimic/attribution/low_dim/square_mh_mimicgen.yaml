@@ -39,3 +39,12 @@ eval_online_state_similarity: false
 eval_online_demo_score: false
 compute_holdout: true
 overwrite: false
+
+# Optional: explicit HDF5 path for attribution when the checkpoint's stored path is stale
+# (machine migration, renamed directory, or different MimicGen generation run).
+# null = auto-resolve from checkpoint config + fallback search under repo_root.
+# Use the merged dataset for attribution (same split behaviour as training):
+#   dataset_path: data/mimicgen/square_merged.hdf5
+# Use a specific D1 core dataset instead:
+#   dataset_path: data/source/mimicgen/core_datasets/NutAssemblySquare/demo_src_NutAssemblySquare_task_D1/demo.hdf5
+dataset_path: null
