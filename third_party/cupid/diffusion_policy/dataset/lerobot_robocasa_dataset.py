@@ -7,7 +7,9 @@ Uses robocasa's GR00T-derived LeRobot loaders only (no language / lang_emb).
 from __future__ import annotations
 
 import copy
+import gc
 import json
+import mmap as _mmap_mod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -287,11 +289,36 @@ class CachedLerobotRobocasaImageDataset(CachedLeRobotSingleDataset, BaseImageDat
             video_backend="torchvision_av",  # get_all_frames does not support opencv
             img_resize=tuple(img_resize) if img_resize is not None else None,
         )
+
+        # Move cached frames from the process heap into anonymous shared
+        # memory (MAP_SHARED | MAP_ANONYMOUS via mmap).  Fork-based DataLoader
+        # workers inherit the parent's page table; regular heap numpy arrays
+        # trigger copy-on-write page faults that duplicate the entire frame
+        # cache per worker, causing OOM after a few epochs.  Anonymous shared
+        # mmap regions are not subject to CoW because the kernel maps the same
+        # physical pages into every forked child.
+        #
+        # Unlike multiprocessing.shared_memory (which uses /dev/shm and is
+        # capped at ~50% of RAM), anonymous mmap is backed by regular RAM/swap
+        # with no special size limit.
+        #
+        # Convert one camera at a time so peak memory is only ~1 camera extra.
+        self._mmap_buffers: list[_mmap_mod.mmap] = []
+        for key in list(self.cached_frames.keys()):
+            arr = self.cached_frames[key]
+            buf = _mmap_mod.mmap(-1, arr.nbytes)
+            shm_arr = np.ndarray(arr.shape, dtype=arr.dtype, buffer=buf)
+            shm_arr[:] = arr
+            self.cached_frames[key] = shm_arr  # drop old array from dict
+            del arr, shm_arr                   # drop local refs → free heap copy
+            gc.collect()
+            self._mmap_buffers.append(buf)
+
         _setup_robocasa_keys(self, shape_meta, n_obs_steps)
 
-    # __getitem__, get_normalizer, get_validation_dataset, __len__ are inherited
-    # from LerobotRobocasaImageDataset via mixin — but since we don't share that
-    # base class, copy the diffusion_policy-specific methods here.
+    def __del__(self):
+        for buf in getattr(self, '_mmap_buffers', []):
+            buf.close()
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         data = CachedLeRobotSingleDataset.__getitem__(self, idx)

@@ -235,7 +235,7 @@ task:
     fps: 10
     max_steps: 800
     n_action_steps: 8
-    n_envs: 1
+    n_envs: 10
     n_obs_steps: 2
     n_test: 10
     n_test_vis: 2
@@ -312,7 +312,7 @@ training:
   max_val_steps: null
   num_epochs: 800
   resume: true
-  rollout_every: 25
+  rollout_every: 50
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0

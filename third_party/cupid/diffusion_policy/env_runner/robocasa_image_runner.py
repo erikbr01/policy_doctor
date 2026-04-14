@@ -1,6 +1,10 @@
 import os
+import io
 import uuid
 import time
+import queue
+import multiprocessing as mp
+import tempfile
 from typing import Any, Dict, Optional
 
 import wandb
@@ -68,6 +72,242 @@ def create_env(env_meta, shape_meta, enable_render=True):
             **env_kwargs,
         )
     return env
+
+
+def _make_eval_env(env_meta, shape_meta, render_obs_key, fps, crf,
+                   n_obs_steps, n_action_steps, max_steps):
+    """Create a single wrapped eval environment from plain-dict config.
+
+    Defined at module level so it can be called inside a spawn-ed subprocess
+    (closures are not picklable across spawn boundaries).
+    """
+    robomimic_env = create_env(env_meta=env_meta, shape_meta=shape_meta)
+    robomimic_env.env.hard_reset = False
+
+    robosuite_fps = 20
+    steps_per_render = max(robosuite_fps // fps, 1)
+
+    return MultiStepWrapper(
+        VideoRecordingWrapper(
+            RobomimicImageWrapper(
+                env=robomimic_env,
+                shape_meta=shape_meta,
+                init_state=None,
+                render_obs_key=render_obs_key,
+            ),
+            video_recoder=VideoRecorder.create_h264(
+                fps=fps, codec='h264', input_pix_fmt='rgb24',
+                crf=crf, thread_type='FRAME', thread_count=1,
+            ),
+            file_path=None,
+            steps_per_render=steps_per_render,
+        ),
+        n_obs_steps=n_obs_steps,
+        n_action_steps=n_action_steps,
+        max_episode_steps=max_steps,
+    )
+
+
+def _undo_transform_action(action, rotation_transformer):
+    """Convert absolute-action representation back to env action space."""
+    raw_shape = action.shape
+    if raw_shape[-1] == 20:
+        action = action.reshape(-1, 2, 10)
+
+    d_rot = action.shape[-1] - 4
+    pos = action[..., :3]
+    rot = action[..., 3:3 + d_rot]
+    gripper = action[..., [-1]]
+    rot = rotation_transformer.inverse(rot)
+    uaction = np.concatenate([pos, rot, gripper], axis=-1)
+
+    if raw_shape[-1] == 20:
+        uaction = uaction.reshape(*raw_shape[:-1], 14)
+    return uaction
+
+
+def _eval_worker(result_queue, policy_path, eval_config):
+    """Entry point for the spawn-ed eval subprocess.
+
+    Runs in a completely fresh interpreter so that MuJoCo / EGL
+    initialisation cannot corrupt the parent process's glibc heap.
+    This fixes the ``malloc_consolidate(): unaligned fastbin chunk``
+    crash that occurs when fork-based DataLoader workers inherit a
+    heap dirtied by MuJoCo's custom malloc arenas.
+    """
+    try:
+        import torch
+        import numpy as np
+        import dill
+        import tqdm
+        import pathlib
+        import yaml
+        import pickle
+        from diffusion_policy.common.pytorch_util import dict_apply
+
+        device = torch.device(eval_config['device'])
+
+        # Reconstruct the policy from config YAML + state dict.
+        # Avoids dill-serializing the full policy object, which fails when
+        # the policy contains robomimic Config objects (their __setitem__
+        # references __parent before the object is initialised by dill).
+        import hydra
+        from omegaconf import OmegaConf
+        policy_cfg = OmegaConf.create(eval_config['policy_cfg_yaml'])
+        policy = hydra.utils.instantiate(policy_cfg)
+        state_dict = torch.load(policy_path, map_location=device,
+                                weights_only=False)
+        policy.load_state_dict(state_dict)
+        policy.to(device)
+        policy.eval()
+
+        abs_action = eval_config['abs_action']
+        rotation_transformer = None
+        if abs_action:
+            from diffusion_policy.model.common.rotation_transformer import RotationTransformer
+            rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
+
+        single_env = _make_eval_env(
+            env_meta=eval_config['env_meta'],
+            shape_meta=eval_config['shape_meta'],
+            render_obs_key=eval_config['render_obs_key'],
+            fps=eval_config['fps'],
+            crf=eval_config['crf'],
+            n_obs_steps=eval_config['n_obs_steps'],
+            n_action_steps=eval_config['n_action_steps'],
+            max_steps=eval_config['max_steps'],
+        )
+
+        env_init_fn_dills = eval_config['env_init_fn_dills']
+        n_inits = len(env_init_fn_dills)
+        env_name = eval_config['env_meta']['env_name']
+        max_steps = eval_config['max_steps']
+        past_action_flag = eval_config['past_action']
+        n_obs_steps = eval_config['n_obs_steps']
+        tqdm_interval_sec = eval_config['tqdm_interval_sec']
+        save_episodes = eval_config['save_episodes']
+        episode_dir = eval_config.get('episode_dir')
+        media_dir = eval_config.get('media_dir')
+
+        all_video_paths = [None] * n_inits
+        all_rewards = [None] * n_inits
+
+        if save_episodes:
+            episode_lengths = []
+            episode_successes = []
+
+        try:
+            for ep_idx in range(n_inits):
+                print(f"[eval] Episode {ep_idx + 1}/{n_inits} ({env_name})")
+
+                init_fn = dill.loads(env_init_fn_dills[ep_idx])
+                init_fn(single_env)
+
+                if save_episodes:
+                    timestep = 0
+                    episode_data = []
+
+                obs = single_env.reset()
+                obs = {k: v[None] for k, v in obs.items()}
+                past_action = None
+                policy.reset()
+
+                pbar = tqdm.tqdm(
+                    total=max_steps,
+                    desc=f"Eval {env_name} {ep_idx + 1}/{n_inits}",
+                    leave=False,
+                    mininterval=tqdm_interval_sec,
+                )
+
+                done = False
+                ep_rewards = []
+                info = {}
+                while not done:
+                    np_obs_dict = dict(obs)
+                    if past_action_flag and past_action is not None:
+                        np_obs_dict['past_action'] = past_action[
+                            :, -(n_obs_steps - 1):].astype(np.float32)
+
+                    obs_dict = dict_apply(
+                        np_obs_dict,
+                        lambda x: torch.from_numpy(x).to(device=device),
+                    )
+
+                    with torch.no_grad():
+                        action_dict = policy.predict_action(obs_dict)
+
+                    np_action_dict = dict_apply(
+                        action_dict, lambda x: x.detach().to('cpu').numpy()
+                    )
+
+                    action = np_action_dict['action']
+                    if not np.all(np.isfinite(action)):
+                        raise RuntimeError(f"Nan or Inf action: {action}")
+
+                    env_action = action
+                    if abs_action:
+                        env_action = _undo_transform_action(action, rotation_transformer)
+
+                    obs_raw, reward, done, info = single_env.step(env_action[0])
+                    obs = {k: v[None] for k, v in obs_raw.items()}
+                    ep_rewards.append(reward)
+                    done = bool(done)
+
+                    past_action = action
+                    pbar.update(action.shape[1])
+
+                    if save_episodes:
+                        timestep += action.shape[1]
+
+                pbar.close()
+
+                all_rewards[ep_idx] = [float(r) for r in ep_rewards]
+                single_env.env.video_recoder.stop()
+                all_video_paths[ep_idx] = single_env.env.file_path
+
+                if save_episodes:
+                    success = bool(info.get('success', False))
+                    postfix = "succ" if success else "fail"
+                    episode_lengths.append(timestep)
+                    episode_successes.append(success)
+                    ep_dir = pathlib.Path(episode_dir)
+                    with open(ep_dir / f"ep{ep_idx:04d}_{postfix}.pkl", "wb") as f:
+                        pickle.dump(episode_data, f,
+                                    protocol=pickle.HIGHEST_PROTOCOL)
+        finally:
+            single_env.close()
+
+        # Handle save_episodes post-processing inside the subprocess
+        if save_episodes:
+            ep_dir = pathlib.Path(episode_dir)
+            m_dir = pathlib.Path(media_dir)
+            episode_files = sorted(ep_dir.iterdir())
+            media_files = sorted(m_dir.iterdir())
+            assert len(episode_files) == len(media_files)
+            for episode_file, media_file in zip(episode_files, media_files):
+                media_file.rename(
+                    m_dir / f"{episode_file.stem}{media_file.suffix}")
+            metadata = {
+                "length": int(sum(episode_lengths)),
+                "episode_lengths": [int(x) for x in episode_lengths],
+                "episode_successes": [bool(x) for x in episode_successes],
+            }
+            with open(ep_dir / "metadata.yaml", "w") as f:
+                yaml.safe_dump(metadata, f)
+
+        result_queue.put({
+            'status': 'ok',
+            'rewards': all_rewards,
+            'video_paths': all_video_paths,
+        })
+
+    except Exception as e:
+        import traceback
+        result_queue.put({
+            'status': 'error',
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        })
 
 
 class RobocasaImageRunner(BaseImageRunner):
@@ -152,6 +392,10 @@ class RobocasaImageRunner(BaseImageRunner):
             if not isinstance(ek, dict):
                 raise TypeError(f"extra_env_kwargs must be a dict, got {type(ek)}")
             env_meta["env_kwargs"].update(ek)
+
+        # Ensure shape_meta is a plain dict (not OmegaConf) for subprocess pickling.
+        if OmegaConf.is_config(shape_meta):
+            shape_meta = OmegaConf.to_container(shape_meta, resolve=True)
 
         rotation_transformer = None
         if abs_action:
@@ -296,11 +540,14 @@ class RobocasaImageRunner(BaseImageRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
 
-        env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn, shared_memory=False)
-        # env = SyncVectorEnv(env_fns)
-
+        # Env is created lazily in run() to avoid blocking at startup.
+        # (AsyncVectorEnv with spawn context blocks for minutes while workers
+        # re-import torch + robosuite; with fork it deadlocks with MuJoCo 3.x EGL.)
+        self.dummy_env_fn = dummy_env_fn
         self.env_meta = env_meta
-        self.env = env
+        self.shape_meta = shape_meta
+        self.render_obs_key = render_obs_key
+        self.env = None  # created lazily in run()
         self.env_fns = env_fns
         self.env_seeds = env_seeds
         self.env_prefixs = env_prefixs
@@ -326,211 +573,109 @@ class RobocasaImageRunner(BaseImageRunner):
             self.episode_dir.mkdir()
             self.media_dir = pathlib.Path(output_dir) / "media"
 
-    def run(self, policy: BaseImagePolicy):
+    def run(self, policy: BaseImagePolicy, policy_cfg=None):
+        """Run eval rollouts in a spawn-ed subprocess.
+
+        MuJoCo / EGL is initialised only inside the child process, so the
+        parent's glibc heap stays clean for fork-based DataLoader workers.
+        The one-time subprocess startup cost (~30-60 s for torch + robosuite
+        imports) is negligible compared to the rollout wall-time.
+
+        Args:
+            policy: The policy to evaluate.
+            policy_cfg: OmegaConf config used to instantiate the policy
+                (cfg.policy from the workspace). Required — used to
+                reconstruct the policy in the subprocess without dill.
+        """
+        if policy_cfg is None:
+            raise ValueError(
+                "policy_cfg is required for RobocasaImageRunner.run(). "
+                "Pass cfg.policy from the workspace.")
+
+        from omegaconf import OmegaConf
         device = policy.device
-        dtype = policy.dtype
-        env = self.env
-        
-        # plan for rollout
-        n_envs = len(self.env_fns)
         n_inits = len(self.env_init_fn_dills)
-        n_chunks = math.ceil(n_inits / n_envs)
 
-        # allocate data
-        all_video_paths = [None] * n_inits
-        all_rewards = [None] * n_inits
+        # Save only the state dict — avoids dill-serializing the full model,
+        # which fails on robomimic Config objects.
+        tmp = tempfile.NamedTemporaryFile(suffix='.pt', delete=False)
+        try:
+            torch.save(policy.state_dict(), tmp)
+            tmp.close()
+            policy_path = tmp.name
 
-        # total number of timesteps across episodes
-        if self.save_episodes:
-            total_timesteps = 0
-            episode_lengths = []
-            episode_successes = []
+            eval_config = {
+                'device': str(device),
+                'policy_cfg_yaml': OmegaConf.to_yaml(policy_cfg),
+                'env_meta': self.env_meta,
+                'shape_meta': self.shape_meta,
+                'render_obs_key': self.render_obs_key,
+                'fps': self.fps,
+                'crf': self.crf,
+                'n_obs_steps': self.n_obs_steps,
+                'n_action_steps': self.n_action_steps,
+                'max_steps': self.max_steps,
+                'abs_action': self.abs_action,
+                'past_action': self.past_action,
+                'tqdm_interval_sec': self.tqdm_interval_sec,
+                'env_init_fn_dills': self.env_init_fn_dills,
+                'save_episodes': self.save_episodes,
+                'episode_dir': (str(self.episode_dir)
+                                if self.episode_dir else None),
+                'media_dir': (str(self.media_dir)
+                              if getattr(self, 'media_dir', None) else None),
+            }
 
-        for chunk_idx in range(n_chunks):
-            start = chunk_idx * n_envs
-            end = min(n_inits, start + n_envs)
-            this_global_slice = slice(start, end)
-            this_n_active_envs = end - start
-            this_local_slice = slice(0,this_n_active_envs)
-            
-            this_init_fns = self.env_init_fn_dills[this_global_slice]
-            n_diff = n_envs - len(this_init_fns)
-            if n_diff > 0:
-                this_init_fns.extend([self.env_init_fn_dills[0]]*n_diff)
-            assert len(this_init_fns) == n_envs
+            ctx = mp.get_context('spawn')
+            result_queue = ctx.Queue()
+            p = ctx.Process(target=_eval_worker,
+                            args=(result_queue, policy_path, eval_config))
+            print(f"[eval] Spawning eval subprocess for "
+                  f"{n_inits} rollouts ...")
+            p.start()
 
-            # init envs
-            env.call_each('run_dill_function', 
-                args_list=[(x,) for x in this_init_fns])
-            
-            # save episodes
-            if self.save_episodes:
-                timestep = 0
-                episode_data = []
+            # Wait for result, checking that the subprocess stays alive.
+            result = None
+            while result is None:
+                try:
+                    result = result_queue.get(timeout=30)
+                except queue.Empty:
+                    if not p.is_alive():
+                        raise RuntimeError(
+                            f"Eval subprocess died with exit code "
+                            f"{p.exitcode}. Check stderr for "
+                            f"MuJoCo/robosuite errors.")
+            p.join()
+        finally:
+            os.unlink(policy_path)
 
-            # start rollout
-            obs = env.reset()
-            past_action = None
-            policy.reset()
+        if result['status'] == 'error':
+            raise RuntimeError(
+                f"Eval subprocess failed:\n{result['traceback']}")
 
-            env_name = self.env_meta['env_name']
-            pbar = tqdm.tqdm(total=self.max_steps, desc=f"Eval {env_name}Image {chunk_idx+1}/{n_chunks}", 
-                leave=False, mininterval=self.tqdm_interval_sec)
-            
-            done = False
-            while not done:
-                # create obs dict
-                np_obs_dict = dict(obs)
-                if self.past_action and (past_action is not None):
-                    # TODO: not tested
-                    np_obs_dict['past_action'] = past_action[
-                        :,-(self.n_obs_steps-1):].astype(np.float32)
-                
-                # device transfer
-                obs_dict = dict_apply(np_obs_dict, 
-                    lambda x: torch.from_numpy(x).to(
-                        device=device))
+        # Build log_data in the main process (wandb objects must be
+        # created here, where wandb is initialised).
+        all_rewards = result['rewards']
+        all_video_paths = result['video_paths']
 
-                # run policy
-                with torch.no_grad():
-                    action_dict = policy.predict_action(obs_dict)
-
-                # device_transfer
-                np_action_dict = dict_apply(action_dict,
-                    lambda x: x.detach().to('cpu').numpy())
-                
-                # store timestep in episode dataset
-                if self.save_episodes:
-                    assert isinstance(policy, DiffusionUnetHybridImagePolicy)
-                    result = {
-                        "idx": total_timesteps,
-                        "episode": chunk_idx,
-                        "timestep": timestep,
-                        "obs": {k: v.copy().astype(np.float32)[0] for k, v in np_obs_dict.items() if k in policy.obs_keys},
-                        "img": env.call("_render_frame", "rgb_array")[0]
-                    }
-
-                    if "action_pred" in np_action_dict:
-                        result["action"] = np_action_dict["action_pred"].copy().astype(np.float32)[0]
-                    elif "action" in np_action_dict:
-                        result["action"] = np_action_dict["action"].copy().astype(np.float32)[0]
-                    else:
-                        raise ValueError(f"Actions for policy {type(policy)} cannot be retrieved.")
-                    
-                    episode_data.append(result)
-
-                action = np_action_dict['action']
-                if not np.all(np.isfinite(action)):
-                    print(action)
-                    raise RuntimeError("Nan or Inf action")
-                
-                # step env
-                env_action = action
-                if self.abs_action:
-                    env_action = self.undo_transform_action(action)
-
-                obs, reward, done, info = env.step(env_action)
-                done = np.all(done)
-
-                # Terminate on success if saving episodes.
-                if self.save_episodes:
-                    success = env.call("_is_success")[0]
-                    done = success if not done else done
-
-                past_action = action
-
-                # update pbar
-                pbar.update(action.shape[1])
-                if self.save_episodes:
-                    timestep += action.shape[1]
-                    total_timesteps += 1
-            pbar.close()
-
-            # collect data for this round
-            all_video_paths[this_global_slice] = env.render()[this_local_slice]
-            all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
-
-            # save episode data
-            if self.save_episodes:
-                postfix = "succ" if success else "fail"
-                episode_lengths.append(len(episode_data))
-                episode_successes.append(success)
-                episode_data = pd.DataFrame(episode_data)
-                episode_data["reward"] = reward[0]
-                episode_data["success"] = success
-                with open(self.episode_dir / f"ep{chunk_idx:04d}_{postfix}.pkl", "wb") as f:
-                    pickle.dump(episode_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-                del episode_data
-
-        # clear out video buffer
-        _ = env.reset()
-        
-        # log
         max_rewards = collections.defaultdict(list)
         log_data = dict()
-        # results reported in the paper are generated using the commented out line below
-        # which will only report and average metrics from first n_envs initial condition and seeds
-        # fortunately this won't invalidate our conclusion since
-        # 1. This bug only affects the variance of metrics, not their mean
-        # 2. All baseline methods are evaluated using the same code
-        # to completely reproduce reported numbers, uncomment this line:
-        # for i in range(len(self.env_fns)):
-        # and comment out this line
+
         for i in range(n_inits):
             seed = self.env_seeds[i]
             prefix = self.env_prefixs[i]
             max_reward = np.max(all_rewards[i])
             max_rewards[prefix].append(max_reward)
-            log_data[prefix+f'sim_max_reward_{seed}'] = max_reward
+            log_data[prefix + f'sim_max_reward_{seed}'] = max_reward
 
-            # visualize sim
             video_path = all_video_paths[i]
             if video_path is not None:
                 sim_video = wandb.Video(video_path)
-                log_data[prefix+f'sim_video_{seed}'] = sim_video
-        
-        # log aggregate metrics
+                log_data[prefix + f'sim_video_{seed}'] = sim_video
+
         for prefix, value in max_rewards.items():
-            name = prefix+'mean_score'
+            name = prefix + 'mean_score'
             value = np.mean(value)
             log_data[name] = value
 
-        if self.save_episodes:
-            # rename media files based on success or failure
-            episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
-            media_files = sorted([ep for ep in self.media_dir.iterdir()])
-            assert len(episode_files) == len(media_files)
-            for episode_file, media_file in zip(episode_files, media_files):
-                media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
-
-            # save episode metadata
-            metadata = {
-                "length": int(sum(episode_lengths)),
-                "episode_lengths": [int(x) for x in episode_lengths],
-                "episode_successes": [bool(x) for x in episode_successes],
-            }
-            with open(self.episode_dir / "metadata.yaml", "w") as f:
-                yaml.safe_dump(metadata, f)
-
         return log_data
-
-    def undo_transform_action(self, action):
-        raw_shape = action.shape
-        if raw_shape[-1] == 20:
-            # dual arm
-            action = action.reshape(-1,2,10)
-
-        d_rot = action.shape[-1] - 4
-        pos = action[...,:3]
-        rot = action[...,3:3+d_rot]
-        gripper = action[...,[-1]]
-        rot = self.rotation_transformer.inverse(rot)
-        uaction = np.concatenate([
-            pos, rot, gripper
-        ], axis=-1)
-
-        if raw_shape[-1] == 20:
-            # dual arm
-            uaction = uaction.reshape(*raw_shape[:-1], 14)
-
-        return uaction

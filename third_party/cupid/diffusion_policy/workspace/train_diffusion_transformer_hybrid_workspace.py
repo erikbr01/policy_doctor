@@ -212,7 +212,8 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
 
                 # run rollout
                 if (self.epoch % cfg.training.rollout_every) == 0:
-                    runner_log = env_runner.run(policy)
+                    print(f"[epoch {self.epoch}] Running eval rollouts...")
+                    runner_log = env_runner.run(policy, policy_cfg=cfg.policy)
                     # log all
                     step_log.update(runner_log)
 
