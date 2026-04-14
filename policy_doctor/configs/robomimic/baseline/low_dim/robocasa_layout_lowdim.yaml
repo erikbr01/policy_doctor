@@ -17,3 +17,8 @@ uniform_quality: true
 
 output_dir: data/outputs/train
 project: influence-clustering
+
+# Multi-GPU / acceleration flags
+num_gpus: 1
+tf32: true
+compile: true

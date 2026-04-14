@@ -44,6 +44,7 @@ _ORCHESTRATION_SUBPACKAGES = (
     "tests/computations",
     "tests/curation",
     "tests/plotting",
+    "tests/training",
     "tests/vlm",
 )
 
