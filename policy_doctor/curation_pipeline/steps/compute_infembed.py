@@ -70,6 +70,9 @@ class ComputeInfembedStep(PipelineStep[None]):
             if not pathlib.Path(eval_dir).exists():
                 raise FileNotFoundError(f"Eval dir not found: {eval_dir}")
 
+            tf32 = bool(OmegaConf.select(attribution, "tf32") or False)
+            use_compile = bool(OmegaConf.select(attribution, "compile") or False)
+
             cmd_args = [
                 "--exp_name=auto",
                 f"--eval_dir={eval_dir}",
@@ -90,6 +93,10 @@ class ComputeInfembedStep(PipelineStep[None]):
                 cmd_args.append("--featurize_holdout")
             if overwrite:
                 cmd_args.append("--overwrite")
+            if tf32:
+                cmd_args.append("--tf32")
+            if use_compile:
+                cmd_args.append("--compile")
             # Optional: override dataset path for MimicGen / RoboCasa when the checkpoint's
             # stored path is stale (machine migration, renamed directory, fresh generation run).
             attribution_dataset_path = OmegaConf.select(attribution, "dataset_path")

@@ -79,6 +79,9 @@ class TrainAttributionStep(PipelineStep[None]):
                 train_ckpt=eval_ckpt, eval_as_train_seed=eval_as_train_seed,
             ))
 
+            tf32 = bool(OmegaConf.select(attribution, "tf32") or False)
+            use_compile = bool(OmegaConf.select(attribution, "compile") or False)
+
             cmd_args = [
                 f"--exp_name={exp_name}",
                 f"--eval_dir={eval_dir}",
@@ -99,6 +102,8 @@ class TrainAttributionStep(PipelineStep[None]):
                 f"--num_timesteps={num_timesteps}",
                 f"--featurize_holdout={featurize_holdout}",
                 f"--finalize_scores={finalize_scores and (num_ckpts == 1 or finalize_on_train)}",
+                f"--tf32={str(tf32).lower()}",
+                f"--compile={str(use_compile).lower()}",
             ]
             # Optional: override dataset path for MimicGen / RoboCasa when the checkpoint's
             # stored path is stale (machine migration, renamed directory, fresh generation run).

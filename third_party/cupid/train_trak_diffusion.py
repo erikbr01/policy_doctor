@@ -70,6 +70,9 @@ GRADIENT_CO_DIR = "diffusion_policy.data_attribution.gradient_computers"
 # Optionals.
 @click.option("--featurize_holdout", type=bool, default=False)
 @click.option("--finalize_scores", type=bool, default=False)
+@click.option("--tf32", type=bool, default=False, help="Enable TF32 matmul/cuDNN precision.")
+@click.option("--compile", "use_compile", type=bool, default=False,
+              help="Wrap policy with torch.compile before attribution.")
 def main(
     # Experiment params.
     exp_name: str,
@@ -97,12 +100,19 @@ def main(
     # Optionals.
     featurize_holdout: bool,
     finalize_scores: bool,
+    tf32: bool,
+    use_compile: bool,
 ):
     # Set random seed.
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
     device = get_device(device)
+
+    # Acceleration flags.
+    if tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     # Find checkpoint.
     checkpoint_dir = pathlib.Path(train_dir) / "checkpoints"
@@ -124,6 +134,13 @@ def main(
         assert isinstance(model_keys, str)
         model_keys = model_keys.split(',')
     grad_wrt = get_parameter_names(policy, model_keys) if model_keys is not None else None
+
+    # Optionally compile the policy.  Use dynamic=True / fullgraph=False so that
+    # torch.func.vmap + torch.func.grad (used by the gradient computer) can trace
+    # through functional_call without hitting graph breaks.
+    if use_compile:
+        from diffusion_policy.common.ddp_util import compile_model
+        policy = compile_model(policy, dynamic=True, fullgraph=False)
 
     # Resolve dataset path: patch stale absolute paths and support explicit overrides.
     # Handles robomimic / mimicgen / robocasa HDF5 layouts uniformly.

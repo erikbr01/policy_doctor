@@ -24,6 +24,26 @@
 #   multi_run.run_dir=<output_dir>
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Optional acceleration flags (translated to Hydra overrides):
+#   --compile    enable torch.compile  (+training.compile=true)
+#   --tf32       enable TF32 matmul    (+training.tf32=true)
+#   --no-compile disable torch.compile (+training.compile=false)
+#   --no-tf32    disable TF32          (+training.tf32=false)
+# Any remaining arguments are forwarded verbatim to train.py as Hydra overrides.
+# ---------------------------------------------------------------------------
+EXTRA_OVERRIDES=()
+PASSTHROUGH=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --compile)    EXTRA_OVERRIDES+=("+training.compile=true");  shift ;;
+    --no-compile) EXTRA_OVERRIDES+=("+training.compile=false"); shift ;;
+    --tf32)       EXTRA_OVERRIDES+=("+training.tf32=true");     shift ;;
+    --no-tf32)    EXTRA_OVERRIDES+=("+training.tf32=false");    shift ;;
+    *)            PASSTHROUGH+=("$1"); shift ;;
+  esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CUPID_ROOT="${REPO_ROOT}/third_party/cupid"
@@ -55,4 +75,5 @@ exec conda run -n cupid --no-capture-output \
     "task.dataset.dataset_path=${HDF5}" \
     "task.dataset_path=${HDF5}" \
     "task.env_runner.dataset_path=${HDF5}" \
-    "$@"
+    "${EXTRA_OVERRIDES[@]+"${EXTRA_OVERRIDES[@]}"}" \
+    "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"
