@@ -7,7 +7,6 @@ from trak.modelout_functions import AbstractModelOutput
 
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.policy.diffusion_unet_lowdim_policy import DiffusionUnetLowdimPolicy
-from diffusion_policy.policy.diffusion_unet_hybrid_image_policy import DiffusionUnetHybridImagePolicy
 
 
 class DiffusionLowdimFunctionalModelOutput(AbstractModelOutput):
@@ -165,7 +164,7 @@ class DiffusionHybridImageFunctionalModelOutput(AbstractModelOutput):
 
     def get_output(
         self,
-        model: DiffusionUnetHybridImagePolicy,
+        model: "DiffusionUnetHybridImagePolicy",
         weights: Dict[str, torch.Tensor],
         buffers: Dict[str, torch.Tensor],
         obs_keys: List[str],
@@ -293,8 +292,8 @@ class DiffusionHybridImageFunctionalModelOutput(AbstractModelOutput):
         return loss
     
     def get_out_to_loss_grad(
-        self, 
-        model: DiffusionUnetHybridImagePolicy,
+        self,
+        model: "DiffusionUnetHybridImagePolicy",
         weights: Dict[str, torch.Tensor],
         buffers: Dict[str, torch.Tensor],
         batch: Iterable[torch.Tensor]
