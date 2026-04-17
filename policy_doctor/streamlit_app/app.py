@@ -338,12 +338,13 @@ def main() -> None:
 
     _render_sidebar_config_import()
 
-    tab_clustering, tab_behavior, tab_vlm, tab_curation, tab_comparison = st.tabs([
+    tab_clustering, tab_behavior, tab_vlm, tab_curation, tab_comparison, tab_mimicgen_eef = st.tabs([
         "Clustering",
         "Behavior Graph",
         "VLM annotation",
         "Curation",
         "Comparison",
+        "MimicGen EEF",
     ])
 
     with tab_clustering:
@@ -365,6 +366,10 @@ def main() -> None:
     with tab_comparison:
         from policy_doctor.streamlit_app.tabs import comparison
         comparison.render_tab(config=config, data=data)
+
+    with tab_mimicgen_eef:
+        from policy_doctor.streamlit_app.tabs import mimicgen_eef
+        mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
 
 
 if __name__ == "__main__":
