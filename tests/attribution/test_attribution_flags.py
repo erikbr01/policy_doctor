@@ -197,19 +197,29 @@ def _has_torch_compile() -> bool:
     return hasattr(torch, "compile")
 
 
+def _has_trak() -> bool:
+    try:
+        import trak  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 class TestCompileAppliedToAttributionModels(unittest.TestCase):
     """compile_model wraps the diffusion loss wrapper used by InfEmbed."""
 
     def _make_loss_wrapper(self):
-        """Build a minimal DiffusionLossWrapper with a toy policy and task.
+        """Build a DiffusionLossWrapper with a real DiffusionLowdimFunctionalModelOutput.
 
-        We use a lightweight mock task so this test has no dependency on
-        the trak package (which is only installed in the cupid env, not robocasa).
-        The test focuses solely on whether compile_model can wrap the module.
+        Uses the actual task class so this test is meaningful in the policy_doctor
+        (or cupid) env where trak is installed. The test only needs to construct
+        the wrapper — no actual forward pass is required to verify compile_model.
         """
-        import torch
         import torch.nn as nn
         from diffusion_policy.data_attribution.infembed_adapter import DiffusionLossWrapper
+        from diffusion_policy.data_attribution.modelout_functions import (
+            DiffusionLowdimFunctionalModelOutput,
+        )
         from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 
         unet = ConditionalUnet1D(
@@ -226,21 +236,14 @@ class TestCompileAppliedToAttributionModels(unittest.TestCase):
             def forward(self, batch):
                 return batch
 
-        class _MockTask:
-            """Stand-in for DiffusionLowdimFunctionalModelOutput — no trak import needed."""
-            def get_output(self, model, weights, buffers, tsteps, action, obs,
-                           return_per_example=False):
-                B = action.shape[0]
-                return torch.zeros(B)
-
         policy = _MinimalPolicy()
-        task = _MockTask()
+        task = DiffusionLowdimFunctionalModelOutput(loss_fn="square")
         return DiffusionLossWrapper(policy, task)
 
+    @unittest.skipUnless(_has_trak(), "trak not installed (run in policy_doctor env)")
     @unittest.skipUnless(_has_torch_compile(), "torch.compile requires PyTorch >= 2.0")
     def test_compile_wraps_loss_wrapper(self):
         """DiffusionLossWrapper can be wrapped by compile_model without error."""
-        import torch
         from diffusion_policy.common.ddp_util import compile_model
 
         wrapper = self._make_loss_wrapper()
@@ -248,6 +251,7 @@ class TestCompileAppliedToAttributionModels(unittest.TestCase):
         # compile_model returns something callable; it should still be an nn.Module
         self.assertTrue(callable(compiled))
 
+    @unittest.skipUnless(_has_trak(), "trak not installed (run in policy_doctor env)")
     def test_compile_skipped_when_disabled(self):
         """When use_compile=False, the wrapper is unchanged."""
         import torch.nn as nn
