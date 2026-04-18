@@ -68,7 +68,7 @@ echo "    config: ${CUPID_ROOT}/${CONFIG_PATH}/config.yaml"
 echo ""
 
 cd "$CUPID_ROOT"
-exec conda run -n cupid --no-capture-output \
+exec conda run -n cupid_torch2 --no-capture-output \
   python train.py \
     --config-path "$CONFIG_PATH" \
     --config-name config \

@@ -275,9 +275,8 @@ class TestCompileAppliedToModel(unittest.TestCase):
         import torch
 
         model = self._make_transformer_backbone()
-        # dynamic=True handles data-dependent shapes in positional embeddings;
-        # fullgraph=False allows graph breaks so CPU-only tracing still validates the path.
-        model = torch.compile(model, dynamic=True, fullgraph=False)
+        # Use workspace defaults: fullgraph=True, dynamic=False (fixed training shapes).
+        model = torch.compile(model, fullgraph=True, dynamic=False)
 
         # (B, horizon, action_dim); timestep; cond (B, n_obs_steps, obs_dim)
         sample   = torch.randn(2, 8, 10)
@@ -292,7 +291,8 @@ class TestCompileAppliedToModel(unittest.TestCase):
         import torch
 
         model = self._make_unet_backbone()
-        model = torch.compile(model, dynamic=True, fullgraph=False)
+        # Use workspace defaults: fullgraph=True, dynamic=False (fixed training shapes).
+        model = torch.compile(model, fullgraph=True, dynamic=False)
 
         # UNet forward expects (B, T, input_dim) — see ConditionalUnet1D docstring
         sample   = torch.randn(2, 8, 10)   # (B, T, action_dim)
@@ -312,6 +312,28 @@ class TestCompileAppliedToModel(unittest.TestCase):
         # Model should be the original nn.Module, not a compiled wrapper
         self.assertIsInstance(model, nn.Module)
         self.assertNotIn("OptimizedModule", type(model).__name__)
+
+    @unittest.skipUnless(_has_torch_compile(), "torch.compile requires PyTorch >= 2.0")
+    def test_ema_step_works_after_compile(self):
+        """EMAModel.step() must work with a compiled model via _orig_mod unwrapping."""
+        import copy
+        import torch
+        from diffusion_policy.model.diffusion.ema_model import EMAModel
+
+        model = self._make_unet_backbone()
+        ema_model = copy.deepcopy(model)
+        ema = EMAModel(model=ema_model)
+
+        model = torch.compile(model, fullgraph=True, dynamic=False)
+
+        # This is the fix: pass the underlying module, not the OptimizedModule wrapper.
+        ema.step(getattr(model, "_orig_mod", model))
+
+        # Verify EMA parameters changed (decay < 1, so they should move toward model params).
+        orig_params = list(copy.deepcopy(model._orig_mod).parameters())
+        ema_params  = list(ema_model.parameters())
+        # At least one EMA param should differ from a freshly-init copy (before any step).
+        self.assertTrue(any(p.sum().item() != 0 for p in ema_params))
 
 
 # ---------------------------------------------------------------------------

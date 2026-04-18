@@ -216,7 +216,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
 
                         # update ema
                         if cfg.training.use_ema:
-                            ema.step(self.model)
+                            ema.step(getattr(self.model, "_orig_mod", self.model))
 
                         # logging
                         raw_loss_cpu = raw_loss.item()
