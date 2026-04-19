@@ -73,6 +73,10 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         use_tf32    = bool(cfg.training.get("tf32", False))
         use_compile = bool(cfg.training.get("compile", False))
 
+        if world_size > 1:
+            from diffusion_policy.common.ddp_util import setup_ddp
+            setup_ddp(rank=rank, world_size=world_size)
+
         if use_tf32:
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -111,7 +115,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
 
-        self.model.set_normalizer(normalizer)
+        getattr(self.model, "module", self.model).set_normalizer(normalizer)
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
 
@@ -211,7 +215,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                             train_sampling_batch = batch
 
                         # compute loss
-                        raw_loss = self.model.compute_loss(batch)
+                        raw_loss = getattr(self.model, "module", self.model).compute_loss(batch)
                         loss = raw_loss / cfg.training.gradient_accumulate_every
                         loss.backward()
 
@@ -223,7 +227,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
                         # update ema
                         if cfg.training.use_ema:
-                            ema.step(getattr(self.model, "_orig_mod", self.model))
+                            from diffusion_policy.common.ddp_util import unwrap_model; ema.step(unwrap_model(self.model))
 
                         # logging
                         raw_loss_cpu = raw_loss.item()
@@ -278,7 +282,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                                     leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
-                                    loss = self.model.compute_loss(batch)
+                                    loss = getattr(self.model, "module", self.model).compute_loss(batch)
                                     val_losses.append(loss)
                                     if (cfg.training.max_val_steps is not None) \
                                         and batch_idx >= (cfg.training.max_val_steps-1):

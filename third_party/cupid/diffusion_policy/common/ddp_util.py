@@ -43,6 +43,20 @@ def setup_ddp(rank: int, world_size: int, master_addr: str = "localhost", master
     dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
 
 
+def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    """Strip DDP and torch.compile wrappers to return the base nn.Module.
+
+    Handles all combinations:
+      - plain model
+      - torch.compile(model)                 → model._orig_mod
+      - DDP(model)                           → model.module
+      - DDP(torch.compile(model))            → model.module._orig_mod
+    """
+    m = getattr(model, "module", model)      # unwrap DistributedDataParallel
+    m = getattr(m, "_orig_mod", m)           # unwrap torch.compile OptimizedModule
+    return m
+
+
 def cleanup_ddp() -> None:
     """Destroy the default process group."""
     import torch.distributed as dist

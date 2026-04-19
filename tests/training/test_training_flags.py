@@ -326,8 +326,9 @@ class TestCompileAppliedToModel(unittest.TestCase):
 
         model = torch.compile(model, fullgraph=True, dynamic=False)
 
-        # This is the fix: pass the underlying module, not the OptimizedModule wrapper.
-        ema.step(getattr(model, "_orig_mod", model))
+        # unwrap_model strips both DDP and torch.compile wrappers.
+        from diffusion_policy.common.ddp_util import unwrap_model
+        ema.step(unwrap_model(model))
 
         # Verify EMA parameters changed (decay < 1, so they should move toward model params).
         orig_params = list(copy.deepcopy(model._orig_mod).parameters())
