@@ -23,21 +23,24 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Optional acceleration flags (translated to Hydra overrides):
-#   --compile    enable torch.compile  (+training.compile=true)
-#   --tf32       enable TF32 matmul    (+training.tf32=true)
-#   --no-compile disable torch.compile (+training.compile=false)
-#   --no-tf32    disable TF32          (+training.tf32=false)
+# Optional flags:
+#   --compile      enable torch.compile  (+training.compile=true)
+#   --no-compile   disable torch.compile (+training.compile=false)
+#   --tf32         enable TF32 matmul    (+training.tf32=true)
+#   --no-tf32      disable TF32          (+training.tf32=false)
+#   --num-gpus N   use N GPUs via torchrun (default: 1, uses plain python)
 # Any remaining arguments are forwarded verbatim to train.py as Hydra overrides.
 # ---------------------------------------------------------------------------
 EXTRA_OVERRIDES=()
 PASSTHROUGH=()
+NUM_GPUS=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --compile)    EXTRA_OVERRIDES+=("+training.compile=true");  shift ;;
     --no-compile) EXTRA_OVERRIDES+=("+training.compile=false"); shift ;;
     --tf32)       EXTRA_OVERRIDES+=("+training.tf32=true");     shift ;;
     --no-tf32)    EXTRA_OVERRIDES+=("+training.tf32=false");    shift ;;
+    --num-gpus)   NUM_GPUS="$2"; shift 2 ;;
     *)            PASSTHROUGH+=("$1"); shift ;;
   esac
 done
@@ -66,12 +69,22 @@ echo "    config: ${CUPID_ROOT}/${CONFIG_PATH}/config.yaml"
 echo ""
 
 cd "$CUPID_ROOT"
-exec conda run -n cupid_torch2 --no-capture-output \
-  python train.py \
-    --config-path "$CONFIG_PATH" \
-    --config-name config \
-    "task.dataset.dataset_path=${HDF5}" \
-    "task.dataset_path=${HDF5}" \
-    "task.env_runner.dataset_path=${HDF5}" \
-    "${EXTRA_OVERRIDES[@]+"${EXTRA_OVERRIDES[@]}"}" \
-    "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"
+
+TRAIN_ARGS=(
+  --config-path "$CONFIG_PATH"
+  --config-name config
+  "task.dataset.dataset_path=${HDF5}"
+  "task.dataset_path=${HDF5}"
+  "task.env_runner.dataset_path=${HDF5}"
+  "${EXTRA_OVERRIDES[@]+"${EXTRA_OVERRIDES[@]}"}"
+  "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"
+)
+
+if [[ "$NUM_GPUS" -gt 1 ]]; then
+  echo "    gpus:   ${NUM_GPUS} (torchrun)"
+  exec conda run -n cupid_torch2 --no-capture-output \
+    torchrun --nproc_per_node="$NUM_GPUS" train.py "${TRAIN_ARGS[@]}"
+else
+  exec conda run -n cupid_torch2 --no-capture-output \
+    python train.py "${TRAIN_ARGS[@]}"
+fi
