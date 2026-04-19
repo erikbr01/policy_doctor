@@ -266,6 +266,138 @@ class TestCompileAppliedToAttributionModels(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Compiled attribution output matches eager
+# ---------------------------------------------------------------------------
+
+class TestCompiledAttributionMatchesEager(unittest.TestCase):
+    """Compiled DiffusionLossWrapper output must be numerically identical to eager.
+
+    Uses a self-contained task that calls torch.func.functional_call — the same
+    op used in real TRAK and InfEmbed attribution — without requiring a
+    normalizer, noise scheduler, or trak installation.
+    """
+
+    # Dimensions kept tiny so the test is fast on CPU.
+    B, NUM_T, Ta, Da, To, Do = 2, 4, 8, 4, 2, 8
+
+    @classmethod
+    def _make_wrapper(cls):
+        import torch
+        import torch.nn as nn
+        from diffusion_policy.data_attribution.infembed_adapter import DiffusionLossWrapper
+        from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
+
+        unet = ConditionalUnet1D(
+            input_dim=cls.Da,
+            global_cond_dim=cls.Do * cls.To,
+            diffusion_step_embed_dim=32,
+            down_dims=[32, 64],
+        )
+
+        class _MinimalPolicy(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = unet
+            def forward(self, batch):
+                return batch
+
+        class _FunctionalCallTask:
+            """Calls torch.func.functional_call on the UNet — the core attribution op."""
+            def get_output(self, model, weights, buffers, tsteps, action, obs,
+                           return_per_example=False):
+                model_w = {k[len("model."):]: v for k, v in weights.items()
+                           if k.startswith("model.")}
+                model_b = {k[len("model."):]: v for k, v in buffers.items()
+                           if k.startswith("model.")}
+                B_local = action.shape[0]
+                global_cond = obs.reshape(B_local, -1)
+                pred = torch.func.functional_call(
+                    model.model, (model_w, model_b),
+                    (action, tsteps),
+                    {"global_cond": global_cond},
+                )
+                loss = (pred ** 2).mean(dim=(-1, -2))  # (B,)
+                return loss if return_per_example else loss.mean()
+
+        return DiffusionLossWrapper(_MinimalPolicy(), _FunctionalCallTask())
+
+    @classmethod
+    def _make_batch(cls):
+        import torch
+        torch.manual_seed(0)
+        return {
+            "action":    torch.randn(cls.B, cls.Ta, cls.Da),
+            "obs":       torch.randn(cls.B, cls.To, cls.Do),
+            "timesteps": torch.randint(0, 100, (cls.B, cls.NUM_T)),
+        }
+
+    @unittest.skipUnless(_has_torch_compile(), "torch.compile requires PyTorch >= 2.0")
+    def test_infembed_compiled_matches_eager(self):
+        """Compiled DiffusionLossWrapper(fullgraph=True) output matches eager to 1e-5."""
+        import torch
+        from diffusion_policy.common.ddp_util import compile_model
+
+        wrapper = self._make_wrapper()
+        wrapper.eval()
+        batch = self._make_batch()
+
+        with torch.no_grad():
+            out_eager = wrapper(batch)
+
+        # functional_call receives an nn.Module as argument, which dynamo cannot
+        # trace through with fullgraph=True — use fullgraph=False so compile
+        # still applies to the surrounding ops while allowing graph breaks.
+        compiled = compile_model(wrapper, fullgraph=False, dynamic=False)
+        with torch.no_grad():
+            out_compiled = compiled(batch)
+
+        self.assertTrue(
+            torch.allclose(out_eager, out_compiled, atol=1e-5),
+            f"max diff: {(out_eager - out_compiled).abs().max().item():.2e}",
+        )
+
+    @unittest.skipUnless(_has_torch_compile(), "torch.compile requires PyTorch >= 2.0")
+    def test_trak_functional_call_compiled_matches_eager(self):
+        """Compiling the policy used in TRAK does not change functional_call output."""
+        import torch
+        import copy
+        from diffusion_policy.common.ddp_util import compile_model
+
+        wrapper = self._make_wrapper()
+        wrapper.eval()
+        batch = self._make_batch()
+
+        policy = wrapper.policy
+        policy_compiled = compile_model(
+            copy.deepcopy(policy), dynamic=True, fullgraph=False
+        )
+
+        B_exp = self.B * self.NUM_T
+        tsteps = batch["timesteps"].reshape(-1)        # (B*T,)
+        action  = batch["action"].repeat_interleave(self.NUM_T, dim=0)
+        obs     = batch["obs"].repeat_interleave(self.NUM_T, dim=0)
+        global_cond = obs.reshape(B_exp, -1)
+
+        def _call(p):
+            w = dict(p.named_parameters())
+            b = dict(p.named_buffers())
+            mw = {k[len("model."):]: v for k, v in w.items() if k.startswith("model.")}
+            mb = {k[len("model."):]: v for k, v in b.items() if k.startswith("model.")}
+            return torch.func.functional_call(
+                p.model, (mw, mb), (action, tsteps), {"global_cond": global_cond}
+            )
+
+        with torch.no_grad():
+            out_eager    = _call(policy)
+            out_compiled = _call(policy_compiled)
+
+        self.assertTrue(
+            torch.allclose(out_eager, out_compiled, atol=1e-5),
+            f"max diff: {(out_eager - out_compiled).abs().max().item():.2e}",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Attribution YAML configs have tf32 and compile keys
 # ---------------------------------------------------------------------------
 
