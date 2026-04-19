@@ -17,3 +17,4 @@ project: cupid
 num_gpus: 1
 tf32: true
 compile: true
+num_steps: null

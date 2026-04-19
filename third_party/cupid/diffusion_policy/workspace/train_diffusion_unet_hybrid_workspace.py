@@ -62,8 +62,6 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
     def run(self):
         cfg = copy.deepcopy(self.cfg)
 
-        # optional terminate by global step
-        max_global_steps = getattr(cfg.training, "max_global_steps", None)
         terminate_training = False
 
         # --- acceleration flags (DDP / TF32 / compile) ---
@@ -119,18 +117,25 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         if cfg.training.use_ema:
             self.ema_model.set_normalizer(normalizer)
 
-        # configure lr scheduler
-        if max_global_steps is not None:
-            num_training_steps = max_global_steps
-        else:
-            num_training_steps = len(train_dataloader) * cfg.training.num_epochs
-        num_optim_steps = num_training_steps // cfg.training.gradient_accumulate_every
+        # training duration: num_steps overrides num_epochs when set
+        # max_global_steps is kept as a backward-compatible alias
+        import math
+        _num_steps = cfg.training.get("num_steps", None) or getattr(cfg.training, "max_global_steps", None)
+        _steps_per_epoch = len(train_dataloader)
+        num_epochs_to_run = (
+            math.ceil(_num_steps / _steps_per_epoch)
+            if _num_steps is not None
+            else cfg.training.num_epochs
+        )
 
+        # configure lr scheduler
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=self.optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=num_optim_steps,
+            num_training_steps=(
+                (_num_steps if _num_steps is not None else _steps_per_epoch * num_epochs_to_run)
+                // cfg.training.gradient_accumulate_every),
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
             last_epoch=self.global_step-1
@@ -190,6 +195,8 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
 
         if cfg.training.debug:
             cfg.training.num_epochs = 2
+            num_epochs_to_run = 2
+            _num_steps = None
             cfg.training.max_train_steps = 3
             cfg.training.max_val_steps = 3
             cfg.training.rollout_every = 1
@@ -200,7 +207,9 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with (JsonLogger(log_path) if is_main else open(os.devnull, 'w')) as json_logger:
-            for local_epoch_idx in range(cfg.training.num_epochs):
+            for local_epoch_idx in range(num_epochs_to_run):
+                if terminate_training:
+                    break
                 step_log = dict()
                 # ========= train for this epoch ==========
                 if train_sampler is not None:
@@ -247,10 +256,9 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                                 wandb_run.log(step_log, step=self.global_step)
                                 json_logger.log(step_log)
                             self.global_step += 1
-
-                            # check max global steps
-                            if max_global_steps is not None and self.global_step >= max_global_steps:
+                            if _num_steps is not None and self.global_step >= _num_steps:
                                 terminate_training = True
+                                break
 
                         if (cfg.training.max_train_steps is not None) \
                             and batch_idx >= (cfg.training.max_train_steps-1):
@@ -342,7 +350,9 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                     json_logger.log(step_log)
                 self.global_step += 1
                 self.epoch += 1
-                if terminate_training:
+                if terminate_training or (
+                    _num_steps is not None and self.global_step >= _num_steps
+                ):
                     break
 
 @hydra.main(
