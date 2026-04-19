@@ -46,19 +46,25 @@ CONFIG_PATH="configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer"
 #   --no-tf32      disable TF32          (+training.tf32=false)
 #   --num-gpus N   use N GPUs via torchrun (default: 1, uses plain python)
 # ---------------------------------------------------------------------------
-EXTRA_OVERRIDES=()
+USE_COMPILE=true
+USE_TF32=true
 NUM_GPUS=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --compile)    EXTRA_OVERRIDES+=("+training.compile=true");  shift ;;
-    --no-compile) EXTRA_OVERRIDES+=("+training.compile=false"); shift ;;
-    --tf32)       EXTRA_OVERRIDES+=("+training.tf32=true");     shift ;;
-    --no-tf32)    EXTRA_OVERRIDES+=("+training.tf32=false");    shift ;;
+    --compile)    USE_COMPILE=true;  shift ;;
+    --no-compile) USE_COMPILE=false; shift ;;
+    --tf32)       USE_TF32=true;     shift ;;
+    --no-tf32)    USE_TF32=false;    shift ;;
     --num-gpus)   NUM_GPUS="$2"; shift 2 ;;
     -*)           break ;;  # unknown flag — stop parsing, rest goes to TASK/passthrough
     *)            break ;;
   esac
 done
+
+EXTRA_OVERRIDES=(
+  "+training.compile=${USE_COMPILE}"
+  "+training.tf32=${USE_TF32}"
+)
 
 TASK="${1:-PickPlaceCounterToCabinet}"
 if [[ $# -ge 1 ]]; then shift; fi

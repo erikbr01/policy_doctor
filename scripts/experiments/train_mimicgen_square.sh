@@ -33,19 +33,25 @@ set -euo pipefail
 #   --num-gpus N   use N GPUs via torchrun (default: 1, uses plain python)
 # Any remaining arguments are forwarded verbatim to train.py as Hydra overrides.
 # ---------------------------------------------------------------------------
-EXTRA_OVERRIDES=()
+USE_COMPILE=true
+USE_TF32=true
 PASSTHROUGH=()
 NUM_GPUS=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --compile)    EXTRA_OVERRIDES+=("+training.compile=true");  shift ;;
-    --no-compile) EXTRA_OVERRIDES+=("+training.compile=false"); shift ;;
-    --tf32)       EXTRA_OVERRIDES+=("+training.tf32=true");     shift ;;
-    --no-tf32)    EXTRA_OVERRIDES+=("+training.tf32=false");    shift ;;
+    --compile)    USE_COMPILE=true;  shift ;;
+    --no-compile) USE_COMPILE=false; shift ;;
+    --tf32)       USE_TF32=true;     shift ;;
+    --no-tf32)    USE_TF32=false;    shift ;;
     --num-gpus)   NUM_GPUS="$2"; shift 2 ;;
     *)            PASSTHROUGH+=("$1"); shift ;;
   esac
 done
+
+EXTRA_OVERRIDES=(
+  "+training.compile=${USE_COMPILE}"
+  "+training.tf32=${USE_TF32}"
+)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
