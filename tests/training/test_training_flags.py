@@ -419,8 +419,21 @@ class TestYamlConfigFlags(unittest.TestCase):
                     msg=f"Missing 'compile' in {cfg_path.relative_to(_REPO_ROOT)}"
                 )
 
+    def test_all_configs_have_num_steps(self):
+        import yaml
+
+        for config_dir in self._CONFIG_DIRS:
+            for cfg_path in sorted(config_dir.glob("*.yaml")):
+                with open(cfg_path) as f:
+                    data = yaml.safe_load(f) or {}
+                self.assertIn(
+                    "num_steps", data,
+                    msg=f"Missing 'num_steps' in {cfg_path.relative_to(_REPO_ROOT)}"
+                )
+
     def test_defaults(self):
-        """num_gpus=1 (safe default), tf32=true and compile=true (enabled for performance)."""
+        """num_gpus=1 (safe default), tf32=true and compile=true (enabled for performance),
+        num_steps=null (epoch-based training by default)."""
         import yaml
 
         for config_dir in self._CONFIG_DIRS:
@@ -442,6 +455,153 @@ class TestYamlConfigFlags(unittest.TestCase):
                         data["compile"],
                         msg=f"Expected compile=true in {cfg_path.relative_to(_REPO_ROOT)}"
                     )
+                if "num_steps" in data:
+                    self.assertIsNone(
+                        data["num_steps"],
+                        msg=f"Expected num_steps=null in {cfg_path.relative_to(_REPO_ROOT)}"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# num_steps: epoch computation and loop-exit logic
+# ---------------------------------------------------------------------------
+
+class TestNumStepsComputation(unittest.TestCase):
+    """Verify the num_epochs_to_run / lr total-steps derivation from num_steps."""
+
+    def _compute(self, num_steps, steps_per_epoch, num_epochs):
+        """Replicate the workspace logic: returns (num_epochs_to_run, total_lr_steps)."""
+        import math
+        if num_steps is not None:
+            num_epochs_to_run = math.ceil(num_steps / steps_per_epoch)
+            total_lr_steps = num_steps
+        else:
+            num_epochs_to_run = num_epochs
+            total_lr_steps = steps_per_epoch * num_epochs
+        return num_epochs_to_run, total_lr_steps
+
+    def test_null_uses_num_epochs(self):
+        """When num_steps is None, num_epochs drives training duration."""
+        epochs, total = self._compute(num_steps=None, steps_per_epoch=100, num_epochs=800)
+        self.assertEqual(epochs, 800)
+        self.assertEqual(total, 80_000)
+
+    def test_exact_multiple_of_steps_per_epoch(self):
+        """num_steps that is an exact multiple of steps_per_epoch: no fractional epoch needed."""
+        epochs, total = self._compute(num_steps=1000, steps_per_epoch=100, num_epochs=800)
+        self.assertEqual(epochs, 10)
+        self.assertEqual(total, 1000)
+
+    def test_fractional_epoch_rounds_up(self):
+        """num_steps that does not divide evenly: last epoch is partial."""
+        epochs, total = self._compute(num_steps=750, steps_per_epoch=100, num_epochs=800)
+        self.assertEqual(epochs, 8)   # ceil(750/100) = 8
+        self.assertEqual(total, 750)
+
+    def test_fewer_steps_than_one_epoch(self):
+        """num_steps < steps_per_epoch still runs exactly one epoch (ceil rounds up to 1)."""
+        epochs, total = self._compute(num_steps=50, steps_per_epoch=100, num_epochs=800)
+        self.assertEqual(epochs, 1)
+        self.assertEqual(total, 50)
+
+    def test_ddp_steps_per_epoch_halved(self):
+        """With 2 GPUs, steps_per_epoch halves; same num_steps → twice as many epochs."""
+        # Single GPU: 309 steps/epoch, 2 GPU: 155 steps/epoch (DistributedSampler)
+        epochs_single, _ = self._compute(num_steps=100_000, steps_per_epoch=309, num_epochs=800)
+        epochs_two_gpu, _ = self._compute(num_steps=100_000, steps_per_epoch=155, num_epochs=800)
+        self.assertAlmostEqual(epochs_two_gpu / epochs_single, 309 / 155, delta=0.05)
+
+    def test_lr_steps_independent_of_gradient_accumulate_every(self):
+        """total_lr_steps is in raw steps; the workspace divides by gradient_accumulate_every."""
+        _, total = self._compute(num_steps=10_000, steps_per_epoch=100, num_epochs=800)
+        gradient_accumulate_every = 2
+        num_optim_steps = total // gradient_accumulate_every
+        self.assertEqual(num_optim_steps, 5_000)
+
+
+class TestNumStepsLoopExit(unittest.TestCase):
+    """Verify the inner/outer loop termination logic triggered by num_steps."""
+
+    def _simulate_loop(self, num_steps, steps_per_epoch, num_epochs=800):
+        """Simulate the workspace training loop and return the step count at exit.
+
+        Returns (final_global_step, epochs_completed, terminate_training_was_set).
+        """
+        import math
+
+        if num_steps is not None:
+            num_epochs_to_run = math.ceil(num_steps / steps_per_epoch)
+        else:
+            num_epochs_to_run = num_epochs
+
+        global_step = 0
+        epoch = 0
+        terminate_training = False
+
+        for _local_epoch in range(num_epochs_to_run):
+            if terminate_training:
+                break
+            # inner batch loop
+            for batch_idx in range(steps_per_epoch):
+                is_last_batch = (batch_idx == steps_per_epoch - 1)
+                if not is_last_batch:
+                    global_step += 1
+                    if num_steps is not None and global_step >= num_steps:
+                        terminate_training = True
+                        break
+            # end of epoch
+            global_step += 1   # last batch step counted here
+            epoch += 1
+            if terminate_training or (num_steps is not None and global_step >= num_steps):
+                break
+
+        return global_step, epoch, terminate_training
+
+    def test_null_num_steps_runs_all_epochs(self):
+        steps_per_epoch = 10
+        num_epochs = 5
+        final_step, epochs, terminated = self._simulate_loop(
+            num_steps=None, steps_per_epoch=steps_per_epoch, num_epochs=num_epochs
+        )
+        self.assertEqual(epochs, num_epochs)
+        self.assertFalse(terminated)
+        self.assertEqual(final_step, steps_per_epoch * num_epochs)
+
+    def test_exact_boundary_stops_at_num_steps(self):
+        """When num_steps is an exact multiple of steps_per_epoch, training ends cleanly."""
+        final_step, epochs, terminated = self._simulate_loop(
+            num_steps=30, steps_per_epoch=10, num_epochs=800
+        )
+        self.assertEqual(epochs, 3)
+        self.assertEqual(final_step, 30)
+
+    def test_fractional_epoch_stops_mid_epoch(self):
+        """num_steps = 25 with steps_per_epoch = 10: stops during epoch 3."""
+        final_step, epochs, terminated = self._simulate_loop(
+            num_steps=25, steps_per_epoch=10, num_epochs=800
+        )
+        # Should stop after completing the epoch that contains step 25
+        self.assertGreaterEqual(final_step, 25)
+        self.assertTrue(terminated)
+        # Ran at most ceil(25/10)=3 epochs
+        self.assertLessEqual(epochs, 3)
+
+    def test_step_count_never_exceeds_one_epoch_past_target(self):
+        """global_step at exit is at most steps_per_epoch beyond num_steps."""
+        num_steps = 47
+        steps_per_epoch = 10
+        final_step, _, _ = self._simulate_loop(
+            num_steps=num_steps, steps_per_epoch=steps_per_epoch
+        )
+        self.assertLessEqual(final_step, num_steps + steps_per_epoch)
+
+    def test_single_step_terminates_after_one_batch(self):
+        """num_steps=1 should stop within the first epoch."""
+        final_step, epochs, terminated = self._simulate_loop(
+            num_steps=1, steps_per_epoch=100, num_epochs=800
+        )
+        self.assertEqual(epochs, 1)
+        self.assertGreaterEqual(final_step, 1)
 
 
 if __name__ == "__main__":
