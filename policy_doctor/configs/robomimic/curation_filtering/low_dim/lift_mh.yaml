@@ -17,3 +17,9 @@ curation_method: influence_sum_official  # or from config metadata
 
 output_dir: data/outputs/train
 project: cupid
+
+# Multi-GPU / acceleration flags
+num_gpus: 1
+tf32: true
+compile: true
+num_steps: null

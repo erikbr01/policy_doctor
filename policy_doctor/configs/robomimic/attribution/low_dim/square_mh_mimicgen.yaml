@@ -48,3 +48,7 @@ overwrite: false
 # Use a specific D1 core dataset instead:
 #   dataset_path: data/source/mimicgen/core_datasets/NutAssemblySquare/demo_src_NutAssemblySquare_task_D1/demo.hdf5
 dataset_path: null
+
+# Acceleration flags
+tf32: true
+compile: true

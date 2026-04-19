@@ -98,6 +98,9 @@ class TrainCuratedStep(PipelineStep[None]):
             or "default"
         )
         device = OmegaConf.select(cfg, "device") or "cuda:0"
+        num_gpus = int(OmegaConf.select(baseline, "num_gpus") or OmegaConf.select(cfg, "num_gpus") or 1)
+        tf32    = bool(OmegaConf.select(baseline, "tf32") or False)
+        compile_ = bool(OmegaConf.select(baseline, "compile") or False)
         run_tag = OmegaConf.select(cfg, "run_tag")
 
         curation_config_path = OmegaConf.select(cfg, "curation_config_path")
@@ -192,6 +195,10 @@ class TrainCuratedStep(PipelineStep[None]):
                 overrides.append(f"++task.dataset.dataset_path={dataset_path_override}")
                 overrides.append(f"++task.env_runner.dataset_path={dataset_path_override}")
             overrides.extend(baseline_diffusion_extra_overrides(baseline))
+            overrides.extend([
+                f"+training.tf32={str(tf32).lower()}",
+                f"+training.compile={str(compile_).lower()}",
+            ])
 
             if self.dry_run:
                 print(f"[dry_run] TrainCuratedStep seed={seed}  output_dir={run_output_dir}")
@@ -199,14 +206,31 @@ class TrainCuratedStep(PipelineStep[None]):
                 continue
 
             pathlib.Path(run_output_dir).mkdir(parents=True, exist_ok=True)
-            p = mp_ctx.Process(
-                target=_train_curated_worker,
-                args=(run_output_dir, config_dir_abs, config_name, overrides),
-                daemon=False,
-            )
-            p.start()
-            procs.append((p, seed, run_output_dir))
-            print(f"  [launched] pid={p.pid}  output_dir={run_output_dir}")
+
+            if num_gpus > 1:
+                # DDP: spawn one process per GPU via torch.multiprocessing.spawn.
+                # Each seed's DDP group runs sequentially to avoid port conflicts.
+                from diffusion_policy.common.ddp_util import spawn_ddp
+                print(f"  [train_curated/ddp] num_gpus={num_gpus}  seed={seed}  output_dir={run_output_dir}")
+                spawn_ddp(
+                    worker_fn=_train_curated_worker,
+                    worker_kwargs={
+                        "run_output_dir": run_output_dir,
+                        "config_dir_str": config_dir_abs,
+                        "config_name": config_name,
+                        "overrides": overrides,
+                    },
+                    num_gpus=num_gpus,
+                )
+            else:
+                p = mp_ctx.Process(
+                    target=_train_curated_worker,
+                    args=(run_output_dir, config_dir_abs, config_name, overrides),
+                    daemon=False,
+                )
+                p.start()
+                procs.append((p, seed, run_output_dir))
+                print(f"  [launched] pid={p.pid}  output_dir={run_output_dir}")
 
         for p, seed, run_output_dir in procs:
             p.join()

@@ -214,6 +214,9 @@ def _make_rollout_infembed_loader(
     is_flag=True,
     help="Resume after demo embeddings: load fit + demo from infembed_fit.pt and infembed_embeddings_demo_only.npz, compute only rollout embeddings, then save full npz.",
 )
+@click.option("--tf32", is_flag=True, default=False, help="Enable TF32 matmul/cuDNN precision.")
+@click.option("--compile", "use_compile", is_flag=True, default=False,
+              help="Wrap the loss wrapper with torch.compile before InfEmbed.")
 def main(
     exp_name: str,
     eval_dir: str,
@@ -234,11 +237,18 @@ def main(
     predict_only: bool,
     fit_results: Optional[str],
     predict_rollout_only: bool,
+    tf32: bool,
+    use_compile: bool,
 ):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
     device = get_device(device)
+
+    # Acceleration flags.
+    if tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     eval_dir = pathlib.Path(eval_dir)
     train_dir = pathlib.Path(train_dir)
 
@@ -325,6 +335,14 @@ def main(
 
     # Wrapper so InfEmbed sees model(batch) -> (B,) per-example loss
     wrapper = DiffusionLossWrapper(policy, task)
+
+    # Optionally compile the wrapper.  InfEmbed calls wrapper(batch) directly
+    # (no vmap/grad), so fullgraph=True and dynamic=False are safe here and
+    # give better specialisation than the TRAK path.
+    if use_compile:
+        from diffusion_policy.common.ddp_util import compile_model
+        wrapper = compile_model(wrapper, fullgraph=True, dynamic=False)
+
     loss_fn_none = IdentityLossNone()
 
     # Train loader (no shuffle, same order as TRAK)

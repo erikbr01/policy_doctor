@@ -38,6 +38,34 @@ CUPID_ROOT="${REPO_ROOT}/third_party/cupid"
 # Config path is relative to train.py (in CUPID_ROOT)
 CONFIG_PATH="configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer"
 
+# ---------------------------------------------------------------------------
+# Optional flags (must come before TASK):
+#   --compile      enable torch.compile  (+training.compile=true)
+#   --no-compile   disable torch.compile (+training.compile=false)
+#   --tf32         enable TF32 matmul    (+training.tf32=true)
+#   --no-tf32      disable TF32          (+training.tf32=false)
+#   --num-gpus N   use N GPUs via torchrun (default: 1, uses plain python)
+# ---------------------------------------------------------------------------
+USE_COMPILE=true
+USE_TF32=true
+NUM_GPUS=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --compile)    USE_COMPILE=true;  shift ;;
+    --no-compile) USE_COMPILE=false; shift ;;
+    --tf32)       USE_TF32=true;     shift ;;
+    --no-tf32)    USE_TF32=false;    shift ;;
+    --num-gpus)   NUM_GPUS="$2"; shift 2 ;;
+    -*)           break ;;  # unknown flag — stop parsing, rest goes to TASK/passthrough
+    *)            break ;;
+  esac
+done
+
+EXTRA_OVERRIDES=(
+  "+training.compile=${USE_COMPILE}"
+  "+training.tf32=${USE_TF32}"
+)
+
 TASK="${1:-PickPlaceCounterToCabinet}"
 if [[ $# -ge 1 ]]; then shift; fi
 
@@ -74,11 +102,22 @@ echo "    config:  ${CUPID_ROOT}/${CONFIG_PATH}/config.yaml"
 echo ""
 
 cd "$CUPID_ROOT"
-exec conda run -n robocasa --no-capture-output \
-  python train.py \
-    --config-path "$CONFIG_PATH" \
-    --config-name config \
-    "task.dataset.dataset_path=${LEROBOT_ROOT}" \
-    "task.dataset_path=${LEROBOT_ROOT}" \
-    "task.env_runner.env_name=${TASK}" \
-    "$@"
+
+TRAIN_ARGS=(
+  --config-path "$CONFIG_PATH"
+  --config-name config
+  "task.dataset.dataset_path=${LEROBOT_ROOT}"
+  "task.dataset_path=${LEROBOT_ROOT}"
+  "task.env_runner.env_name=${TASK}"
+  "${EXTRA_OVERRIDES[@]+"${EXTRA_OVERRIDES[@]}"}"
+  "$@"
+)
+
+if [[ "$NUM_GPUS" -gt 1 ]]; then
+  echo "    gpus:   ${NUM_GPUS} (torchrun)"
+  exec conda run -n robocasa --no-capture-output \
+    torchrun --nproc_per_node="$NUM_GPUS" train.py "${TRAIN_ARGS[@]}"
+else
+  exec conda run -n robocasa --no-capture-output \
+    python train.py "${TRAIN_ARGS[@]}"
+fi

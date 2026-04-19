@@ -90,6 +90,9 @@ class TrainBaselineStep(PipelineStep[None]):
         script_name = OmegaConf.select(baseline, "script_name") or "train"
         exp_name = OmegaConf.select(baseline, "exp_name") or f"{script_name}_{policy}"
         device = OmegaConf.select(cfg, "device") or "cuda:0"
+        num_gpus = int(OmegaConf.select(baseline, "num_gpus") or OmegaConf.select(cfg, "num_gpus") or 1)
+        tf32    = bool(OmegaConf.select(baseline, "tf32") or False)
+        compile_ = bool(OmegaConf.select(baseline, "compile") or False)
 
         # Determine training dispatch mode.
         # If the data source requires a conda env other than the cupid default, use subprocess.
@@ -123,6 +126,10 @@ class TrainBaselineStep(PipelineStep[None]):
                     run_output_dir=run_output_dir,
                 )
                 overrides.extend(baseline_diffusion_extra_overrides(baseline))
+                overrides.extend([
+                    f"+training.tf32={str(tf32).lower()}",
+                    f"+training.compile={str(compile_).lower()}",
+                ])
 
                 if self.dry_run:
                     print(f"[dry_run] TrainBaselineStep (subprocess) seed={seed}")
@@ -138,6 +145,7 @@ class TrainBaselineStep(PipelineStep[None]):
                     config_name=config_name,
                     overrides=overrides,
                     run_output_dir=run_output_dir,
+                    num_gpus=num_gpus,
                 )
             else:
                 # In-process (hydra.initialize_config_dir) mode: standard cupid training.
@@ -158,6 +166,8 @@ class TrainBaselineStep(PipelineStep[None]):
                     f"logging.project={project}",
                     f"multi_run.wandb_name_base={train_name}",
                     f"multi_run.run_dir={run_output_dir}",
+                    f"+training.tf32={str(tf32).lower()}",
+                    f"+training.compile={str(compile_).lower()}",
                 ]
                 overrides.extend(baseline_diffusion_extra_overrides(baseline))
 
@@ -168,16 +178,23 @@ class TrainBaselineStep(PipelineStep[None]):
                     print(f"[dry_run]   overrides={overrides}")
                     continue
 
-                print(f"  [train_baseline] seed={seed}  output_dir={run_output_dir}")
-                self._run_in_process(
-                    _train_baseline_worker,
-                    {
-                        "run_output_dir": run_output_dir,
-                        "config_dir_str": config_dir_abs,
-                        "config_name": config_name,
-                        "overrides": overrides,
-                    },
-                )
+                worker_kwargs = {
+                    "run_output_dir": run_output_dir,
+                    "config_dir_str": config_dir_abs,
+                    "config_name": config_name,
+                    "overrides": overrides,
+                }
+                if num_gpus > 1:
+                    from diffusion_policy.common.ddp_util import spawn_ddp
+                    print(f"  [train_baseline/ddp] num_gpus={num_gpus}  seed={seed}  output_dir={run_output_dir}")
+                    spawn_ddp(
+                        worker_fn=_train_baseline_worker,
+                        worker_kwargs=worker_kwargs,
+                        num_gpus=num_gpus,
+                    )
+                else:
+                    print(f"  [train_baseline] seed={seed}  output_dir={run_output_dir}")
+                    self._run_in_process(_train_baseline_worker, worker_kwargs)
 
     # ------------------------------------------------------------------
     # Subprocess training helpers
@@ -228,6 +245,7 @@ class TrainBaselineStep(PipelineStep[None]):
         config_name: str,
         overrides: list,
         run_output_dir: str,
+        num_gpus: int = 1,
     ) -> None:
         """Run training in an isolated conda env via ``conda run``.
 
@@ -235,11 +253,22 @@ class TrainBaselineStep(PipelineStep[None]):
         ``configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer``).
         The subprocess is run with ``cwd=CUPID_ROOT`` so that Hydra's
         ``--config-path`` resolves correctly.
+
+        When ``num_gpus > 1``, ``torchrun`` is used instead of plain
+        ``python`` so that each GPU gets its own rank process.
         """
         pathlib.Path(run_output_dir).mkdir(parents=True, exist_ok=True)
+        if num_gpus > 1:
+            launcher = [
+                "torchrun",
+                f"--nproc_per_node={num_gpus}",
+                str(CUPID_ROOT / "train.py"),
+            ]
+        else:
+            launcher = ["python", str(CUPID_ROOT / "train.py")]
         cmd = [
             "conda", "run", "-n", conda_env, "--no-capture-output",
-            "python", str(CUPID_ROOT / "train.py"),
+            *launcher,
             "--config-path", config_dir,
             "--config-name", config_name,
             *overrides,

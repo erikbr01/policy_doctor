@@ -44,3 +44,7 @@ eval_online_state_similarity: false
 eval_online_demo_score: false
 compute_holdout: true
 overwrite: false
+
+# Acceleration flags
+tf32: true
+compile: true
