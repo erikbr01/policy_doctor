@@ -174,6 +174,19 @@ All three training scripts accept optional flags **before** any Hydra overrides 
 
 **Required conda env for `--compile`:** the default `cupid` env ships PyTorch 1.12, which predates `torch.compile`. Use `cupid_torch2` (PyTorch 2.4, created by cloning `cupid`) for any run that uses `--compile`. Scripts default to `cupid_torch2` already.
 
+**`training.num_steps` — step-based training duration:**
+
+An alternative to `num_epochs` for specifying how long to train. When set, the workspace computes `num_epochs = ceil(num_steps / steps_per_epoch)` from the actual dataloader length and breaks out of the inner batch loop as soon as `global_step >= num_steps`, forcing a final eval and checkpoint at that point.
+
+```bash
+# 100 000 gradient steps regardless of dataset size or GPU count
+./scripts/experiments/train_robomimic_square.sh "+training.num_steps=100000"
+```
+
+`num_steps` and `num_epochs` are mutually exclusive — setting `num_steps` overrides `num_epochs`. Default in all pipeline configs is `num_steps: null` (epoch-based).
+
+**DDP epoch count note:** with `DistributedSampler`, each rank processes `N / num_gpus` samples per epoch, so `steps_per_epoch` is already halved with 2 GPUs. Specifying `num_steps=100000` with 2 GPUs therefore runs `ceil(100000 / 155)` epochs instead of `ceil(100000 / 309)` — the same total gradient-update count regardless of GPU count, without any LR adjustment. If you use `num_epochs` instead (the default), note that the effective batch size doubles with 2 GPUs (allreduce), so the standard practice is to scale `training.lr` by `num_gpus` manually when switching from 1 → N GPUs.
+
 ### Overriding Hydra parameters
 
 All extra positional arguments are forwarded as Hydra overrides:
