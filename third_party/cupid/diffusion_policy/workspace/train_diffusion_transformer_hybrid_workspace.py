@@ -15,6 +15,7 @@ import pathlib
 from torch.utils.data import DataLoader
 import copy
 import random
+import time
 import wandb
 import tqdm
 import numpy as np
@@ -29,6 +30,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.common.device_util import get_device, non_blocking_for
 from diffusion_policy.model.diffusion.ema_model import EMAModel
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
+from diffusion_policy.common.step_timer import StepTimer
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -189,6 +191,8 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
         # save batch for sampling
         train_sampling_batch = None
 
+        step_timer = StepTimer()
+
         if cfg.training.debug:
             cfg.training.num_epochs = 2
             num_epochs_to_run = 2
@@ -215,25 +219,30 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
+                        step_timer.reset()
                         # device transfer
-                        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
+                        with step_timer.time("data_transfer"):
+                            batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
                         if train_sampling_batch is None:
                             train_sampling_batch = batch
 
                         # compute loss
-                        raw_loss = getattr(self.model, "module", self.model).compute_loss(batch)
-                        loss = raw_loss / cfg.training.gradient_accumulate_every
-                        loss.backward()
+                        with step_timer.time("forward_backward"):
+                            raw_loss = getattr(self.model, "module", self.model).compute_loss(batch)
+                            loss = raw_loss / cfg.training.gradient_accumulate_every
+                            loss.backward()
 
                         # step optimizer
                         if self.global_step % cfg.training.gradient_accumulate_every == 0:
-                            self.optimizer.step()
-                            self.optimizer.zero_grad()
-                            lr_scheduler.step()
+                            with step_timer.time("optimizer_step"):
+                                self.optimizer.step()
+                                self.optimizer.zero_grad()
+                                lr_scheduler.step()
 
                         # update ema
                         if cfg.training.use_ema:
-                            from diffusion_policy.common.ddp_util import unwrap_model; ema.step(unwrap_model(self.model))
+                            with step_timer.time("ema_update"):
+                                from diffusion_policy.common.ddp_util import unwrap_model; ema.step(unwrap_model(self.model))
 
                         # logging
                         raw_loss_cpu = raw_loss.item()
@@ -245,6 +254,7 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                             'epoch': self.epoch,
                             'lr': lr_scheduler.get_last_lr()[0]
                         }
+                        step_log.update(step_timer.to_log_dict())
 
                         is_last_batch = (batch_idx == (len(train_dataloader)-1))
                         if not is_last_batch:
@@ -276,12 +286,15 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                     # run rollout
                     if (self.epoch % cfg.training.rollout_every) == 0 or terminate_training:
                         print(f"[epoch {self.epoch}] Running eval rollouts...")
+                        _t0 = time.perf_counter()
                         runner_log = env_runner.run(policy, policy_cfg=cfg.policy)
+                        step_log['timer/rollout'] = time.perf_counter() - _t0
                         # log all
                         step_log.update(runner_log)
 
                     # run validation
                     if (self.epoch % cfg.training.val_every) == 0 or terminate_training:
+                        _t0 = time.perf_counter()
                         with torch.no_grad():
                             val_losses = list()
                             with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
@@ -297,9 +310,11 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                                 val_loss = torch.mean(torch.tensor(val_losses)).item()
                                 # log epoch average validation loss
                                 step_log['val_loss'] = val_loss
+                        step_log['timer/validation'] = time.perf_counter() - _t0
 
                     # run diffusion sampling on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0 or terminate_training:
+                        _t0 = time.perf_counter()
                         with torch.no_grad():
                             # sample trajectory from training set, and evaluate difference
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
@@ -316,6 +331,7 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
                             del result
                             del pred_action
                             del mse
+                        step_log['timer/sampling'] = time.perf_counter() - _t0
 
                     # checkpoint
                     if (self.epoch % cfg.training.checkpoint_every) == 0 or terminate_training:

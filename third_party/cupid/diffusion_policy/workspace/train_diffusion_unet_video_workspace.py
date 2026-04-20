@@ -15,6 +15,7 @@ import pathlib
 from torch.utils.data import DataLoader
 import copy
 import random
+import time
 import wandb
 import tqdm
 import numpy as np
@@ -28,6 +29,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.common.device_util import get_device, non_blocking_for
 from diffusion_policy.model.diffusion.ema_model import EMAModel
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
+from diffusion_policy.common.step_timer import StepTimer
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -171,6 +173,8 @@ class TrainDiffusionUnetVideoWorkspace(BaseWorkspace):
         # save batch for validation (from rank-local dataloader)
         val_batch = next(iter(train_dataloader))
 
+        step_timer = StepTimer()
+
         # training loop
         for _ in range(cfg.training.num_epochs):
             if train_sampler is not None:
@@ -178,23 +182,28 @@ class TrainDiffusionUnetVideoWorkspace(BaseWorkspace):
             with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
                     leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                 for batch in tepoch:
+                    step_timer.reset()
                     # device transfer
-                    batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
+                    with step_timer.time("data_transfer"):
+                        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
 
                     # compute loss
-                    raw_loss = self.model.compute_loss(batch)
-                    loss = raw_loss / cfg.training.gradient_accumulate_every
-                    loss.backward()
+                    with step_timer.time("forward_backward"):
+                        raw_loss = self.model.compute_loss(batch)
+                        loss = raw_loss / cfg.training.gradient_accumulate_every
+                        loss.backward()
 
                     # step optimizer
                     if self.global_step % cfg.training.gradient_accumulate_every == 0:
-                        self.optimizer.step()
-                        self.optimizer.zero_grad()
-                        lr_scheduler.step()
+                        with step_timer.time("optimizer_step"):
+                            self.optimizer.step()
+                            self.optimizer.zero_grad()
+                            lr_scheduler.step()
 
                     # update ema
                     if cfg.training.use_ema:
-                        ema.step(self.model)
+                        with step_timer.time("ema_update"):
+                            ema.step(self.model)
 
                     # logging
                     raw_loss_cpu = raw_loss.item()
@@ -204,6 +213,7 @@ class TrainDiffusionUnetVideoWorkspace(BaseWorkspace):
                         'epoch': self.epoch,
                         'lr': lr_scheduler.get_last_lr()[0]
                     }
+                    step_log.update(step_timer.to_log_dict())
 
                     # eval (main rank only)
                     if is_main:
@@ -215,7 +225,9 @@ class TrainDiffusionUnetVideoWorkspace(BaseWorkspace):
                             if cfg.training.use_ema:
                                 policy = self.ema_model
                             policy.eval()
+                            _t0 = time.perf_counter()
                             runner_log = env_runner.run(policy)
+                            step_log['timer/rollout'] = time.perf_counter() - _t0
                             policy.train()
                             step_log.update(runner_log)
 
@@ -239,6 +251,7 @@ class TrainDiffusionUnetVideoWorkspace(BaseWorkspace):
                             if cfg.training.use_ema:
                                 policy = self.ema_model
                             policy.eval()
+                            _t0 = time.perf_counter()
                             with torch.no_grad():
                                 # sample trajectory from training set, and evaluate difference
                                 batch = dict_apply(val_batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
@@ -255,6 +268,7 @@ class TrainDiffusionUnetVideoWorkspace(BaseWorkspace):
                                 del result
                                 del pred_action
                                 del mse
+                            step_log['timer/sampling'] = time.perf_counter() - _t0
                             policy.train()
 
                         # log
