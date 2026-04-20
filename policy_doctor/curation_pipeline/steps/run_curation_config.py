@@ -59,17 +59,33 @@ class RunCurationConfigStep(PipelineStep[List[str]]):
             print(f"[dry_run] RunCurationConfigStep task_config={flat.get('task_config')}")
             return []
 
-        # Resolve clustering dirs: prefer explicit cfg value, else load from prior step
+        # Resolve clustering dirs: prefer build_behavior_graph if available, then
+        # explicit cfg value, then run_clustering output.
+        from policy_doctor.curation_pipeline.steps.build_behavior_graph import BuildBehaviorGraphStep
+
+        bbg_prior = BuildBehaviorGraphStep(cfg, self.run_dir).load()
+        bbg_step_dir = self.run_dir / "build_behavior_graph"
+
         clustering_dir = flat.get("clustering_dir")
-        if not clustering_dir:
+        bbg_dirs_map: dict = {}  # {seed: {"node_assignments_path": ..., "metadata_path": ...}}
+        clustering_dirs_map: dict = {}
+
+        if bbg_prior and bbg_prior.get("seeds"):
+            # build_behavior_graph has run — use its per-seed node_assignments
+            for seed_key, seed_info in bbg_prior["seeds"].items():
+                if isinstance(seed_info, dict) and seed_info.get("node_assignments_path"):
+                    bbg_dirs_map[seed_key] = {
+                        "node_assignments_path": str(bbg_step_dir / seed_info["node_assignments_path"]),
+                        "metadata_path": str(bbg_step_dir / seed_info["metadata_path"]),
+                        "level": seed_info.get("level", "rollout"),
+                    }
+        elif not clustering_dir:
             from policy_doctor.curation_pipeline.steps.run_clustering import RunClusteringStep
 
             prior = RunClusteringStep(cfg, self.run_dir).load()
             if prior:
-                clustering_dirs_map: dict = prior.get("clustering_dirs", {})
-            else:
-                clustering_dirs_map = {}
-        else:
+                clustering_dirs_map = prior.get("clustering_dirs", {})
+        if clustering_dir:
             clustering_dirs_map = {}
 
         policy_seeds = flat.get("policy_seeds", [0, 1, 2])
@@ -78,7 +94,25 @@ class RunCurationConfigStep(PipelineStep[List[str]]):
         seeds = [str(s) for s in policy_seeds]
 
         out_paths: List[str] = []
-        if clustering_dirs_map:
+        if bbg_dirs_map:
+            # ENAP or build_behavior_graph path: pass node_assignment paths directly
+            for seed in seeds:
+                seed_info = (
+                    bbg_dirs_map.get(seed)
+                    or bbg_dirs_map.get("_single")
+                    or bbg_dirs_map.get("_enap")
+                )
+                if not seed_info:
+                    continue
+                seed_cfg = dict(flat)
+                seed_cfg["policy_seeds"] = [int(seed) if seed.isdigit() else 0]
+                seed_cfg["_bbg_node_assignments_path"] = seed_info["node_assignments_path"]
+                seed_cfg["_bbg_metadata_path"] = seed_info["metadata_path"]
+                seed_cfg["_bbg_level"] = seed_info.get("level", "rollout")
+                seed_cfg["repo_root"] = str(self.repo_root)
+                paths = run_pipeline_from_config(seed_cfg)
+                out_paths.extend(str(p) for p in paths)
+        elif clustering_dirs_map:
             for seed in seeds:
                 seed_cfg = dict(flat)
                 seed_cfg["policy_seeds"] = [int(seed)]
@@ -164,7 +198,19 @@ def run_pipeline_from_config(cfg: dict) -> list:
         load_clustering_result,
     )
 
-    if clustering_dir:
+    # Load node assignments: prefer _bbg_* paths (from build_behavior_graph step),
+    # then explicit clustering_dir, then clustering_name lookup.
+    bbg_na_path = cfg.get("_bbg_node_assignments_path")
+    bbg_meta_path = cfg.get("_bbg_metadata_path")
+    bbg_level = cfg.get("_bbg_level")
+
+    if bbg_na_path and bbg_meta_path:
+        import json as _json
+        cluster_labels = np.load(bbg_na_path)
+        with open(bbg_meta_path) as _f:
+            metadata = _json.load(_f)
+        manifest = {"level": bbg_level or "rollout", "source": "build_behavior_graph"}
+    elif clustering_dir:
         cluster_labels, metadata, manifest = load_clustering_result_from_path(clustering_dir)
     else:
         # Clustering artifacts are stored under influence_visualizer/configs/<task>/clustering/

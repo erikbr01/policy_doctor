@@ -60,6 +60,36 @@ remove_negative_influence: false
 # slice_label: null  # auto: "advantage_based_A{threshold}"
 # slice_source: null  # auto: "behavior_search_train" (filter) or "behavior_search_holdout" (selection)
 
+# Graph building: select the method used to build the BehaviorGraph.
+# method: "cupid" (default) — infembed → UMAP → KMeans → Markov chain
+#         "enap"            — visual encoder → HDBSCAN → RNN → Extended L* → PMM
+graph_building:
+  method: cupid   # "cupid" | "enap"
+  enap:
+    backbone: mlp           # "mlp" (pre-extracted flat obs) or "dino" (frozen DINOv2 ViT-S/14)
+    feature_dim: 128        # fused visual+proprio feature dimension z_t
+    # proprio_dim: null     # if set, splits last N dims of obs as proprioception;
+                            # if null, full obs → visual head, 1-d zero proprio
+    fourier_output_dim: 64  # Fourier embedding output dim for proprioception head
+    hdbscan_min_cluster_size: 10
+    # hdbscan_min_samples: null   # defaults to hdbscan_min_cluster_size
+    hdbscan_cluster_selection_epsilon: 0.0
+    rnn_hidden_dim: 64
+    rnn_symbol_embed_dim: 16
+    rnn_num_layers: 1
+    rnn_epochs: 50
+    rnn_batch_size: 32
+    rnn_lr: 1.0e-3
+    rnn_loss_weights:
+      act: 1.0
+      state: 1.0
+      contrast: 0.5
+    rnn_contrastive_margin: 0.5
+    tau_sim: 0.7            # cosine similarity threshold for L* membership queries
+    max_iterations: 50      # L* iteration cap
+    min_edge_count: 2       # prune PMM edges with fewer transitions
+    level: rollout          # behaviour granularity passed to BehaviorGraph
+
 # Markov report (export_markov_report step — after run_clustering)
 markov_export:
   level: null  # null = use manifest level from clustering result

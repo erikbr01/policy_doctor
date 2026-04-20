@@ -3,7 +3,7 @@
 import heapq
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from scipy.stats import chi2_contingency
@@ -47,6 +47,30 @@ def _apply_merge_map_to_labels(
 
 
 @dataclass
+class BehaviorEdge:
+    """A directed edge in the behavior graph with optional ENAP-specific attributes.
+
+    For the cupid (KMeans/Markov chain) builder, only ``count`` and ``probability``
+    are populated.  For the ENAP builder, ``action_prior``, ``input_symbol``, and
+    ``next_input_set`` carry additional information extracted from the Probabilistic
+    Mealy Machine.
+
+    Args:
+        count: Number of observed transitions on this edge.
+        probability: Empirical transition probability P(tgt | src).
+        action_prior: Mean continuous action taken on this transition (ENAP only).
+        input_symbol: HDBSCAN observation symbol c_t that triggers this edge (ENAP only).
+        next_input_set: Valid following symbols after taking this edge, NIS (ENAP only).
+    """
+
+    count: int
+    probability: float
+    action_prior: Optional[np.ndarray] = None
+    input_symbol: Optional[int] = None
+    next_input_set: Optional[List[int]] = None
+
+
+@dataclass
 class BehaviorNode:
     cluster_id: int
     name: str
@@ -77,11 +101,51 @@ class BehaviorNode:
 
 @dataclass
 class BehaviorGraph:
+    """A directed behavior graph with probabilistic transitions between cluster nodes.
+
+    Nodes are indexed by integer cluster IDs. The following special IDs are reserved:
+
+    - ``START_NODE_ID`` (−2): Entry point for all episodes.
+    - ``SUCCESS_NODE_ID`` (−4): Terminal for successful episodes.
+    - ``FAILURE_NODE_ID`` (−5): Terminal for failed episodes.
+    - ``END_NODE_ID`` (−3): Terminal for episodes without outcome information.
+
+    Edges are represented as :class:`BehaviorEdge` objects keyed by
+    ``edges[src][tgt]``.  The ``transition_counts`` and ``transition_probs``
+    properties provide backwards-compatible dict views.
+
+    Args:
+        nodes: Mapping from node ID to :class:`BehaviorNode`.
+        edges: Nested mapping ``{src_id: {tgt_id: BehaviorEdge}}``.
+        num_episodes: Total number of episodes in the graph.
+        level: Granularity of the graph — ``"rollout"`` or ``"demo"``.
+        builder: Which graph-building method produced this graph — ``"cupid"``
+            (KMeans/Markov chain) or ``"enap"`` (Extended L* / PMM).
+    """
+
     nodes: Dict[int, BehaviorNode]
-    transition_counts: Dict[int, Dict[int, int]]
-    transition_probs: Dict[int, Dict[int, float]]
+    edges: Dict[int, Dict[int, BehaviorEdge]]
     num_episodes: int
     level: str
+    builder: str = field(default="cupid")
+
+    # ------------------------------------------------------------------
+    # Backwards-compatible shims
+    # ------------------------------------------------------------------
+
+    @property
+    def transition_counts(self) -> Dict[int, Dict[int, int]]:
+        """Backwards-compatible view: ``{src: {tgt: count}}``."""
+        return {src: {tgt: e.count for tgt, e in tgts.items()} for src, tgts in self.edges.items()}
+
+    @property
+    def transition_probs(self) -> Dict[int, Dict[int, float]]:
+        """Backwards-compatible view: ``{src: {tgt: probability}}``."""
+        return {src: {tgt: e.probability for tgt, e in tgts.items()} for src, tgts in self.edges.items()}
+
+    # ------------------------------------------------------------------
+    # Constructors
+    # ------------------------------------------------------------------
 
     @classmethod
     def from_cluster_assignments(
@@ -91,6 +155,18 @@ class BehaviorGraph:
         level: str = "rollout",
         cluster_names: Optional[Dict[int, str]] = None,
     ) -> "BehaviorGraph":
+        """Build a CuPID-style Markov-chain graph from per-timestep cluster assignments.
+
+        Args:
+            cluster_labels: Integer cluster ID per timestep (−1 = noise/unassigned).
+            metadata: Per-timestep metadata dicts with ``rollout_idx``/``demo_idx``,
+                ``timestep``/``window_start``, and optionally ``success``.
+            level: ``"rollout"`` or ``"demo"``.
+            cluster_names: Optional mapping from cluster ID to human-readable name.
+
+        Returns:
+            A :class:`BehaviorGraph` with ``builder="cupid"`` and no ENAP edge attributes.
+        """
         ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
         episodes: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
         episode_outcomes: Dict[int, Optional[bool]] = {}
@@ -138,10 +214,13 @@ class BehaviorGraph:
             for _, label in seq:
                 node_timestep_counts[label] += 1
                 node_episode_sets[label].add(ep_idx)
-        trans_probs: Dict[int, Dict[int, float]] = {}
+        edges: Dict[int, Dict[int, BehaviorEdge]] = {}
         for src, targets in trans_counts.items():
             total = sum(targets.values())
-            trans_probs[src] = {tgt: count / total for tgt, count in targets.items()}
+            edges[src] = {
+                tgt: BehaviorEdge(count=count, probability=count / total)
+                for tgt, count in targets.items()
+            }
         all_episode_ids = sorted(collapsed.keys())
         success_ids = [e for e in all_episode_ids if episode_outcomes.get(e) is True]
         failure_ids = [e for e in all_episode_ids if episode_outcomes.get(e) is False]
@@ -183,11 +262,282 @@ class BehaviorGraph:
             )
         return cls(
             nodes=nodes,
-            transition_counts={k: dict(v) for k, v in trans_counts.items()},
-            transition_probs=trans_probs,
+            edges=edges,
             num_episodes=len(all_episode_ids),
             level=level,
+            builder="cupid",
         )
+
+    @classmethod
+    def from_enap_assignments(
+        cls,
+        node_assignments: np.ndarray,
+        actions: np.ndarray,
+        metadata: List[Dict],
+        level: str = "rollout",
+        node_names: Optional[Dict[int, str]] = None,
+        pmm_edges: Optional[Dict[int, Dict[int, Dict[str, Any]]]] = None,
+    ) -> "BehaviorGraph":
+        """Build a graph from ENAP per-timestep node assignments with action priors.
+
+        This is structurally identical to :meth:`from_cluster_assignments` but also
+        populates :attr:`BehaviorEdge.action_prior` (the mean continuous action for each
+        transition) and, if ``pmm_edges`` is provided, copies over
+        :attr:`BehaviorEdge.input_symbol` and :attr:`BehaviorEdge.next_input_set` from
+        the serialized PMM.
+
+        Args:
+            node_assignments: ENAP node ID per timestep (−1 = unassigned).
+            actions: Continuous actions array of shape ``(N, action_dim)``.
+            metadata: Per-timestep metadata dicts (same format as in
+                :meth:`from_cluster_assignments`).
+            level: ``"rollout"`` or ``"demo"``.
+            node_names: Optional mapping from ENAP node ID to human-readable name.
+            pmm_edges: Optional PMM edge attribute dict
+                ``{src: {tgt: {"input_symbol": int, "next_input_set": List[int]}}}``.
+                If provided, the corresponding fields of :class:`BehaviorEdge` are set.
+
+        Returns:
+            A :class:`BehaviorGraph` with ``builder="enap"`` and populated
+            :attr:`BehaviorEdge.action_prior` values.
+        """
+        ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+        episodes: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+        episode_outcomes: Dict[int, Optional[bool]] = {}
+        # Also track (timestep_idx, action) for building action priors
+        transition_actions: Dict[int, Dict[int, List[np.ndarray]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for i, meta in enumerate(metadata):
+            node_id = int(node_assignments[i])
+            if node_id == -1:
+                continue
+            ep_idx = meta[ep_key]
+            sort_key = meta.get("timestep", meta.get("window_start", 0))
+            episodes[ep_idx].append((sort_key, node_id))
+            if "success" in meta and ep_idx not in episode_outcomes:
+                episode_outcomes[ep_idx] = meta["success"]
+        for ep_idx in episodes:
+            episodes[ep_idx].sort(key=lambda x: x[0])
+        has_outcome_info = any(v is not None for v in episode_outcomes.values())
+
+        # Collapse consecutive same-node runs per episode, collecting actions per segment
+        ep_action_map: Dict[int, List[Tuple[int, int, np.ndarray]]] = {}
+        # (sort_key, node_id) → actions for each segment
+        # We need raw (sort_key, timestep_idx, node_id) to access actions
+        episodes_with_idx: Dict[int, List[Tuple[int, int, int]]] = defaultdict(list)
+        for i, meta in enumerate(metadata):
+            node_id = int(node_assignments[i])
+            if node_id == -1:
+                continue
+            ep_idx = meta[ep_key]
+            sort_key = meta.get("timestep", meta.get("window_start", 0))
+            episodes_with_idx[ep_idx].append((sort_key, i, node_id))
+        for ep_idx in episodes_with_idx:
+            episodes_with_idx[ep_idx].sort(key=lambda x: x[0])
+
+        collapsed: Dict[int, List[int]] = {}
+        # Also track mean action per (src, tgt) transition
+        trans_action_accum: Dict[int, Dict[int, List[np.ndarray]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for ep_idx, seq in episodes_with_idx.items():
+            if not seq:
+                continue
+            # Build run-length-collapsed sequence with representative action per segment
+            segments: List[Tuple[int, List[int]]] = []  # (node_id, [timestep_indices])
+            for _, idx, node_id in seq:
+                if segments and segments[-1][0] == node_id:
+                    segments[-1][1].append(idx)
+                else:
+                    segments.append((node_id, [idx]))
+            if not segments:
+                continue
+            collapsed[ep_idx] = [s[0] for s in segments]
+            # Accumulate actions for each transition's source segment
+            for seg_i in range(len(segments) - 1):
+                src_node = segments[seg_i][0]
+                tgt_node = segments[seg_i + 1][0]
+                seg_actions = actions[segments[seg_i][1]]  # actions in the source segment
+                trans_action_accum[src_node][tgt_node].extend(seg_actions)
+
+        trans_counts: Dict[int, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        for ep_idx, seq in collapsed.items():
+            if not seq:
+                continue
+            trans_counts[START_NODE_ID][seq[0]] += 1
+            if has_outcome_info:
+                outcome = episode_outcomes.get(ep_idx)
+                if outcome is True:
+                    trans_counts[seq[-1]][SUCCESS_NODE_ID] += 1
+                elif outcome is False:
+                    trans_counts[seq[-1]][FAILURE_NODE_ID] += 1
+                else:
+                    trans_counts[seq[-1]][END_NODE_ID] += 1
+            else:
+                trans_counts[seq[-1]][END_NODE_ID] += 1
+            for j in range(len(seq) - 1):
+                trans_counts[seq[j]][seq[j + 1]] += 1
+
+        node_timestep_counts: Dict[int, int] = defaultdict(int)
+        node_episode_sets: Dict[int, Set[int]] = defaultdict(set)
+        for ep_idx, seq in episodes.items():
+            for _, node_id in seq:
+                node_timestep_counts[node_id] += 1
+                node_episode_sets[node_id].add(ep_idx)
+
+        edges: Dict[int, Dict[int, BehaviorEdge]] = {}
+        for src, targets in trans_counts.items():
+            total = sum(targets.values())
+            edges[src] = {}
+            for tgt, count in targets.items():
+                action_prior: Optional[np.ndarray] = None
+                input_symbol: Optional[int] = None
+                next_input_set: Optional[List[int]] = None
+                # Compute action prior for non-terminal edges where we collected actions
+                if src != START_NODE_ID and tgt not in TERMINAL_NODE_IDS:
+                    action_list = trans_action_accum.get(src, {}).get(tgt, [])
+                    if action_list:
+                        action_prior = np.mean(action_list, axis=0)
+                # Copy PMM-derived attributes if available
+                if pmm_edges is not None:
+                    pmm_edge = pmm_edges.get(src, {}).get(tgt, {})
+                    input_symbol = pmm_edge.get("input_symbol")
+                    next_input_set = pmm_edge.get("next_input_set")
+                edges[src][tgt] = BehaviorEdge(
+                    count=count,
+                    probability=count / total,
+                    action_prior=action_prior,
+                    input_symbol=input_symbol,
+                    next_input_set=next_input_set,
+                )
+
+        all_episode_ids = sorted(collapsed.keys())
+        success_ids = [e for e in all_episode_ids if episode_outcomes.get(e) is True]
+        failure_ids = [e for e in all_episode_ids if episode_outcomes.get(e) is False]
+        unknown_ids = [e for e in all_episode_ids if episode_outcomes.get(e) is None]
+        nodes: Dict[int, BehaviorNode] = {
+            START_NODE_ID: BehaviorNode(
+                START_NODE_ID, "START", 0, len(all_episode_ids), all_episode_ids,
+            ),
+        }
+        if has_outcome_info:
+            if success_ids:
+                nodes[SUCCESS_NODE_ID] = BehaviorNode(
+                    SUCCESS_NODE_ID, "SUCCESS", 0, len(success_ids), success_ids,
+                )
+            if failure_ids:
+                nodes[FAILURE_NODE_ID] = BehaviorNode(
+                    FAILURE_NODE_ID, "FAILURE", 0, len(failure_ids), failure_ids,
+                )
+            if unknown_ids:
+                nodes[END_NODE_ID] = BehaviorNode(
+                    END_NODE_ID, "END", 0, len(unknown_ids), unknown_ids,
+                )
+        else:
+            nodes[END_NODE_ID] = BehaviorNode(
+                END_NODE_ID, "END", 0, len(all_episode_ids), all_episode_ids,
+            )
+        for n_id in sorted(set(int(n) for n in node_assignments if n != -1)):
+            name = (
+                node_names.get(n_id, f"Phase {n_id}")
+                if node_names is not None
+                else f"Phase {n_id}"
+            )
+            nodes[n_id] = BehaviorNode(
+                cluster_id=n_id,
+                name=name,
+                num_timesteps=node_timestep_counts[n_id],
+                num_episodes=len(node_episode_sets[n_id]),
+                episode_indices=sorted(node_episode_sets[n_id]),
+            )
+        return cls(
+            nodes=nodes,
+            edges=edges,
+            num_episodes=len(all_episode_ids),
+            level=level,
+            builder="enap",
+        )
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dict representation of the graph.
+
+        Integer dict keys are stored as strings (JSON requirement).  numpy arrays
+        (e.g. ``action_prior``) are converted to nested lists.
+        """
+        nodes_out: Dict[str, Any] = {}
+        for k, node in self.nodes.items():
+            nodes_out[str(k)] = {
+                "cluster_id": node.cluster_id,
+                "name": node.name,
+                "num_timesteps": node.num_timesteps,
+                "num_episodes": node.num_episodes,
+                "episode_indices": node.episode_indices,
+            }
+        edges_out: Dict[str, Any] = {}
+        for src, tgts in self.edges.items():
+            edges_out[str(src)] = {}
+            for tgt, edge in tgts.items():
+                edges_out[str(src)][str(tgt)] = {
+                    "count": edge.count,
+                    "probability": edge.probability,
+                    "action_prior": (
+                        edge.action_prior.tolist()
+                        if edge.action_prior is not None
+                        else None
+                    ),
+                    "input_symbol": edge.input_symbol,
+                    "next_input_set": edge.next_input_set,
+                }
+        return {
+            "nodes": nodes_out,
+            "edges": edges_out,
+            "num_episodes": self.num_episodes,
+            "level": self.level,
+            "builder": self.builder,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "BehaviorGraph":
+        """Reconstruct a :class:`BehaviorGraph` from a :meth:`to_dict` payload."""
+        nodes: Dict[int, BehaviorNode] = {}
+        for k, nd in d["nodes"].items():
+            nodes[int(k)] = BehaviorNode(
+                cluster_id=nd["cluster_id"],
+                name=nd["name"],
+                num_timesteps=nd["num_timesteps"],
+                num_episodes=nd["num_episodes"],
+                episode_indices=nd.get("episode_indices", []),
+            )
+        edges: Dict[int, Dict[int, BehaviorEdge]] = {}
+        for src_s, tgts in d["edges"].items():
+            src = int(src_s)
+            edges[src] = {}
+            for tgt_s, ed in tgts.items():
+                tgt = int(tgt_s)
+                ap = ed.get("action_prior")
+                edges[src][tgt] = BehaviorEdge(
+                    count=ed["count"],
+                    probability=ed["probability"],
+                    action_prior=np.array(ap) if ap is not None else None,
+                    input_symbol=ed.get("input_symbol"),
+                    next_input_set=ed.get("next_input_set"),
+                )
+        return cls(
+            nodes=nodes,
+            edges=edges,
+            num_episodes=d["num_episodes"],
+            level=d["level"],
+            builder=d.get("builder", "cupid"),
+        )
+
+    # ------------------------------------------------------------------
+    # Graph traversal helpers
+    # ------------------------------------------------------------------
 
     @property
     def terminal_node_ids(self) -> Set[int]:
@@ -200,22 +550,23 @@ class BehaviorGraph:
 
     def get_outgoing_transitions(self, node_id: int) -> List[Tuple[int, int, float]]:
         """Return list of (target_id, count, probability) for edges from node_id."""
-        targets = self.transition_probs.get(node_id, {})
-        counts = self.transition_counts.get(node_id, {})
         return [
-            (tgt_id, counts.get(tgt_id, 0), prob)
-            for tgt_id, prob in targets.items()
+            (tgt_id, edge.count, edge.probability)
+            for tgt_id, edge in self.edges.get(node_id, {}).items()
         ]
 
     def get_incoming_transitions(self, node_id: int) -> List[Tuple[int, int, float]]:
         """Return list of (source_id, count, probability) for edges into node_id."""
         result: List[Tuple[int, int, float]] = []
-        for src_id, targets in self.transition_probs.items():
-            if node_id in targets:
-                prob = targets[node_id]
-                cnt = self.transition_counts.get(src_id, {}).get(node_id, 0)
-                result.append((src_id, cnt, prob))
+        for src_id, tgts in self.edges.items():
+            if node_id in tgts:
+                edge = tgts[node_id]
+                result.append((src_id, edge.count, edge.probability))
         return result
+
+    # ------------------------------------------------------------------
+    # Value computation
+    # ------------------------------------------------------------------
 
     def compute_values(
         self,
@@ -239,8 +590,8 @@ class BehaviorGraph:
         b = np.zeros(n)
         for nid in nonterminal_ids:
             i = nt_index[nid]
-            probs = self.transition_probs.get(nid, {})
-            for tgt, p in probs.items():
+            for tgt, edge in self.edges.get(nid, {}).items():
+                p = edge.probability
                 if tgt in nt_index:
                     P_nn[i, nt_index[tgt]] = p
                 elif tgt in terminal_ids:
@@ -316,6 +667,10 @@ class BehaviorGraph:
                     next_cluster[idx] = next_state
         return q_values, advantages, next_cluster
 
+    # ------------------------------------------------------------------
+    # Path enumeration
+    # ------------------------------------------------------------------
+
     def enumerate_paths(
         self,
         max_paths: int = 50,
@@ -336,7 +691,8 @@ class BehaviorGraph:
                 if prob >= min_probability:
                     results.append((list(path), prob))
                 continue
-            for tgt, edge_prob in self.transition_probs.get(current, {}).items():
+            for tgt, edge in self.edges.get(current, {}).items():
+                edge_prob = edge.probability
                 if edge_prob < min_edge_probability or (
                     tgt in visited and tgt not in terminals
                 ):
@@ -351,10 +707,10 @@ class BehaviorGraph:
             path_set = set(path)
             loops: List[Tuple[int, int, float]] = []
             for i, node in enumerate(path):
-                for tgt, edge_prob in self.transition_probs.get(node, {}).items():
+                for tgt, edge in self.edges.get(node, {}).items():
                     if tgt in path_set and tgt not in TERMINAL_NODE_IDS:
                         if path.index(tgt) < i:
-                            loops.append((node, tgt, edge_prob))
+                            loops.append((node, tgt, edge.probability))
             output.append((path, prob, loops))
         return output
 

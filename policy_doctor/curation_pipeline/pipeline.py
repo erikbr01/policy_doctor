@@ -9,11 +9,14 @@ from typing import Any, Dict, List, Optional, Type
 from omegaconf import DictConfig, OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
+from policy_doctor.curation_pipeline.step_group import STEP_GROUPS, resolve_steps
 from policy_doctor.paths import PACKAGE_ROOT, REPO_ROOT
 
 _REPO_ROOT = REPO_ROOT
 
 # Ordered list of all steps — default execution order.
+# ``"graph_building"`` is a step group that expands to either the CuPID or
+# ENAP sub-pipeline depending on ``cfg.graph_building.method``.
 ALL_STEPS: List[str] = [
     "train_baseline",
     "eval_policies",
@@ -21,7 +24,7 @@ ALL_STEPS: List[str] = [
     "finalize_attribution",
     "compute_demonstration_scores",
     "compute_infembed",
-    "run_clustering",
+    "graph_building",          # expands to cupid or enap sub-steps
     "export_markov_report",
     "annotate_slices_vlm",
     "summarize_behaviors_vlm",
@@ -42,6 +45,10 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.compute_demonstration_scores import ComputeDemonstrationScoresStep
     from policy_doctor.curation_pipeline.steps.compute_infembed import ComputeInfembedStep
     from policy_doctor.curation_pipeline.steps.run_clustering import RunClusteringStep
+    from policy_doctor.curation_pipeline.steps.build_behavior_graph import BuildBehaviorGraphStep
+    from policy_doctor.curation_pipeline.steps.train_enap_perception import TrainENAPPerceptionStep
+    from policy_doctor.curation_pipeline.steps.train_enap_rnn import TrainENAPRNNStep
+    from policy_doctor.curation_pipeline.steps.extract_enap_graph import ExtractENAPGraphStep
     from policy_doctor.curation_pipeline.steps.export_markov_report import ExportMarkovReportStep
     from policy_doctor.curation_pipeline.steps.annotate_slices_vlm import AnnotateSlicesVLMStep
     from policy_doctor.curation_pipeline.steps.summarize_behaviors_vlm import SummarizeBehaviorsVLMStep
@@ -61,6 +68,10 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "compute_demonstration_scores": ComputeDemonstrationScoresStep,
         "compute_infembed": ComputeInfembedStep,
         "run_clustering": RunClusteringStep,
+        "build_behavior_graph": BuildBehaviorGraphStep,
+        "train_enap_perception": TrainENAPPerceptionStep,
+        "train_enap_rnn": TrainENAPRNNStep,
+        "extract_enap_graph": ExtractENAPGraphStep,
         "export_markov_report": ExportMarkovReportStep,
         "annotate_slices_vlm": AnnotateSlicesVLMStep,
         "summarize_behaviors_vlm": SummarizeBehaviorsVLMStep,
@@ -143,11 +154,17 @@ class CurationPipeline:
             ``{step_name: result}`` for each executed step.
         """
         registry = _build_step_registry()
-        steps = steps or ALL_STEPS
+        # Expand step group names (e.g. "graph_building") to concrete step lists.
+        raw_steps = steps or ALL_STEPS
+        steps = resolve_steps(raw_steps, self.cfg)
 
         unknown = [s for s in steps if s not in registry]
         if unknown:
-            raise ValueError(f"Unknown steps: {unknown}. Valid: {ALL_STEPS}")
+            raise ValueError(
+                f"Unknown steps: {unknown}. "
+                f"Valid concrete steps: {sorted(registry.keys())}; "
+                f"valid groups: {sorted(STEP_GROUPS.keys())}"
+            )
 
         results: Dict[str, Any] = {}
         for step_name in steps:
@@ -161,7 +178,11 @@ class CurationPipeline:
         """Return an instantiated step object for manual interaction."""
         registry = _build_step_registry()
         if name not in registry:
-            raise ValueError(f"Unknown step: {name!r}. Valid: {ALL_STEPS}")
+            raise ValueError(
+                f"Unknown step: {name!r}. "
+                f"Valid concrete steps: {sorted(registry.keys())}; "
+                f"valid groups: {sorted(STEP_GROUPS.keys())}"
+            )
         return registry[name](self.cfg, self.run_dir)
 
     # ------------------------------------------------------------------
