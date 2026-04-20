@@ -85,10 +85,23 @@ graph_building:
       state: 1.0
       contrast: 0.5
     rnn_contrastive_margin: 0.5
-    tau_sim: 0.7            # cosine similarity threshold for L* membership queries
-    max_iterations: 50      # L* iteration cap
-    min_edge_count: 2       # prune PMM edges with fewer transitions
-    level: rollout          # behaviour granularity passed to BehaviorGraph
+    # PMM (faithful Extended L*) parameters
+    cos_tau_row: 0.6          # cosine similarity threshold for L* closedness/EQ
+    error_threshold: 0.3      # action-distance threshold for equivalence query
+    max_iterations: 20        # L* outer iteration cap
+    stabil_required: 2        # consecutive stable passes before convergence
+    level: rollout            # behaviour granularity passed to BehaviorGraph
+
+    # Residual MLP (M-step) parameters
+    residual_epochs: 300
+    residual_lr: 3.0e-4
+    residual_batch_size: 512
+    residual_noise_std: 0.01
+    residual_hidden: 512
+    residual_val_fraction: 0.1
+
+    # EM loop (train_enap_em step)
+    em_iterations: 1          # 1 = single E+M round (sufficient for fixed rollouts)
 
 # Markov report (export_markov_report step — after run_clustering)
 markov_export:

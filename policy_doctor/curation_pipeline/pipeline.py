@@ -49,6 +49,8 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.train_enap_perception import TrainENAPPerceptionStep
     from policy_doctor.curation_pipeline.steps.train_enap_rnn import TrainENAPRNNStep
     from policy_doctor.curation_pipeline.steps.extract_enap_graph import ExtractENAPGraphStep
+    from policy_doctor.curation_pipeline.steps.train_enap_residual import TrainENAPResidualStep
+    from policy_doctor.curation_pipeline.steps.train_enap_em import TrainENAPEMStep
     from policy_doctor.curation_pipeline.steps.export_markov_report import ExportMarkovReportStep
     from policy_doctor.curation_pipeline.steps.annotate_slices_vlm import AnnotateSlicesVLMStep
     from policy_doctor.curation_pipeline.steps.summarize_behaviors_vlm import SummarizeBehaviorsVLMStep
@@ -72,6 +74,8 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "train_enap_perception": TrainENAPPerceptionStep,
         "train_enap_rnn": TrainENAPRNNStep,
         "extract_enap_graph": ExtractENAPGraphStep,
+        "train_enap_residual": TrainENAPResidualStep,
+        "train_enap_em": TrainENAPEMStep,
         "export_markov_report": ExportMarkovReportStep,
         "annotate_slices_vlm": AnnotateSlicesVLMStep,
         "summarize_behaviors_vlm": SummarizeBehaviorsVLMStep,

@@ -1,26 +1,35 @@
 """ENAP (Emergent Neural Automaton Policies) graph-building modules.
 
-This package implements the E-step of the ENAP framework from:
+This package implements the full ENAP framework from:
 
     Pan, Luo et al. "Emergent Neural Automaton Policies: Learning Symbolic
     Structure from Visuomotor Trajectories." arXiv:2603.25903 (2026).
 
-The E-step extracts a Probabilistic Mealy Machine (PMM) from demonstration
-data via three stages:
+Pipeline stages:
 
-1. **Perception** (:mod:`perception`): encode observations with a frozen
-   visual backbone (DINOv2) + proprioception fusion, then run HDBSCAN to
-   produce discrete observation symbols ``c_t``.
+**E-step** — PMM graph extraction from rollout data:
 
-2. **RNN encoding** (:mod:`rnn_encoder`): train a GRU that ingests
-   ``(a_t, c_t)`` history and outputs Markovian hidden states ``h_t``, using
-   a phase-aware contrastive loss to make ``h_t`` cluster cleanly by task phase.
+1. **Perception** (:mod:`perception`): encode observations with a visual
+   backbone + proprioception fusion, then run HDBSCAN to produce discrete
+   observation symbols ``c_t``.
 
-3. **Structure extraction** (:mod:`extended_l_star`): run the Extended L*
-   algorithm on the ``h_t`` embeddings and ``c_t`` symbols to extract a PMM
-   whose nodes correspond to stable task phases.
+2. **RNN encoding** (:mod:`rnn_encoder`): train a vanilla RNN
+   (:class:`~rnn_encoder.PretrainRNN`) with Prioritized Experience Replay
+   (:class:`~rnn_encoder.PrioritizedReplayBuffer`) and phase-aware contrastive
+   loss to produce Markovian history embeddings ``h_t``.
 
-A :mod:`graph_adapter` converts the extracted PMM into the shared
+3. **PMM learning** (:mod:`pmm`): faithful port of the ENAP repository's
+   ``agent/pmm_class.py`` — runs Extended L* on ``(h_t, c_t)`` sequences to
+   extract a Probabilistic Mealy Machine.
+
+**M-step** — residual policy refinement:
+
+4. **Residual MLP** (:mod:`residual_policy`): train
+   :class:`~residual_policy.ResidualMLP` to refine PMM action priors given
+   current visual context.  :class:`~residual_policy.PMMAgent` wraps PMM +
+   ResidualMLP for closed-loop deployment.
+
+A :mod:`graph_adapter` converts the PMM into the shared
 :class:`~policy_doctor.behaviors.behavior_graph.BehaviorGraph` format used by
 all downstream pipeline steps.
 """

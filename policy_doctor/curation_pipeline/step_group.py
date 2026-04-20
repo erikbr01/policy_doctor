@@ -67,6 +67,7 @@ STEP_GROUPS: Dict[str, StepGroupDef] = {
                 "train_enap_perception",
                 "train_enap_rnn",
                 "extract_enap_graph",
+                "train_enap_residual",
                 "build_behavior_graph",
             ],
         },
