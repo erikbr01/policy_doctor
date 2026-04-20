@@ -682,10 +682,10 @@ def train_pretrain_rnn(
             buffer.anneal_beta()
 
         entry: Dict[str, float] = {
-            "total": float(total),
-            "act": float(l_act),
-            "state": float(l_state),
-            "contrast": float(l_contrast),
+            "total": float(total.detach()),
+            "act": float(l_act.detach()),
+            "state": float(l_state.detach()),
+            "contrast": float(l_contrast.detach()),
         }
         epoch_losses.append(entry)
 

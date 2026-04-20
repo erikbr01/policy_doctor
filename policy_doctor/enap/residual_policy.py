@@ -85,6 +85,7 @@ class ResidualMLP(nn.Module):
                 "state_dict": self.state_dict(),
                 "feat_dim": self.feat_dim,
                 "a_dim": self.a_dim,
+                "hidden": self.net[0].out_features,
             },
             path,
         )
@@ -94,7 +95,7 @@ class ResidualMLP(nn.Module):
         cls, path: str, device: Optional[torch.device] = None
     ) -> "ResidualMLP":
         ckpt = torch.load(path, map_location=device or "cpu", weights_only=False)
-        model = cls(ckpt["feat_dim"], ckpt["a_dim"])
+        model = cls(ckpt["feat_dim"], ckpt["a_dim"], hidden=ckpt.get("hidden", 512))
         model.load_state_dict(ckpt["state_dict"])
         if device is not None:
             model.to(device)
@@ -226,7 +227,7 @@ def train_residual_mlp(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            total_train_loss += float(loss)
+            total_train_loss += float(loss.detach())
             n_batches += 1
 
         scheduler.step()
