@@ -92,6 +92,10 @@ graph_building:
     stabil_required: 2        # consecutive stable passes before convergence
     level: rollout            # behaviour granularity passed to BehaviorGraph
 
+    # Custom/modified Extended L* parameters (enap_custom method)
+    tau_sim: 0.7              # cosine threshold for custom ExtendedLStar
+    min_edge_count: 2         # prune edges with fewer transitions (custom)
+
     # Residual MLP (M-step) parameters
     residual_epochs: 300
     residual_lr: 3.0e-4

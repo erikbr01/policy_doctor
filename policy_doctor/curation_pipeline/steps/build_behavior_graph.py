@@ -95,10 +95,12 @@ class BuildBehaviorGraphStep(PipelineStep[Dict[str, Any]]):
             return self._build_cupid()
         elif method == "enap":
             return self._build_enap()
+        elif method == "enap_custom":
+            return self._build_enap_custom()
         else:
             raise ValueError(
                 f"Unknown graph_building.method: {method!r}. "
-                "Expected 'cupid' or 'enap'."
+                "Expected 'cupid', 'enap', or 'enap_custom'."
             )
 
     # ------------------------------------------------------------------
@@ -226,6 +228,74 @@ class BuildBehaviorGraphStep(PipelineStep[Dict[str, Any]]):
             "builder": "enap",
             "seeds": {"_enap": seed_result},
             **self._first_seed_paths({"_enap": seed_result}),
+        }
+
+    # ------------------------------------------------------------------
+    # ENAP custom path (GRU + ExtendedLStar)
+    # ------------------------------------------------------------------
+
+    def _build_enap_custom(self) -> Dict[str, Any]:
+        from policy_doctor.curation_pipeline.steps.extract_enap_graph_custom import (
+            ExtractENAPGraphCustomStep,
+        )
+
+        self.step_dir.mkdir(parents=True, exist_ok=True)
+
+        prior = ExtractENAPGraphCustomStep(self.cfg, self.run_dir).load()
+        if not prior:
+            raise RuntimeError(
+                "build_behavior_graph (enap_custom): extract_enap_graph_custom "
+                "has not been completed yet."
+            )
+
+        custom_dir = self.run_dir / "extract_enap_graph_custom"
+        na_path = custom_dir / "node_assignments.npy"
+        actions_path = custom_dir / "actions.npy"
+        meta_path = custom_dir / "metadata.json"
+        pmm_path = custom_dir / "pmm.json"
+
+        if self.dry_run:
+            print("[dry_run] BuildBehaviorGraphStep enap_custom")
+            return {"builder": "enap_custom", "dry_run": True}
+
+        node_assignments = np.load(na_path)
+        actions = np.load(actions_path)
+        with open(meta_path) as f:
+            metadata = json.load(f)
+        with open(pmm_path) as f:
+            pmm_dict = json.load(f)
+
+        level = prior.get("level") or OmegaConf.select(self.cfg, "graph_building.enap.level") or "rollout"
+
+        # ExtendedLStar PMM format: {"nodes": {nid: {"outgoing": {sym: edge}}}}
+        pmm_edges: Dict[int, Dict[int, Any]] = {}
+        for nid_s, node_d in pmm_dict.get("nodes", {}).items():
+            src = int(nid_s)
+            pmm_edges[src] = {}
+            for sym_s, edge_d in node_d.get("outgoing", {}).items():
+                tgt = int(edge_d["target_id"])
+                pmm_edges[src][tgt] = {
+                    "input_symbol": edge_d.get("input_symbol"),
+                    "next_input_set": edge_d.get("next_input_set"),
+                }
+
+        graph = BehaviorGraph.from_enap_assignments(
+            node_assignments=node_assignments,
+            actions=actions,
+            metadata=metadata,
+            level=str(level),
+            pmm_edges=pmm_edges,
+        )
+        seed_result = self._persist_graph(
+            graph=graph,
+            node_assignments=node_assignments,
+            metadata=metadata,
+            seed_key="_enap_custom",
+        )
+        return {
+            "builder": "enap_custom",
+            "seeds": {"_enap_custom": seed_result},
+            **self._first_seed_paths({"_enap_custom": seed_result}),
         }
 
     # ------------------------------------------------------------------

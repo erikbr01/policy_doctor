@@ -70,6 +70,12 @@ STEP_GROUPS: Dict[str, StepGroupDef] = {
                 "train_enap_residual",
                 "build_behavior_graph",
             ],
+            "enap_custom": [
+                "train_enap_perception",
+                "train_enap_rnn_custom",
+                "extract_enap_graph_custom",
+                "build_behavior_graph",
+            ],
         },
         default_method="cupid",
     ),
