@@ -746,6 +746,22 @@ class PMM:
         self.S = [tuple()]
         stabil = 0
 
+        def _wandb_log_iter(it: int, n_prefixes: int, n_nodes: int, converged: bool) -> None:
+            try:
+                import wandb as _wandb
+                if _wandb.run is not None:
+                    _wandb.log(
+                        {
+                            "pmm/num_prefixes": n_prefixes,
+                            "pmm/num_hypothesis_nodes": n_nodes,
+                            "pmm/converged": int(converged),
+                            "pmm/iteration": it + 1,
+                        },
+                        step=it + 1,
+                    )
+            except ImportError:
+                pass
+
         for it in trange(
             self.max_inner_iters,
             desc="L* Iteration",
@@ -772,6 +788,7 @@ class PMM:
             if ce is None:
                 stabil += 1
                 print(f"  [PMM] Stabilized at iteration {it + 1}")
+                _wandb_log_iter(it, len(self.S), len(H["Q"]), converged=False)
                 if stabil >= self.stabil_required:
                     H = self._merge_nodes(H)
                     self.pmm = {
@@ -782,9 +799,25 @@ class PMM:
                     }
                     self._rebuild_cache()
                     self._prune_after_replay()
+                    n_final = len(self.pmm["Q"])
+                    n_edges = sum(len(d) for d in self.pmm["delta"].values())
                     print(f"  [PMM] Converged at iteration {it + 1}")
+                    _wandb_log_iter(it, len(self.S), n_final, converged=True)
+                    try:
+                        import wandb as _wandb
+                        if _wandb.run is not None:
+                            _wandb.log(
+                                {
+                                    "pmm/final_nodes": n_final,
+                                    "pmm/final_edges": n_edges,
+                                    "pmm/converged_at_iter": it + 1,
+                                }
+                            )
+                    except ImportError:
+                        pass
                     return self.pmm
             else:
+                _wandb_log_iter(it, len(self.S), len(H["Q"]), converged=False)
                 for k in range(1, len(ce) + 1):
                     p = ce[:k]
                     if p not in self.S:
@@ -802,7 +835,21 @@ class PMM:
         }
         self._rebuild_cache()
         self._prune_after_replay()
+        n_final = len(self.pmm["Q"])
+        n_edges = sum(len(d) for d in self.pmm["delta"].values())
         print("  [PMM] Max iterations reached.")
+        try:
+            import wandb as _wandb
+            if _wandb.run is not None:
+                _wandb.log(
+                    {
+                        "pmm/final_nodes": n_final,
+                        "pmm/final_edges": n_edges,
+                        "pmm/converged_at_iter": self.max_inner_iters,
+                    }
+                )
+        except ImportError:
+            pass
         return self.pmm
 
     # ------------------------------------------------------------------

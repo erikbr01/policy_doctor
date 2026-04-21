@@ -165,6 +165,12 @@ class TrainENAPRNNStep(PipelineStep[Dict[str, Any]]):
             f"  PretrainRNN: a_dim={action_dim}, s_dim={num_symbols}, "
             f"e_dim={embed_dim}, h_dim={hidden_dim}, epochs={num_epochs}"
         )
+
+        from policy_doctor.curation_pipeline.wandb_utils import (
+            init_wandb_run, finish_wandb_run,
+        )
+        wandb_run = init_wandb_run(cfg, step_name=self.name)
+
         train_pretrain_rnn(
             model=model,
             episodes=episodes,
@@ -177,6 +183,7 @@ class TrainENAPRNNStep(PipelineStep[Dict[str, Any]]):
             verbose=True,
             noise_std=noise_std,
             use_per=use_per,
+            wandb_prefix="enap_rnn",
         )
 
         # --- Persist (PMM-compatible checkpoint) ---
@@ -184,7 +191,7 @@ class TrainENAPRNNStep(PipelineStep[Dict[str, Any]]):
         ckpt_path = str(self.step_dir / "pretrain_checkpoint.pt")
         model.save_checkpoint(ckpt_path)
 
-        return {
+        result = {
             "num_episodes": len(episodes),
             "hidden_dim": hidden_dim,
             "embed_dim": embed_dim,
@@ -193,3 +200,5 @@ class TrainENAPRNNStep(PipelineStep[Dict[str, Any]]):
             "num_epochs": num_epochs,
             "checkpoint_path": ckpt_path,
         }
+        finish_wandb_run(wandb_run, summary=result)
+        return result

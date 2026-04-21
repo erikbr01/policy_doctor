@@ -572,6 +572,7 @@ def train_pretrain_rnn(
     use_per: bool = True,
     per_alpha: float = 0.6,
     per_beta_start: float = 0.4,
+    wandb_prefix: str = "enap_rnn",
 ) -> List[Dict[str, float]]:
     """Train :class:`PretrainRNN` with PER and phase-aware contrastive loss.
 
@@ -592,6 +593,9 @@ def train_pretrain_rnn(
         use_per: Use Prioritized Experience Replay.
         per_alpha: PER priority exponent.
         per_beta_start: Initial IS-weight annealing start.
+        wandb_prefix: Metric prefix for wandb logging (e.g. ``"enap_rnn"``
+            → ``enap_rnn/loss/total``).  Logging is skipped when no wandb
+            run is active (``wandb.run is None``).
 
     Returns:
         List of per-epoch loss dicts
@@ -697,6 +701,22 @@ def train_pretrain_rnn(
                 f"state={entry['state']:.4f}  "
                 f"contrast={entry['contrast']:.4f}"
             )
+
+        try:
+            import wandb as _wandb
+            if _wandb.run is not None:
+                _wandb.log(
+                    {
+                        f"{wandb_prefix}/loss/total": entry["total"],
+                        f"{wandb_prefix}/loss/act": entry["act"],
+                        f"{wandb_prefix}/loss/state": entry["state"],
+                        f"{wandb_prefix}/loss/contrast": entry["contrast"],
+                        f"{wandb_prefix}/epoch": epoch + 1,
+                    },
+                    step=epoch + 1,
+                )
+        except ImportError:
+            pass
 
     model.eval()
     return epoch_losses

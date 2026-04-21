@@ -130,6 +130,12 @@ class TrainENAPResidualStep(PipelineStep[Dict[str, Any]]):
             f"  ResidualMLP: feat_dim={feat_dim}, a_dim={a_dim}, "
             f"hidden={hidden}, epochs={num_epochs}"
         )
+
+        from policy_doctor.curation_pipeline.wandb_utils import (
+            init_wandb_run, finish_wandb_run,
+        )
+        wandb_run = init_wandb_run(cfg, step_name=self.name)
+
         stats = train_residual_mlp(
             model=model,
             features=features,
@@ -145,6 +151,7 @@ class TrainENAPResidualStep(PipelineStep[Dict[str, Any]]):
             val_fraction=val_fraction,
             device=device,
             verbose=True,
+            wandb_prefix="enap_residual",
         )
 
         # --- Persist ---
@@ -152,7 +159,7 @@ class TrainENAPResidualStep(PipelineStep[Dict[str, Any]]):
         ckpt_path = str(self.step_dir / "residual_checkpoint.pt")
         model.save_checkpoint(ckpt_path)
 
-        return {
+        result = {
             "feat_dim": feat_dim,
             "a_dim": a_dim,
             "num_epochs": num_epochs,
@@ -160,3 +167,5 @@ class TrainENAPResidualStep(PipelineStep[Dict[str, Any]]):
             "best_val_loss": float(stats["best_val_loss"]),
             "checkpoint_path": ckpt_path,
         }
+        finish_wandb_run(wandb_run, summary=result)
+        return result

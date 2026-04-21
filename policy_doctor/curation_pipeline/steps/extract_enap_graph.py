@@ -168,6 +168,11 @@ class ExtractENAPGraphStep(PipelineStep[Dict[str, Any]]):
             f"  PMM: cos_tau_row={cos_tau_row}, error_threshold={error_threshold}, "
             f"max_iter={max_iterations}"
         )
+        from policy_doctor.curation_pipeline.wandb_utils import (
+            init_wandb_run, finish_wandb_run,
+        )
+        wandb_run = init_wandb_run(cfg, step_name=self.name)
+
         pmm_obj = PMM(
             cos_tau_row=cos_tau_row,
             error_threshold=error_threshold,
@@ -217,7 +222,7 @@ class ExtractENAPGraphStep(PipelineStep[Dict[str, Any]]):
         with open(self.step_dir / "metadata.json", "w") as f:
             json.dump(metadata, f)
 
-        return {
+        result = {
             "num_nodes": int(n_nodes),
             "num_edges": int(n_edges),
             "num_timesteps": int(len(node_assignments)),
@@ -225,3 +230,5 @@ class ExtractENAPGraphStep(PipelineStep[Dict[str, Any]]):
             "level": level,
             "cos_tau_row": cos_tau_row,
         }
+        finish_wandb_run(wandb_run, summary=result)
+        return result

@@ -121,6 +121,7 @@ def train_residual_mlp(
     val_fraction: float = 0.1,
     device: Optional[torch.device] = None,
     verbose: bool = True,
+    wandb_prefix: str = "enap_residual",
 ) -> Dict[str, Any]:
     """Train :class:`ResidualMLP` with Gaussian NLL loss.
 
@@ -254,6 +255,20 @@ def train_residual_mlp(
                 f"  [Residual epoch {epoch+1}/{num_epochs}] "
                 f"train={avg_train:.4f}  val={val_loss:.4f}"
             )
+
+        try:
+            import wandb as _wandb
+            if _wandb.run is not None:
+                _wandb.log(
+                    {
+                        f"{wandb_prefix}/loss/train": avg_train,
+                        f"{wandb_prefix}/loss/val": val_loss,
+                        f"{wandb_prefix}/epoch": epoch + 1,
+                    },
+                    step=epoch + 1,
+                )
+        except ImportError:
+            pass
 
     # Restore best checkpoint
     model.load_state_dict(best_state)

@@ -60,6 +60,15 @@ remove_negative_influence: false
 # slice_label: null  # auto: "advantage_based_A{threshold}"
 # slice_source: null  # auto: "behavior_search_train" (filter) or "behavior_search_holdout" (selection)
 
+# Weights & Biases logging for in-process training steps (ENAP RNN, PMM, ResidualMLP).
+# Set enabled: true to activate; all other keys are optional.
+wandb:
+  enabled: false
+  project: policy_doctor_enap
+  entity: null      # wandb entity / team (null = your default)
+  group: null       # run group for experiment sweeps
+  tags: []          # additional tags appended to each step's own tags
+
 # Graph building: select the method used to build the BehaviorGraph.
 # method: "cupid" (default) — infembed → UMAP → KMeans → Markov chain
 #         "enap"            — visual encoder → HDBSCAN → RNN → Extended L* → PMM
