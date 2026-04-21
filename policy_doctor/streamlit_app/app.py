@@ -338,12 +338,13 @@ def main() -> None:
 
     _render_sidebar_config_import()
 
-    tab_clustering, tab_behavior, tab_vlm, tab_curation, tab_comparison = st.tabs([
+    tab_clustering, tab_behavior, tab_vlm, tab_curation, tab_comparison, tab_graph_methods = st.tabs([
         "Clustering",
         "Behavior Graph",
         "VLM annotation",
         "Curation",
         "Comparison",
+        "Graph Methods",
     ])
 
     with tab_clustering:
@@ -365,6 +366,10 @@ def main() -> None:
     with tab_comparison:
         from policy_doctor.streamlit_app.tabs import comparison
         comparison.render_tab(config=config, data=data)
+
+    with tab_graph_methods:
+        from policy_doctor.streamlit_app.tabs import graph_methods
+        graph_methods.render_tab()
 
 
 if __name__ == "__main__":
