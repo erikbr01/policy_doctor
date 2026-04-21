@@ -65,46 +65,86 @@ def _load_episode_pickles(
         with open(pkl_path, "rb") as f:
             data = pickle.load(f)
 
+        keys = set(data.keys()) if hasattr(data, "keys") else set()
+
         # --- Actions ---
-        raw_actions = data.get("action") or data.get("actions")
+        raw_actions = (
+            data["action"] if "action" in keys else
+            data["actions"] if "actions" in keys else
+            None
+        )
         if raw_actions is None:
-            raise KeyError(f"No 'action' key in {pkl_path}")
-        acts = _to_array(raw_actions)  # (T, action_dim) or (T,) → ensure 2D
+            raise KeyError(f"No 'action' key in {pkl_path}; keys={list(keys)}")
+        acts = _to_array(raw_actions)  # (T, action_dim) or (T,) or (T, chunk, a_dim)
         if acts.ndim == 1:
             acts = acts[:, None]
+        elif acts.ndim == 3:
+            # Chunked diffusion actions (T, chunk_size, a_dim) — take first in chunk
+            acts = acts[:, 0, :]
 
         # --- Observations (low-dim state used as visual features in mlp mode) ---
-        raw_obs = data.get("obs") or data.get("state") or data.get("observations")
+        raw_obs = (
+            data["obs"] if "obs" in keys else
+            data["state"] if "state" in keys else
+            data["observations"] if "observations" in keys else
+            data["img"] if "img" in keys else
+            data["image"] if "image" in keys else
+            data["agentview_image"] if "agentview_image" in keys else
+            None
+        )
         if raw_obs is None:
-            # Try image key for dino mode
-            raw_obs = data.get("img") or data.get("image") or data.get("agentview_image")
-        if raw_obs is None:
-            raise KeyError(f"No obs/state/img key in {pkl_path}; keys={list(data.keys())}")
+            raise KeyError(f"No obs/state/img key in {pkl_path}; keys={list(keys)}")
         obs = _to_array(raw_obs)  # (T, ...) possibly multi-dim
+        if obs.ndim > 2:
+            obs = obs.reshape(len(obs), -1)
 
         T = min(len(acts), len(obs))
         obs_list.append(obs[:T])
         actions_list.append(acts[:T])
 
         # --- Success flag ---
-        success_flag = data.get("success")
-        if success_flag is None:
-            # Try last element of a 'rewards' / 'dones' sequence
-            rewards = data.get("reward") or data.get("rewards")
-            if rewards is not None:
-                success_flag = bool(_to_array(rewards)[-1] > 0)
-        successes.append(bool(success_flag) if success_flag is not None else None)
+        raw_success = data["success"] if "success" in keys else None
+        if raw_success is not None:
+            # pandas Series or scalar
+            success_vals = raw_success.values if hasattr(raw_success, "values") else raw_success
+            success_flag = bool(success_vals[-1]) if hasattr(success_vals, "__len__") else bool(success_vals)
+        else:
+            raw_rewards = (
+                data["reward"] if "reward" in keys else
+                data["rewards"] if "rewards" in keys else
+                None
+            )
+            if raw_rewards is not None:
+                success_flag = bool(_to_array(raw_rewards)[-1] > 0)
+            else:
+                success_flag = None
+        successes.append(success_flag)
         episode_lengths.append(T)
 
     return obs_list, actions_list, successes, episode_lengths
 
 
 def _to_array(series: Any) -> np.ndarray:
-    """Convert various sequence types to numpy array."""
+    """Convert various sequence types to a float32 numpy array.
+
+    Handles: plain ndarray, pandas Series of scalars, pandas Series of
+    ndarrays (object dtype — e.g. per-timestep obs/action arrays), and
+    plain Python lists/iterables.
+    """
     if isinstance(series, np.ndarray):
         return series.astype(np.float32)
-    if hasattr(series, "values"):  # pandas Series/DataFrame
-        return np.array(series.values, dtype=np.float32)
+    # pandas Series or DataFrame
+    if hasattr(series, "values"):
+        vals = series.values
+        # Object array whose elements are ndarrays — must stack element-wise
+        if vals.dtype == object:
+            return np.stack([
+                v.astype(np.float32) if isinstance(v, np.ndarray)
+                else np.array(v, dtype=np.float32)
+                for v in vals
+            ], axis=0)
+        return vals.astype(np.float32)
+    # Generic iterable
     arr = []
     for item in series:
         if hasattr(item, "values"):

@@ -526,7 +526,7 @@ class PretrainRNN(nn.Module):
         cls, path: str, device: Optional[torch.device] = None
     ) -> "PretrainRNN":
         """Load from a PMM-compatible checkpoint."""
-        ckpt = torch.load(path, map_location=device or "cpu", weights_only=False)
+        ckpt = torch.load(path, map_location=device or "cpu")
         dims = ckpt["dims"]
         model = cls(dims["a"], dims["s"], dims["e"], dims["h"])
         model.load_state_dict(ckpt["model_state"])

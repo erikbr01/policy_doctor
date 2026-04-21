@@ -94,7 +94,7 @@ class ResidualMLP(nn.Module):
     def load_checkpoint(
         cls, path: str, device: Optional[torch.device] = None
     ) -> "ResidualMLP":
-        ckpt = torch.load(path, map_location=device or "cpu", weights_only=False)
+        ckpt = torch.load(path, map_location=device or "cpu")
         model = cls(ckpt["feat_dim"], ckpt["a_dim"], hidden=ckpt.get("hidden", 512))
         model.load_state_dict(ckpt["state_dict"])
         if device is not None:

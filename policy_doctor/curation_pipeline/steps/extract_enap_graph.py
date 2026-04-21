@@ -149,6 +149,8 @@ class ExtractENAPGraphStep(PipelineStep[Dict[str, Any]]):
 
         # --- Config ---
         cos_tau_row = float(OmegaConf.select(enap_cfg, "cos_tau_row") or 0.6)
+        _cos_tau_node_raw = OmegaConf.select(enap_cfg, "cos_tau_node")
+        cos_tau_node = float(_cos_tau_node_raw) if _cos_tau_node_raw is not None else None
         error_threshold = float(OmegaConf.select(enap_cfg, "error_threshold") or 0.3)
         max_iterations = int(OmegaConf.select(enap_cfg, "max_iterations") or 20)
         stabil_required = int(OmegaConf.select(enap_cfg, "stabil_required") or 2)
@@ -165,8 +167,8 @@ class ExtractENAPGraphStep(PipelineStep[Dict[str, Any]]):
 
         # --- Run PMM.learn_pmm ---
         print(
-            f"  PMM: cos_tau_row={cos_tau_row}, error_threshold={error_threshold}, "
-            f"max_iter={max_iterations}"
+            f"  PMM: cos_tau_row={cos_tau_row}, cos_tau_node={cos_tau_node or cos_tau_row}, "
+            f"error_threshold={error_threshold}, max_iter={max_iterations}"
         )
         from policy_doctor.curation_pipeline.wandb_utils import (
             init_wandb_run, finish_wandb_run,
@@ -175,6 +177,7 @@ class ExtractENAPGraphStep(PipelineStep[Dict[str, Any]]):
 
         pmm_obj = PMM(
             cos_tau_row=cos_tau_row,
+            cos_tau_node=cos_tau_node,
             error_threshold=error_threshold,
             max_inner_iters=max_iterations,
             stabil_required=stabil_required,

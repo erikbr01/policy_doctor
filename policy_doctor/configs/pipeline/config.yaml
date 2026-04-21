@@ -106,15 +106,16 @@ graph_building:
       contrast: 0.5
     rnn_contrastive_margin: 0.5
     # PMM (faithful Extended L*) parameters
-    cos_tau_row: 0.6          # cosine similarity threshold for L* closedness/EQ
-    error_threshold: 0.3      # action-distance threshold for equivalence query
-    max_iterations: 20        # L* outer iteration cap
+    cos_tau_row: 0.85         # neighborhood threshold: embedding similarity for closedness/coverage
+    cos_tau_node: 0.97        # node dedup threshold: reps must be < this similar to be distinct nodes
+    error_threshold: 0.05     # action-distance threshold for equivalence query
+    max_iterations: 200       # L* outer iteration cap
     stabil_required: 2        # consecutive stable passes before convergence
     level: rollout            # behaviour granularity passed to BehaviorGraph
 
     # Custom/modified Extended L* parameters (enap_custom method)
-    tau_sim: 0.7              # cosine threshold for custom ExtendedLStar
-    min_edge_count: 2         # prune edges with fewer transitions (custom)
+    tau_sim: 0.5              # cosine threshold for custom ExtendedLStar
+    min_edge_count: 3         # prune edges with fewer transitions (custom)
 
     # Residual MLP (M-step) parameters
     residual_epochs: 300
