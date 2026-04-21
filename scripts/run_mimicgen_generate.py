@@ -108,19 +108,20 @@ def main(argv: list[str] | None = None) -> None:
     cfg.experiment.generation.path = str(gen_tmp)
     cfg.experiment.generation.num_trials = args.num_trials
     cfg.experiment.generation.guarantee = args.guarantee
-    cfg.experiment.generation.keep_failed = False
+    cfg.experiment.generation.keep_failed = True   # preserve failures for success/failure colouring
     cfg.experiment.render_video = False
     cfg.experiment.num_demo_to_render = 0
     cfg.experiment.num_fail_demo_to_render = 0
     cfg.experiment.max_num_failures = max(args.num_trials * 2, 100)
     cfg.experiment.log_every_n_attempts = 100
     cfg.experiment.task.name = None   # auto-detected from env_meta
-    cfg.obs.collect_obs = False       # low-dim only; skip image collection
+    cfg.obs.collect_obs = True        # must be True; write_demo_to_hdf5 crashes on None obs
+    cfg.obs.camera_names = []         # no image obs — low-dim state only
 
     print(f"[run_mimicgen_generate] generate_dataset: num_trials={args.num_trials}")
     stats = generate_dataset(cfg, auto_remove_exp=True, render=False, video_path=None)
 
-    # --- Step 3: copy demo.hdf5 and write stats ---
+    # --- Step 3: copy demo.hdf5 + demo_failed.hdf5 and write stats ---
     generated_demo = gen_tmp / "generated" / "demo.hdf5"
     dest_demo = output_dir / "demo.hdf5"
     if generated_demo.is_file():
@@ -128,6 +129,14 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[run_mimicgen_generate] demo.hdf5 written to {dest_demo}")
     else:
         print(f"[run_mimicgen_generate] WARNING: expected demo.hdf5 not found at {generated_demo}")
+
+    generated_failed = gen_tmp / "generated" / "demo_failed.hdf5"
+    dest_failed = output_dir / "demo_failed.hdf5"
+    if generated_failed.is_file():
+        shutil.copy2(generated_failed, dest_failed)
+        print(f"[run_mimicgen_generate] demo_failed.hdf5 written to {dest_failed}")
+    else:
+        print("[run_mimicgen_generate] no demo_failed.hdf5 found (all trials succeeded?)")
 
     stats_path = output_dir / "stats.json"
     with open(stats_path, "w") as f:

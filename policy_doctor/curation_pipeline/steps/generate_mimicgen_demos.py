@@ -210,7 +210,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         # Seed demo EEF (from prepared seed_hdf5 which now has datagen_info)
         seed_eef_xyz = extract_eef_xyz_from_hdf5(seed_hdf5)
 
-        # Generated demos EEF
+        # Generated demos EEF (successes)
         generated_hdf5 = gen_output_dir / "demo.hdf5"
         generated_eef_xyz: list[np.ndarray] = []
         if generated_hdf5.exists():
@@ -218,10 +218,17 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         else:
             print(f"  [generate_mimicgen_demos] WARNING: generated demo.hdf5 not found at {generated_hdf5}")
 
+        # Failed demos EEF
+        failed_hdf5 = gen_output_dir / "demo_failed.hdf5"
+        failed_eef_xyz: list[np.ndarray] = []
+        if failed_hdf5.exists():
+            failed_eef_xyz = extract_eef_xyz_from_hdf5(failed_hdf5)
+
         print(
             f"  [generate_mimicgen_demos] done. "
             f"seed_eef_demos={len(seed_eef_xyz)} "
-            f"generated_eef_demos={len(generated_eef_xyz)} "
+            f"success_eef_demos={len(generated_eef_xyz)} "
+            f"failed_eef_demos={len(failed_eef_xyz)} "
             f"stats={stats.get('num_success', '?')}/{stats.get('num_attempts', '?')}"
         )
 
@@ -229,8 +236,10 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             "seed_demo_key": seed_demo_key,
             "seed_source": seed_source,
             "generated_hdf5_path": str(generated_hdf5),
+            "failed_hdf5_path": str(failed_hdf5) if failed_hdf5.exists() else None,
             "stats": stats,
             # Serialise as nested lists for JSON
             "seed_eef_xyz": [arr.tolist() for arr in seed_eef_xyz],
             "generated_eef_xyz": [arr.tolist() for arr in generated_eef_xyz],
+            "failed_eef_xyz": [arr.tolist() for arr in failed_eef_xyz],
         }

@@ -55,7 +55,7 @@ def run_generation(source_hdf5: Path, output_dir: Path, num_trials: int) -> dict
     cfg.experiment.generation.path = str(output_dir / "_gen")
     cfg.experiment.generation.num_trials = num_trials
     cfg.experiment.generation.guarantee = False
-    cfg.experiment.generation.keep_failed = False
+    cfg.experiment.generation.keep_failed = True   # preserve failures for success/failure colouring
     cfg.experiment.render_video = False
     cfg.experiment.num_demo_to_render = 0
     cfg.experiment.num_fail_demo_to_render = 0
@@ -84,6 +84,12 @@ def main() -> None:
     # Copy to output dir for easier access
     shutil.copy2(generated_hdf5, OUT_DIR / "demo.hdf5")
 
+    # Copy failed demos if present
+    generated_failed = gen_dir / "demo_failed.hdf5"
+    if generated_failed.exists():
+        shutil.copy2(generated_failed, OUT_DIR / "demo_failed.hdf5")
+        print(f"[test] demo_failed.hdf5 copied")
+
     # Save stats
     stats_path = OUT_DIR / "stats.json"
     with open(stats_path, "w") as f:
@@ -101,7 +107,15 @@ def main() -> None:
         print("[test] WARNING: no EEF found in source/seed HDF5")
 
     generated_eef = extract_eef_xyz_from_hdf5(OUT_DIR / "demo.hdf5")
-    print(f"[test] generated EEF trajectories: {len(generated_eef)}")
+    print(f"[test] generated EEF trajectories (success): {len(generated_eef)}")
+
+    failed_hdf5 = OUT_DIR / "demo_failed.hdf5"
+    failed_eef: list = []
+    if failed_hdf5.exists():
+        failed_eef = extract_eef_xyz_from_hdf5(failed_hdf5)
+        print(f"[test] generated EEF trajectories (failed): {len(failed_eef)}")
+    else:
+        print("[test] no demo_failed.hdf5 found")
 
     # Save EEF data as JSON (matches pipeline step result format)
     result = {
@@ -110,39 +124,12 @@ def main() -> None:
         "stats": stats,
         "seed_eef_xyz": [seed_xyz.tolist()] if seed_xyz is not None else [],
         "generated_eef_xyz": [t.tolist() for t in generated_eef],
+        "failed_eef_xyz": [t.tolist() for t in failed_eef],
     }
     with open(OUT_DIR / "result.json", "w") as f:
         json.dump(result, f)
     print(f"[test] result.json saved to {OUT_DIR / 'result.json'}")
-
-    # Produce plots
-    import plotly.io as pio
-    from policy_doctor.plotting.plotly.eef_trajectories import (
-        create_eef_trajectory_figure,
-        create_initial_eef_scatter_2d,
-    )
-
-    fig_3d = create_eef_trajectory_figure(
-        seed_xyz=seed_xyz,
-        generated_xyz_list=generated_eef,
-        title=f"EEF Trajectories — Square D0  |  seed={SEED_DEMO_KEY}  |  n_gen={len(generated_eef)}",
-    )
-    fig_2d = create_initial_eef_scatter_2d(
-        seed_xyz=seed_xyz,
-        generated_xyz_list=generated_eef,
-        title=f"Initial EEF Positions (t=0)  |  seed={SEED_DEMO_KEY}  |  n_gen={len(generated_eef)}",
-    )
-
-    out_3d = OUT_DIR / "eef_3d.html"
-    out_2d = OUT_DIR / "eef_2d_initial.html"
-    pio.write_html(fig_3d, str(out_3d))
-    pio.write_html(fig_2d, str(out_2d))
-    print(f"\n[test] Plots written:")
-    print(f"  3D trajectories : {out_3d}")
-    print(f"  2D initial pos  : {out_2d}")
-    print(f"\nOpen in browser:")
-    print(f"  firefox {out_3d} &")
-    print(f"  firefox {out_2d} &")
+    print(f"[test] run plot_mimicgen_eef_from_result.py in policy_doctor env to produce HTML/PNG plots")
 
 
 if __name__ == "__main__":
