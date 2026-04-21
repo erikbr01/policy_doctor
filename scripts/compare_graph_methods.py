@@ -21,6 +21,12 @@ Usage::
         --base-run-dir data/compare_graph_methods \\
         --methods cupid enap_custom enap
 
+    # Data lives in a separate repo (e.g. the original cupid checkout):
+    python scripts/compare_graph_methods.py \\
+        --task-config transport_mh_jan28 \\
+        --repo-root /home/erbauer/cupid \\
+        --methods cupid
+
     # Resume (skip completed steps):
     python scripts/compare_graph_methods.py --resume
 
@@ -48,21 +54,37 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 
-def _load_base_cfg(task_config: str, config_root: str, repo_root: pathlib.Path):
-    """Load and merge pipeline + task configs via OmegaConf."""
+def _load_base_cfg(
+    task_config: str,
+    config_root: str,
+    repo_root: pathlib.Path,
+    code_root: pathlib.Path | None = None,
+):
+    """Load and merge pipeline + task configs via OmegaConf.
+
+    Args:
+        task_config: Task config name (e.g. ``transport_mh_jan28``).
+        config_root: ``"iv"`` or ``"pd"`` — where IV task configs live.
+        repo_root: Root that contains ``data/outputs/...`` (may differ from code_root).
+        code_root: Root that contains ``policy_doctor/configs/`` (defaults to repo_root).
+    """
     from omegaconf import OmegaConf
 
+    if code_root is None:
+        code_root = repo_root
+
     pipeline_cfg_path = (
-        repo_root / "policy_doctor" / "configs" / "pipeline" / "config.yaml"
+        _REPO_ROOT / "policy_doctor" / "configs" / "pipeline" / "config.yaml"
     )
     cfg = OmegaConf.load(str(pipeline_cfg_path))
     OmegaConf.update(cfg, "task_config", task_config, merge=True)
     OmegaConf.update(cfg, "config_root", config_root, merge=True)
+    # repo_root is used by pipeline steps to resolve data/outputs/* paths
     OmegaConf.update(cfg, "repo_root", str(repo_root), merge=True)
 
     # Try to merge task-specific config if it exists
     task_cfg_path = (
-        repo_root / "policy_doctor" / "configs" / task_config / "task.yaml"
+        _REPO_ROOT / "policy_doctor" / "configs" / task_config / "task.yaml"
     )
     if task_cfg_path.exists():
         task_cfg = OmegaConf.load(str(task_cfg_path))
@@ -89,6 +111,8 @@ def _run_method(
     OmegaConf.update(cfg, "graph_building.method", method, merge=True)
     OmegaConf.update(cfg, "run_dir", str(run_dir), merge=True)
     OmegaConf.update(cfg, "run_name", method, merge=True)
+    if dry_run:
+        OmegaConf.update(cfg, "dry_run", True, merge=True)
 
     pipeline = CurationPipeline(cfg)
 
@@ -234,6 +258,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Config root: 'iv' (influence_visualizer) or 'pd' (standalone)",
     )
     parser.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Repo root containing data/outputs/... "
+            "(default: policy_doctor_enap repo root). "
+            "Override when data lives in a separate checkout, "
+            "e.g. --repo-root /home/erbauer/cupid"
+        ),
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Torch device for ENAP neural steps (e.g. 'cuda:0', 'cpu'). "
+             "Default: auto-detect (cuda if available).",
+    )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging for in-process training steps.",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        default="policy_doctor_enap",
+        help="W&B project name (default: policy_doctor_enap)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Skip already-completed steps (default: False = re-run)",
@@ -245,17 +295,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    repo_root = pathlib.Path(args.repo_root).resolve() if args.repo_root else _REPO_ROOT
+
     base_run_dir = pathlib.Path(args.base_run_dir)
     if not base_run_dir.is_absolute():
         base_run_dir = (_REPO_ROOT / base_run_dir).resolve()
     base_run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load base config
+    # Load base config — code always comes from _REPO_ROOT; data from repo_root
     base_cfg = _load_base_cfg(
         task_config=args.task_config or "transport_mh_jan28",
         config_root=args.config_root,
-        repo_root=_REPO_ROOT,
+        repo_root=repo_root,
     )
+
+    # Apply optional overrides
+    from omegaconf import OmegaConf
+    if args.device:
+        OmegaConf.update(base_cfg, "device", args.device, merge=True)
+    if args.wandb:
+        OmegaConf.update(base_cfg, "wandb.enabled", True, merge=True)
+        OmegaConf.update(base_cfg, "wandb.project", args.wandb_project, merge=True)
+
+    print(f"Data repo root:  {repo_root}")
+    print(f"Code repo root:  {_REPO_ROOT}")
 
     skip_if_done = args.resume
     methods = args.methods
