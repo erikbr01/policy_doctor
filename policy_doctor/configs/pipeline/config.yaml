@@ -68,3 +68,24 @@ markov_export:
   method: chi2
   n_permutations: 10000
   random_state: null
+
+# MimicGen trajectory generation pipeline
+# Steps: select_mimicgen_seed → generate_mimicgen_demos → train_on_combined_data
+mimicgen_datagen:
+  # Seed-trajectory selection
+  seed_selection_heuristic: behavior_graph  # "behavior_graph" (proposed) or "random" (baseline)
+  top_k_paths: 5               # BehaviorGraphPathHeuristic: number of candidate paths to try
+  min_path_probability: 0.0    # BehaviorGraphPathHeuristic: minimum path probability threshold
+  success_only: true           # Both heuristics: only draw from successful rollouts
+  random_seed: null            # RandomSelectionHeuristic: RNG seed (null = non-deterministic)
+  policy_seed: null            # Which policy seed's clustering to use (null = first available)
+
+  # MimicGen generation
+  episode_budget: 50           # Number of MimicGen generation trials to run
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+
+  # Fallback source dataset (used when no seed-selection step has been run)
+  source_dataset_path: null    # null = use default MimicGen Square D1 dataset

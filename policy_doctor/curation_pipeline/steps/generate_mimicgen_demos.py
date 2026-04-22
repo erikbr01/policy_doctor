@@ -84,7 +84,12 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
     def compute(self) -> dict[str, Any]:
         cfg_mg = OmegaConf.select(self.cfg, "mimicgen_datagen") or {}
 
-        num_trials: int = int(OmegaConf.select(cfg_mg, "num_trials") or 50)
+        # episode_budget is the canonical name; num_trials is the legacy fallback.
+        num_trials: int = int(
+            OmegaConf.select(cfg_mg, "episode_budget")
+            or OmegaConf.select(cfg_mg, "num_trials")
+            or 50
+        )
         output_dir_rel: str = (
             OmegaConf.select(cfg_mg, "output_dir") or "data/outputs/mimicgen_datagen"
         )
@@ -94,18 +99,34 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
 
         self.step_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- Auto-wire: check if SelectMimicgenSeedFromGraphStep has been run ---
+        # --- Auto-wire: prefer SelectMimicgenSeedStep, fall back to SelectMimicgenSeedFromGraphStep ---
+        from policy_doctor.curation_pipeline.steps.select_mimicgen_seed import (
+            SelectMimicgenSeedStep,
+        )
         from policy_doctor.curation_pipeline.steps.select_mimicgen_seed_from_graph import (
             SelectMimicgenSeedFromGraphStep,
         )
-        select_step = SelectMimicgenSeedFromGraphStep(self.cfg, self.run_dir)
-        if select_step.is_done():
-            select_result = select_step.load()
+        new_select_step = SelectMimicgenSeedStep(self.cfg, self.run_dir)
+        old_select_step = SelectMimicgenSeedFromGraphStep(self.cfg, self.run_dir)
+
+        if new_select_step.is_done():
+            select_result = new_select_step.load()
+            seed_hdf5 = pathlib.Path(select_result["seed_hdf5_path"])
+            seed_demo_key = "demo_0"
+            seed_source = select_result.get("heuristic", "select_mimicgen_seed")
+            print(
+                f"  [generate_mimicgen_demos] using heuristic-selected seed: "
+                f"heuristic={select_result.get('heuristic')}  "
+                f"rollout={select_result.get('rollout_idx')}  "
+                f"seed_hdf5={seed_hdf5}"
+            )
+        elif old_select_step.is_done():
+            select_result = old_select_step.load()
             seed_hdf5 = pathlib.Path(select_result["seed_hdf5_path"])
             seed_demo_key = "demo_0"
             seed_source = "graph"
             print(
-                f"  [generate_mimicgen_demos] using graph-selected seed: "
+                f"  [generate_mimicgen_demos] using graph-selected seed (legacy step): "
                 f"rollout={select_result.get('selected_rollout_idx')}  "
                 f"path_prob={select_result.get('selected_path_prob', 0):.3f}  "
                 f"seed_hdf5={seed_hdf5}"
