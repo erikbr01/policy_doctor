@@ -58,6 +58,70 @@ def extract_eef_xyz_from_hdf5(hdf5_path: Path | str) -> list[np.ndarray]:
     return results
 
 
+def extract_object_pose_t0_from_hdf5(
+    hdf5_path: Path | str,
+    object_name: str = "square_nut",
+) -> list[np.ndarray]:
+    """Return the initial (t=0) pose of *object_name* for every demo.
+
+    Reads ``data/<demo_key>/datagen_info/object_poses/<object_name>[0]``.
+
+    Args:
+        hdf5_path:   Path to the prepared/generated HDF5.
+        object_name: Key under ``datagen_info/object_poses`` (e.g. ``"square_nut"``).
+
+    Returns:
+        List of ``(4, 4)`` float32 homogeneous matrices, one per demo.
+        Returns an empty list if the object key is not present.
+    """
+    hdf5_path = Path(hdf5_path)
+    results: list[np.ndarray] = []
+    with h5py.File(hdf5_path, "r") as f:
+        data_grp = f.get("data")
+        if data_grp is None:
+            return results
+        demo_keys = sorted(k for k in data_grp.keys() if k.startswith("demo_"))
+        for key in demo_keys:
+            ep = data_grp[key]
+            pose_key = f"datagen_info/object_poses/{object_name}"
+            if pose_key not in ep:
+                continue
+            poses = np.array(ep[pose_key], dtype=np.float32)  # (T, 4, 4)
+            if poses.ndim == 3 and poses.shape[1:] == (4, 4):
+                results.append(poses[0])
+    return results
+
+
+def extract_eef_pose_at_lowest_z_from_hdf5(hdf5_path: Path | str) -> list[np.ndarray]:
+    """Return the EEF pose ``(4, 4)`` at the timestep with minimum Z, per demo.
+
+    Useful for visualising gripper approach orientation.
+
+    Returns:
+        List of ``(4, 4)`` float32 homogeneous matrices, one per demo.
+        Returns an empty list if ``datagen_info/eef_pose`` is not present.
+    """
+    hdf5_path = Path(hdf5_path)
+    results: list[np.ndarray] = []
+    with h5py.File(hdf5_path, "r") as f:
+        data_grp = f.get("data")
+        if data_grp is None:
+            return results
+        demo_keys = sorted(k for k in data_grp.keys() if k.startswith("demo_"))
+        for key in demo_keys:
+            ep = data_grp[key]
+            pose_key = "datagen_info/eef_pose"
+            if pose_key not in ep:
+                continue
+            poses = np.array(ep[pose_key], dtype=np.float32)  # (T, 4, 4)
+            if poses.ndim != 3 or poses.shape[1:] != (4, 4):
+                continue
+            z_vals = poses[:, 2, 3]  # Z translation at each timestep
+            t_min_z = int(np.argmin(z_vals))
+            results.append(poses[t_min_z])
+    return results
+
+
 def extract_initial_eef_xyz(hdf5_path: Path | str) -> np.ndarray:
     """Return the initial (t=0) EEF XYZ position for every demo.
 

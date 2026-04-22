@@ -96,8 +96,12 @@ def main() -> None:
         json.dump(stats, f, indent=2, default=str)
     print(f"[test] stats saved to {stats_path}")
 
-    # Extract EEF trajectories
-    from policy_doctor.mimicgen.eef import extract_eef_xyz_from_hdf5
+    # Extract EEF trajectories + pose data
+    from policy_doctor.mimicgen.eef import (
+        extract_eef_xyz_from_hdf5,
+        extract_eef_pose_at_lowest_z_from_hdf5,
+        extract_object_pose_t0_from_hdf5,
+    )
 
     seed_eef = extract_eef_xyz_from_hdf5(SOURCE_HDF5)
     seed_xyz = seed_eef[0] if seed_eef else None
@@ -106,25 +110,45 @@ def main() -> None:
     else:
         print("[test] WARNING: no EEF found in source/seed HDF5")
 
-    generated_eef = extract_eef_xyz_from_hdf5(OUT_DIR / "demo.hdf5")
+    seed_pose_lowest_z_list = extract_eef_pose_at_lowest_z_from_hdf5(SOURCE_HDF5)
+    seed_pose_at_lowest_z = seed_pose_lowest_z_list[0] if seed_pose_lowest_z_list else None
+
+    generated_hdf5 = OUT_DIR / "demo.hdf5"
+    generated_eef = extract_eef_xyz_from_hdf5(generated_hdf5)
     print(f"[test] generated EEF trajectories (success): {len(generated_eef)}")
+    generated_pose_at_lowest_z = extract_eef_pose_at_lowest_z_from_hdf5(generated_hdf5)
+    nut_poses_t0_succ = extract_object_pose_t0_from_hdf5(generated_hdf5, "square_nut")
+    print(f"[test] nut poses (success): {len(nut_poses_t0_succ)}")
 
     failed_hdf5 = OUT_DIR / "demo_failed.hdf5"
     failed_eef: list = []
+    failed_pose_at_lowest_z: list = []
+    nut_poses_t0_fail: list = []
     if failed_hdf5.exists():
         failed_eef = extract_eef_xyz_from_hdf5(failed_hdf5)
+        failed_pose_at_lowest_z = extract_eef_pose_at_lowest_z_from_hdf5(failed_hdf5)
+        nut_poses_t0_fail = extract_object_pose_t0_from_hdf5(failed_hdf5, "square_nut")
         print(f"[test] generated EEF trajectories (failed): {len(failed_eef)}")
     else:
         print("[test] no demo_failed.hdf5 found")
 
+    # Combine nut poses (all demos) — used for the "all" plot
+    nut_poses_t0_all = nut_poses_t0_succ + nut_poses_t0_fail
+
     # Save EEF data as JSON (matches pipeline step result format)
     result = {
         "seed_demo_key": SEED_DEMO_KEY,
-        "generated_hdf5_path": str(OUT_DIR / "demo.hdf5"),
+        "generated_hdf5_path": str(generated_hdf5),
         "stats": stats,
         "seed_eef_xyz": [seed_xyz.tolist()] if seed_xyz is not None else [],
         "generated_eef_xyz": [t.tolist() for t in generated_eef],
         "failed_eef_xyz": [t.tolist() for t in failed_eef],
+        # Pose data (4×4 matrices serialised as nested lists)
+        "seed_pose_at_lowest_z": seed_pose_at_lowest_z.tolist() if seed_pose_at_lowest_z is not None else None,
+        "generated_eef_pose_at_lowest_z": [p.tolist() for p in generated_pose_at_lowest_z],
+        "failed_eef_pose_at_lowest_z": [p.tolist() for p in failed_pose_at_lowest_z],
+        "nut_poses_t0_success": [p.tolist() for p in nut_poses_t0_succ],
+        "nut_poses_t0_failed": [p.tolist() for p in nut_poses_t0_fail],
     }
     with open(OUT_DIR / "result.json", "w") as f:
         json.dump(result, f)
