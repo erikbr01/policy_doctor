@@ -33,11 +33,6 @@ import imageio
 import numpy as np
 import robomimic.utils.obs_utils as ObsUtils
 
-# Initialize obs utils before any env creation (required by robomimic internals)
-ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dict(
-    obs=dict(low_dim=["robot0_eef_pos"], rgb=[])
-))
-
 
 def _patch_base_env() -> None:
     try:
@@ -51,6 +46,12 @@ def _patch_base_env() -> None:
 def _make_env(env_args: dict, camera_names: list[str], camera_height: int, camera_width: int):
     """Create a robosuite environment with offscreen rendering enabled."""
     import robomimic.utils.env_utils as eu
+
+    # Register camera image keys with ObsUtils so get_observation() returns them
+    image_keys = [f"{c}_image" for c in camera_names]
+    ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dict(
+        obs=dict(low_dim=["robot0_eef_pos"], rgb=image_keys)
+    ))
 
     kwargs = dict(env_args.get("env_kwargs", {}))
     kwargs["has_offscreen_renderer"] = True
@@ -87,6 +88,9 @@ def _render_demo(env, states: np.ndarray, camera_names: list[str]) -> list[np.nd
                 img = obs[key]
                 if img.dtype != np.uint8:
                     img = (img * 255).astype(np.uint8)
+                # robomimic may return (C, H, W) — convert to (H, W, C)
+                if img.ndim == 3 and img.shape[0] in (1, 3, 4) and img.shape[0] < img.shape[1]:
+                    img = np.transpose(img, (1, 2, 0))
                 imgs.append(img)
         if imgs:
             frame = np.concatenate(imgs, axis=1)  # side-by-side
