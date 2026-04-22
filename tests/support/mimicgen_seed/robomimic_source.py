@@ -2,6 +2,12 @@
 
 Pure I/O + layout; safe from any Python env with ``h5py``. Downstream
 ``prepare_src_dataset`` should run under the **mimicgen** stack for NVlabs datasets.
+
+Note: The production counterpart lives at
+:mod:`policy_doctor.mimicgen.materializer` (takes separate ``states``/
+``actions``/``env_meta`` fields rather than a trajectory object) and is used by
+:class:`~policy_doctor.curation_pipeline.steps.generate_mimicgen_demos.GenerateMimicgenDemosStep`.
+This module is kept for backward compatibility with existing tests.
 """
 
 from __future__ import annotations
