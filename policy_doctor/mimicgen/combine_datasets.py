@@ -61,10 +61,13 @@ def combine_hdf5_datasets(
             k for k in gen_f["data"].keys() if k.startswith("demo_")
         )
 
+    def _count_demos(path: Path) -> int:
+        with h5py.File(path, "r") as f:
+            return sum(1 for k in f["data"].keys() if k.startswith("demo_"))
+
     if not gen_demo_keys:
-        # Nothing to append — return the original count unchanged.
-        with h5py.File(output_path, "r") as out_f:
-            return int(out_f["data"].attrs.get("total", len(out_f["data"].keys())))
+        # Nothing to append — return the original demo count unchanged.
+        return _count_demos(output_path)
 
     with h5py.File(output_path, "a") as out_f:
         n_existing = sum(1 for k in out_f["data"].keys() if k.startswith("demo_"))
@@ -74,7 +77,4 @@ def combine_hdf5_datasets(
                 new_key = f"demo_{n_existing + i}"
                 gen_f.copy(f"data/{demo_key}", out_f["data"], name=new_key)
 
-        n_total = n_existing + len(gen_demo_keys)
-        out_f["data"].attrs["total"] = n_total
-
-    return n_total
+    return _count_demos(output_path)
