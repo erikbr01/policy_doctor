@@ -94,63 +94,47 @@ def _render_demo(env, states: np.ndarray, camera_names: list[str]) -> list[np.nd
     return frames
 
 
-def _render_hdf5(
+def _render_and_save_hdf5(
     hdf5_path: Path,
+    outcome: str,
     env_args: dict,
     camera_names: list[str],
     camera_height: int,
     camera_width: int,
     n_demos: int,
+    out_dir: Path,
     fps: int,
-) -> list[list[np.ndarray]]:
-    """Render up to n_demos from hdf5_path. Returns list of per-demo frame lists."""
+) -> None:
+    """Render up to n_demos from hdf5_path, writing one MP4 per demo.
+
+    Output filenames: ``<demo_key>_<outcome>.mp4``  e.g. ``demo_3_success.mp4``
+    """
     env = _make_env(env_args, camera_names, camera_height, camera_width)
-    results = []
     with h5py.File(hdf5_path, "r") as f:
         demo_keys = sorted(k for k in f["data"].keys() if k.startswith("demo_"))[:n_demos]
-        for i, key in enumerate(demo_keys):
+        for key in demo_keys:
             states = np.array(f[f"data/{key}/states"])
             print(f"  rendering {key} ({len(states)} steps) ...")
             frames = _render_demo(env, states, camera_names)
-            results.append(frames)
-            print(f"  {key}: {len(frames)} frames")
+            out_path = out_dir / f"{key}_{outcome}.mp4"
+            _write_single_video(frames, out_path, fps)
     try:
         env.close()
     except AttributeError:
         pass
-    return results
 
 
-def _write_video(
-    per_demo_frames: list[list[np.ndarray]],
-    output_path: Path,
-    fps: int,
-    separator_width: int = 4,
-) -> None:
-    """Concatenate per-demo frame sequences with a black separator and write MP4."""
-    if not per_demo_frames:
-        print(f"  [skip] no frames to write for {output_path.name}")
+def _write_single_video(frames: list[np.ndarray], output_path: Path, fps: int) -> None:
+    """Write a single demo's frames to an MP4."""
+    if not frames:
         return
-
-    # Build timeline: all demos in sequence, separated by a brief pause frame
-    all_frames: list[np.ndarray] = []
-    for i, demo_frames in enumerate(per_demo_frames):
-        if not demo_frames:
-            continue
-        all_frames.extend(demo_frames)
-        # 0.5 s black pause between demos
-        h, w = demo_frames[0].shape[:2]
-        pause = np.zeros((h, w, 3), dtype=np.uint8)
-        for _ in range(max(1, fps // 2)):
-            all_frames.append(pause)
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
     writer = imageio.get_writer(str(output_path), fps=fps, codec="libx264",
-                                 quality=8, pixelformat="yuv420p")
-    for frame in all_frames:
+                                quality=8, pixelformat="yuv420p")
+    for frame in frames:
         writer.append_data(frame)
     writer.close()
-    print(f"  written: {output_path}  ({len(all_frames)} frames @ {fps} fps)")
+    print(f"  written: {output_path}  ({len(frames)} frames @ {fps} fps)")
 
 
 def main() -> None:
@@ -181,18 +165,18 @@ def main() -> None:
 
     # --- Successful demos ---
     print(f"\n[render] Successful demos ({args.n_success}) from {demo_hdf5.name}")
-    succ_frames = _render_hdf5(
-        demo_hdf5, env_args, args.cameras, args.height, args.width, args.n_success, args.fps
+    _render_and_save_hdf5(
+        demo_hdf5, "success", env_args, args.cameras,
+        args.height, args.width, args.n_success, out_dir, args.fps,
     )
-    _write_video(succ_frames, out_dir / "playback_success.mp4", args.fps)
 
     # --- Failed demos ---
     if failed_hdf5.exists():
         print(f"\n[render] Failed demos ({args.n_failed}) from {failed_hdf5.name}")
-        fail_frames = _render_hdf5(
-            failed_hdf5, env_args, args.cameras, args.height, args.width, args.n_failed, args.fps
+        _render_and_save_hdf5(
+            failed_hdf5, "failed", env_args, args.cameras,
+            args.height, args.width, args.n_failed, out_dir, args.fps,
         )
-        _write_video(fail_frames, out_dir / "playback_failed.mp4", args.fps)
     else:
         print(f"[render] no demo_failed.hdf5 found at {failed_hdf5}")
 
