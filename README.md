@@ -186,6 +186,20 @@ python -m policy_doctor.scripts.run_pipeline \
 
 Because different heuristics write to different step result files (`select_mimicgen_seed/result.json`), you can also run both in separate `run_dir`s that each reuse the same clustering result via `clustering_dir=<path>`.
 
+Alternatively, use the pre-configured experiment YAMLs (both require `data_source=mimicgen_square`):
+
+```bash
+# Proposed method (behavior graph)
+python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_square \
+  experiment=mimicgen_square_bg_pipeline
+
+# Baseline (random selection)
+python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_square \
+  experiment=mimicgen_square_random_pipeline
+```
+
 ### Output artifacts
 
 | Artifact | Location | Description |
