@@ -25,6 +25,53 @@ from torch.utils.data import DataLoader
 from policy_doctor.monitoring.base import StreamScorer
 
 
+def _detect_infembed_layers(policy: "torch.nn.Module", fit_path: str) -> Optional[List[str]]:
+    """Return the infembed ``layers`` filter needed to match a saved fit's parameter count.
+
+    When the policy gains new parameters after a fit was computed (e.g. normalizer buffers
+    registered as params, ``_dummy_variable`` sentinels), the jacobian ordering diverges
+    from the R vectors in the fit. This function loads the fit, counts R parameters, and
+    tries common subsets of the policy's parameter list to find a match.
+
+    Returns a list of layer-name prefixes (in the DiffusionLossWrapper namespace, i.e.
+    with the ``"policy."`` prefix) or ``None`` if no filter is needed or one can't be found.
+    """
+    try:
+        import dill
+        with open(fit_path, "rb") as f:
+            fit_results = dill.load(f)
+    except Exception:
+        return None
+
+    r_shapes = [tuple(t.shape) for t in fit_results.R[0]]
+    n_fit = len(r_shapes)
+
+    all_named = list(policy.named_parameters())
+    if len(all_named) == n_fit:
+        all_shapes = [tuple(p.shape) for _, p in all_named]
+        if all_shapes == r_shapes:
+            return None  # already matches — no filter needed
+
+    # Try progressively broader prefixes until one matches
+    candidate_prefixes: List[Optional[str]] = [
+        "model.",
+        "obs_encoder.",
+        None,  # non-zero params only (last resort)
+    ]
+    for prefix in candidate_prefixes:
+        if prefix is None:
+            cands = [(n, p) for n, p in all_named if 0 not in p.shape]
+        else:
+            cands = [(n, p) for n, p in all_named if n.startswith(prefix)]
+        if len(cands) == n_fit:
+            cand_shapes = [tuple(p.shape) for _, p in cands]
+            if cand_shapes == r_shapes:
+                if prefix is not None:
+                    return ["policy." + prefix.rstrip(".")]
+                # Can't express zero-shape exclusion as a prefix; fall through
+    return None
+
+
 class _SingleBatchDataset(torch.utils.data.IterableDataset):
     """Wraps a single batch dict in an IterableDataset that yields one ``(batch, labels)`` tuple.
 
@@ -114,6 +161,18 @@ class InfEmbedStreamScorer(StreamScorer):
             ["policy." + k.rstrip(".") for k in key_list] if key_list else None
         )
 
+        # --- Auto-detect layer filter when model_keys not specified ---
+        # The fit was computed with certain policy parameters; if the policy has since
+        # gained extra parameters (e.g. _dummy_variable, normalizer buffers registered as
+        # params), the jacobian ordering won't match the R vectors. Detect this by
+        # comparing the fit's parameter count to the policy's and try common subsets.
+        if not key_list:
+            infembed_layers = _detect_infembed_layers(
+                self.policy, str(Path(infembed_fit_path))
+            )
+            if infembed_layers is not None:
+                print(f"  [infembed] Auto-detected layer filter: {infembed_layers}")
+
         # --- Build DiffusionLossWrapper ---
         is_hybrid = isinstance(self.policy, DiffusionUnetHybridImagePolicy)
         if is_hybrid:
@@ -167,8 +226,7 @@ class InfEmbedStreamScorer(StreamScorer):
         """
         dataset = _SingleBatchDataset(batch, self.device)
         loader = DataLoader(dataset, batch_size=None, num_workers=0)
-        with torch.no_grad():
-            embedding = self._embedder.predict(loader)  # (1, proj_dim) on CPU
+        embedding = self._embedder.predict(loader)  # (1, proj_dim) on CPU
         return embedding[0].float().numpy()
 
     def score(self, batch: dict) -> np.ndarray:

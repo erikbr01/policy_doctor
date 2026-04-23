@@ -30,8 +30,10 @@ Quick start::
 """
 
 from policy_doctor.monitoring.base import AssignmentResult, GraphAssigner, MonitorResult, StreamScorer
-from policy_doctor.monitoring.graph_assigner import NearestCentroidAssigner
+from policy_doctor.monitoring.graph_assigner import FittedModelAssigner, NearestCentroidAssigner
+from policy_doctor.monitoring.monitored_policy import MonitoredPolicy
 from policy_doctor.monitoring.stream_monitor import StreamMonitor
+from policy_doctor.monitoring.trajectory_classifier import TrajectoryClassifier
 
 __all__ = [
     "StreamScorer",
@@ -39,7 +41,10 @@ __all__ = [
     "AssignmentResult",
     "MonitorResult",
     "NearestCentroidAssigner",
+    "FittedModelAssigner",
     "StreamMonitor",
+    "TrajectoryClassifier",
+    "MonitoredPolicy",
 ]
 
 # Heavy imports (diffusion_policy / trak / infembed) are deferred to the scorer

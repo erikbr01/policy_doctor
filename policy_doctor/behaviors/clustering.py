@@ -123,6 +123,80 @@ def cluster_kmeans(
     return model.fit_predict(embeddings).astype(np.int32)
 
 
+# ---------------------------------------------------------------------------
+# Fit-and-return variants (return fitted model alongside transformed data)
+# ---------------------------------------------------------------------------
+
+def fit_normalize_embeddings(
+    embeddings: np.ndarray,
+    method: Literal["none", "standard", "minmax", "robust", "l2"] = "none",
+) -> Tuple[np.ndarray, Any]:
+    """Like normalize_embeddings but returns (transformed, fitted_scaler_or_None).
+
+    The returned scaler can be used to transform new samples via
+    ``scaler.transform(new_sample)``.  Returns ``None`` for methods that
+    don't have a stateful sklearn model ("none", "l2").
+    """
+    if method == "none":
+        return np.asarray(embeddings, dtype=np.float32), None
+    if method == "l2":
+        from sklearn.preprocessing import normalize as sk_normalize
+        return sk_normalize(embeddings, norm="l2", axis=1).astype(np.float32), None
+    scaler_cls = {"standard": StandardScaler, "minmax": MinMaxScaler, "robust": RobustScaler}[method]
+    scaler = scaler_cls()
+    transformed = scaler.fit_transform(embeddings).astype(np.float32)
+    return transformed, scaler
+
+
+def fit_reduce_dimensions(
+    embeddings: np.ndarray,
+    method: Literal["umap", "pca"] = "umap",
+    n_components: int = 2,
+    **kwargs: Any,
+) -> Tuple[np.ndarray, Any]:
+    """Like reduce_dimensions but returns (transformed, fitted_reducer).
+
+    The returned reducer supports ``.transform(new_sample)`` for new points.
+    """
+    if method == "pca":
+        reducer = PCA(n_components=min(n_components, embeddings.shape[1], embeddings.shape[0]))
+        transformed = reducer.fit_transform(embeddings).astype(np.float32)
+        return transformed, reducer
+    if method == "umap":
+        umap = _check_umap()
+        if umap is None:
+            raise ImportError("umap-learn is required for UMAP. Install with: pip install umap-learn")
+        n_jobs = kwargs.pop("n_jobs", 32)
+        print(f"  [UMAP] Starting: {embeddings.shape} -> {n_components}d, n_jobs={n_jobs}")
+        reducer = umap.UMAP(n_components=n_components, n_jobs=n_jobs, low_memory=False, **kwargs)
+        transformed = reducer.fit_transform(embeddings).astype(np.float32)
+        print(f"  [UMAP] Done: {transformed.shape}")
+        return transformed, reducer
+    raise ValueError(f"method must be 'umap' or 'pca', got {method!r}")
+
+
+def fit_cluster_kmeans(
+    embeddings: np.ndarray,
+    n_clusters: int = 5,
+    init: str = "k-means++",
+    n_init: int = 10,
+    random_state: int = 42,
+) -> Tuple[np.ndarray, Any]:
+    """Like cluster_kmeans but returns (labels, fitted_kmeans_model).
+
+    The returned model supports ``.predict(new_sample)`` for new points.
+    """
+    from sklearn.cluster import KMeans
+    model = KMeans(
+        n_clusters=n_clusters,
+        init=init,
+        n_init=n_init,
+        random_state=random_state,
+    )
+    labels = model.fit_predict(embeddings).astype(np.int32)
+    return labels, model
+
+
 def run_clustering(
     embeddings: np.ndarray,
     method: Literal["knn", "hdbscan", "gaussian_mixture", "kmeans"] = "hdbscan",

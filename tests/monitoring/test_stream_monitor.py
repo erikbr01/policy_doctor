@@ -102,13 +102,13 @@ class TestStreamMonitorWithMock(unittest.TestCase):
 
     def test_embed_only_skips_scoring(self):
         monitor = StreamMonitor(scorer=self.scorer, assigner=self.assigner)
-        embedding, assignment, timing = monitor.process_sample_embed_only(
+        result = monitor.process_sample_embed_only(
             np.random.randn(2, 20).astype(np.float32),
             np.random.randn(8, 14).astype(np.float32),
         )
-        self.assertEqual(embedding.shape, (self.proj_dim,))
-        self.assertIsNotNone(assignment)
-        self.assertNotIn("score_ms", timing)
+        self.assertEqual(result.embedding.shape, (self.proj_dim,))
+        self.assertIsNotNone(result.assignment)
+        self.assertIsNone(result.influence_scores)
         self.scorer.score.assert_not_called()
 
     def test_torch_tensor_input(self):

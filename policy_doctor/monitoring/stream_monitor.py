@@ -123,14 +123,16 @@ class StreamMonitor:
         self,
         obs: Union[np.ndarray, torch.Tensor],
         action: Union[np.ndarray, torch.Tensor],
-    ) -> tuple[np.ndarray, Optional[AssignmentResult], dict]:
+    ) -> MonitorResult:
         """Compute embedding and graph assignment without full influence scoring.
 
         Cheaper than :meth:`process_sample` when only the behavior graph node
         assignment is needed at runtime (influence scores can be retrieved offline).
+        ``MonitorResult.influence_scores`` is ``None`` in the returned result.
 
         Returns:
-            ``(embedding, assignment, timing_ms)``
+            :class:`~policy_doctor.monitoring.base.MonitorResult` with
+            ``influence_scores=None`` and per-stage timing.
         """
         device = self.scorer.device
         obs_t = _to_tensor(obs, device).unsqueeze(0)
@@ -146,6 +148,7 @@ class StreamMonitor:
         embedding = self.scorer.embed(batch)
         t1 = time.perf_counter()
         timing["gradient_project_ms"] = (t1 - t0) * 1e3
+        timing["score_ms"] = 0.0
 
         assignment: Optional[AssignmentResult] = None
         if self.assigner is not None:
@@ -157,7 +160,12 @@ class StreamMonitor:
             timing["assign_ms"] = 0.0
 
         timing["total_ms"] = timing["gradient_project_ms"] + timing["assign_ms"]
-        return embedding, assignment, timing
+        return MonitorResult(
+            embedding=embedding,
+            influence_scores=None,
+            assignment=assignment,
+            timing_ms=timing,
+        )
 
 
 def _to_tensor(x: Union[np.ndarray, torch.Tensor], device: torch.device) -> torch.Tensor:

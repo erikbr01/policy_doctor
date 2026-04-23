@@ -1,20 +1,18 @@
-"""Behavior graph node assigner: maps an influence embedding to the nearest cluster.
+"""Behavior graph node assigners: map an influence embedding to the nearest cluster.
 
 Environment: usable from the ``policy_doctor`` conda env (no diffusion_policy needed).
 
-The assigner is initialized with pre-computed rollout embeddings and cluster labels
-(from ``infembed_embeddings.npz`` and ``cluster_labels.npy`` respectively).  It computes
-per-cluster centroids in the raw InfEmbed embedding space (``projection_dim`` dimensions)
-and assigns new samples by nearest-centroid L2 distance.
+Two assigners are provided:
 
-**Important caveat on cluster assignment accuracy:** The clustering pipeline reduces
-embeddings via UMAP before clustering, but neither the UMAP model nor the cluster
-model (KMeans / GMM) is currently persisted.  Centroids computed here are in the raw
-InfEmbed embedding space, not the UMAP-reduced space.  This is an approximation that
-works best when clustering was performed without dimensionality reduction (``dim_reduce``
-argument = "none") or when the raw-space geometry closely tracks the UMAP geometry.
-Saving the UMAP + cluster models during ``RunClusteringStep`` is the correct long-term
-fix and is left as future work.
+* :class:`NearestCentroidAssigner` — approximation in raw InfEmbed embedding space.
+  Does not require saved models; works even for clustering runs that predate model
+  persistence.  Centroids are computed from ``rollout_embeddings`` + ``cluster_labels``.
+
+* :class:`FittedModelAssigner` — exact assignment through the fitted pipeline.
+  Requires ``clustering_models.pkl`` produced by :func:`~policy_doctor.data.clustering_loader.save_clustering_models`
+  (available in ``RunClusteringStep`` runs after model saving was added).
+  Applies normalizer → prescaler → UMAP → KMeans.predict in the exact same order as
+  the clustering run, giving geometrically correct assignments.
 """
 
 from __future__ import annotations
@@ -113,5 +111,90 @@ class NearestCentroidAssigner(GraphAssigner):
             cluster_id=cluster_id,
             node_id=node_id,
             distance=float(distances[best_i]),
+            node_name=node_name,
+        )
+
+
+class FittedModelAssigner(GraphAssigner):
+    """Assign a new influence embedding to a cluster using the exact fitted pipeline.
+
+    Applies the same normalizer → prescaler → UMAP reducer → KMeans.predict sequence
+    that was used during the original ``RunClusteringStep``, giving geometrically
+    correct cluster assignments for new data points.
+
+    Requires ``clustering_models.pkl`` in the clustering result directory, which is
+    saved automatically by ``RunClusteringStep`` (from the version that added model
+    persistence).
+
+    Parameters
+    ----------
+    models:
+        :class:`~policy_doctor.data.clustering_loader.ClusteringModels` container with
+        the fitted sklearn/UMAP objects.
+    graph:
+        :class:`~policy_doctor.behaviors.behavior_graph.BehaviorGraph` built from the
+        same clustering run.
+    cluster_id_to_node_id:
+        Optional explicit mapping from cluster label to graph node ID (for pruned graphs).
+    """
+
+    def __init__(
+        self,
+        models: "ClusteringModels",  # noqa: F821
+        graph: BehaviorGraph,
+        cluster_id_to_node_id: Optional[Dict[int, int]] = None,
+    ) -> None:
+        self._models = models
+        self._graph = graph
+        self._cluster_id_to_node_id = cluster_id_to_node_id or {}
+
+    @classmethod
+    def from_paths(
+        cls,
+        clustering_dir: Union[str, Path],
+        graph: BehaviorGraph,
+        cluster_id_to_node_id: Optional[Dict[int, int]] = None,
+    ) -> "FittedModelAssigner":
+        """Load models from ``<clustering_dir>/clustering_models.pkl``."""
+        from policy_doctor.data.clustering_loader import load_clustering_models
+
+        models = load_clustering_models(Path(clustering_dir))
+        return cls(models=models, graph=graph, cluster_id_to_node_id=cluster_id_to_node_id)
+
+    def assign(self, embedding: np.ndarray) -> AssignmentResult:
+        """Assign ``embedding`` to a cluster via the fitted pipeline.
+
+        Args:
+            embedding: ``(proj_dim,)`` float32 array in the raw InfEmbed embedding space.
+
+        Returns:
+            :class:`~policy_doctor.monitoring.base.AssignmentResult`.
+        """
+        x = np.asarray(embedding, dtype=np.float32).reshape(1, -1)  # (1, proj_dim)
+
+        models = self._models
+        if models.normalizer is not None:
+            x = models.normalizer.transform(x).astype(np.float32)
+
+        if models.prescaler is not None:
+            x = models.prescaler.transform(x).astype(np.float32)
+
+        if models.reducer is not None:
+            x = models.reducer.transform(x).astype(np.float32)
+
+        if models.kmeans is None:
+            raise RuntimeError("FittedModelAssigner requires a fitted KMeans model.")
+        cluster_id = int(models.kmeans.predict(x)[0])
+
+        node_id = self._cluster_id_to_node_id.get(cluster_id, cluster_id)
+        node = self._graph.nodes.get(node_id)
+        node_name = node.name if node is not None else f"Behavior {node_id}"
+
+        centroid = models.kmeans.cluster_centers_[cluster_id]
+        distance = float(np.linalg.norm(x[0] - centroid))
+        return AssignmentResult(
+            cluster_id=cluster_id,
+            node_id=node_id,
+            distance=distance,
             node_name=node_name,
         )
