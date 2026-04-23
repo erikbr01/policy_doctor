@@ -31,13 +31,31 @@ class PipelineStep(ABC, Generic[T]):
     Subclasses may override:
       - ``save(result)`` to customise persistence (default: JSON dump)
       - ``load() -> T`` to customise loading (default: JSON load)
+
+    Args:
+        cfg:            Hydra config for the pipeline run.
+        run_dir:        Directory this step writes its results into.
+                        For top-level steps this is the pipeline run root.
+                        For steps inside a :class:`CompositeStep` this is the
+                        composite's ``step_dir``, so results are namespaced
+                        under ``<run_root>/<composite_name>/<step_name>/``.
+        parent_run_dir: Top-level pipeline run root.  Used by steps that need
+                        to read results from *sibling* top-level steps (e.g.
+                        ``SelectMimicgenSeedStep`` reading ``RunClusteringStep``).
+                        Defaults to *run_dir* for top-level steps.
     """
 
     name: str  # must be set by every concrete subclass
 
-    def __init__(self, cfg: DictConfig, run_dir: pathlib.Path) -> None:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        run_dir: pathlib.Path,
+        parent_run_dir: Optional[pathlib.Path] = None,
+    ) -> None:
         self.cfg = cfg
         self.run_dir = run_dir
+        self.parent_run_dir = parent_run_dir if parent_run_dir is not None else run_dir
         self.step_dir = run_dir / self.name
 
     # ------------------------------------------------------------------
@@ -117,3 +135,56 @@ class PipelineStep(ABC, Generic[T]):
             raise RuntimeError(
                 f"[{self.name}] subprocess failed with exit code {p.exitcode}"
             )
+
+
+class CompositeStep(PipelineStep[dict]):
+    """A pipeline step that groups a fixed sequence of sub-steps under one namespace.
+
+    Sub-steps write their results to::
+
+        <run_dir>/<composite_name>/<sub_step_name>/
+
+    so that multiple composite steps sharing the same top-level ``run_dir`` each
+    have their own isolated output tree.  Sub-steps can still read results from
+    *sibling* top-level steps (e.g. ``RunClusteringStep``) via ``parent_run_dir``,
+    which is transparently set to the top-level run root.
+
+    Resumability: each sub-step honours its own ``done`` sentinel, so a partially
+    completed arm can be resumed without re-running earlier sub-steps.  The
+    composite's own ``done`` sentinel is written only after all sub-steps finish.
+
+    Subclasses must define:
+        name               str — directory name for this arm (e.g. ``"mimicgen_random"``).
+        sub_step_classes   list[type[PipelineStep]] — ordered sub-step classes to run.
+
+    Subclasses may define:
+        cfg_overrides      dict[str, Any] — dotpath→value pairs applied to the cfg
+                           before any sub-step runs.  Use this to fix heuristic
+                           choices or other arm-specific settings without requiring
+                           separate experiment configs.
+    """
+
+    sub_step_classes: list = []
+    cfg_overrides: dict = {}
+
+    def compute(self) -> dict:
+        import copy
+        from omegaconf import OmegaConf
+
+        # Build arm-specific config by applying overrides on top of the shared cfg.
+        sub_cfg = copy.deepcopy(self.cfg)
+        for dotpath, value in (self.cfg_overrides or {}).items():
+            OmegaConf.update(sub_cfg, dotpath, value, merge=True)
+
+        # Sub-steps write into this composite's step_dir; cross-boundary lookups
+        # (e.g. RunClusteringStep) resolve against the parent run_dir.
+        sub_run_dir = self.step_dir
+        parent_run_dir = self.run_dir
+
+        results: dict = {}
+        for cls in self.sub_step_classes:
+            step = cls(sub_cfg, sub_run_dir, parent_run_dir=parent_run_dir)
+            result = step.run(skip_if_done=True)
+            results[cls.name] = result
+
+        return results

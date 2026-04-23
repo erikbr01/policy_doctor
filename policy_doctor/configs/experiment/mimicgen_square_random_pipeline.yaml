@@ -67,4 +67,4 @@ wandb_tags: [square, mimicgen, random]
 # ---------------------------------------------------------------------------
 # Steps
 # ---------------------------------------------------------------------------
-steps: [run_clustering, select_mimicgen_seed, generate_mimicgen_demos, train_on_combined_data]
+steps: [run_clustering, mimicgen_random]

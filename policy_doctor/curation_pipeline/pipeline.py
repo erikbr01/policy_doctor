@@ -31,6 +31,10 @@ ALL_STEPS: List[str] = [
     "eval_curated",
     "compare",
     # MimicGen trajectory generation pipeline
+    # Composite arms (each runs select → generate → train under a namespaced dir):
+    "mimicgen_random",          # RandomSelectionHeuristic
+    "mimicgen_behavior_graph",  # BehaviorGraphPathHeuristic
+    # Flat steps (legacy / single-heuristic runs):
     "select_mimicgen_seed",
     "generate_mimicgen_demos",
     "train_on_combined_data",
@@ -59,6 +63,10 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.select_mimicgen_seed import SelectMimicgenSeedStep
     from policy_doctor.curation_pipeline.steps.generate_mimicgen_demos import GenerateMimicgenDemosStep
     from policy_doctor.curation_pipeline.steps.train_on_combined_data import TrainOnCombinedDataStep
+    from policy_doctor.curation_pipeline.steps.mimicgen_arm import (
+        MimicgenRandomArmStep,
+        MimicgenBehaviorGraphArmStep,
+    )
 
     return {
         "train_baseline": TrainBaselineStep,
@@ -76,6 +84,8 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "train_curated": TrainCuratedStep,
         "eval_curated": EvalCuratedStep,
         "compare": CompareStep,
+        "mimicgen_random": MimicgenRandomArmStep,
+        "mimicgen_behavior_graph": MimicgenBehaviorGraphArmStep,
         "select_mimicgen_seed": SelectMimicgenSeedStep,
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,
         "train_on_combined_data": TrainOnCombinedDataStep,

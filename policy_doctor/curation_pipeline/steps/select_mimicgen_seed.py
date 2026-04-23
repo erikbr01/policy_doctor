@@ -85,7 +85,9 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         )
 
         # --- Load clustering result ---
-        prior = RunClusteringStep(self.cfg, self.run_dir).load()
+        # Use parent_run_dir so this step finds RunClusteringStep when running
+        # inside a CompositeStep (where run_dir is the composite's sub-directory).
+        prior = RunClusteringStep(self.cfg, self.parent_run_dir).load()
         clustering_dirs: dict[str, str] = {}
         if prior and isinstance(prior.get("clustering_dirs"), dict):
             clustering_dirs = {str(k): str(v) for k, v in prior["clustering_dirs"].items()}
