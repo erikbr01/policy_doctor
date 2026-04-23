@@ -1,0 +1,14 @@
+task: robomimic_square
+name: "Square D1 (Apr23 MimicGen pipeline test)"
+
+# Paths match train_date=apr23_mimicgen_pipeline_test, task=square_mh_mimicgen,
+# policy=diffusion_unet_lowdim, seed=0 (reference_seed).
+train_dir: "data/outputs/train/apr23_mimicgen_pipeline_test/apr23_mimicgen_pipeline_test_train_diffusion_unet_lowdim_square_mh_mimicgen_0"
+eval_dir:  "data/outputs/eval_save_episodes/apr23_mimicgen_pipeline_test/apr23_mimicgen_pipeline_test_train_diffusion_unet_lowdim_square_mh_mimicgen_0/latest"
+train_ckpt: "latest"
+exp_date: "default"
+
+image_dataset_path: null
+obs_key: null
+top_k: 10
+lazy_load_images: false

@@ -80,6 +80,8 @@ class TrainBaselineStep(PipelineStep[None]):
         checkpoint_every = OmegaConf.select(baseline, "checkpoint_every") or 50
         train_ratio = OmegaConf.select(baseline, "train_ratio") or 0.64
         val_ratio = OmegaConf.select(baseline, "val_ratio") or 0.04
+        max_train_episodes_raw = OmegaConf.select(baseline, "max_train_episodes")
+        max_train_episodes: int | None = int(max_train_episodes_raw) if max_train_episodes_raw is not None else None
         uniform_quality = OmegaConf.select(baseline, "uniform_quality")
         if uniform_quality is None:
             uniform_quality = True
@@ -151,8 +153,14 @@ class TrainBaselineStep(PipelineStep[None]):
                     f"training.rollout_every={checkpoint_every}",
                     f"task.dataset.seed={seed}",
                     f"task.dataset.val_ratio={val_ratio}",
-                    f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
-                    f"+task.dataset.dataset_mask_kwargs.uniform_quality={uniform_quality}",
+                    *(
+                        [f"+task.dataset.dataset_mask_kwargs.max_train_episodes={max_train_episodes}"]
+                        if max_train_episodes is not None
+                        else [
+                            f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
+                            f"+task.dataset.dataset_mask_kwargs.uniform_quality={uniform_quality}",
+                        ]
+                    ),
                     f"logging.name={train_name}",
                     f"logging.group={train_date}_{exp_name}_{task}",
                     f"logging.project={project}",
