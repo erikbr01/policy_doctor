@@ -126,6 +126,21 @@ _PD_TASK_SWITCH_RESET_KEYS: tuple[str, ...] = (
     "vlm_task_hint",
     "vlm_user_tmpl",
     "vlm_sys_tmpl",
+    # Runtime monitor
+    "rm_df",
+    "rm_path",
+    "rm_threshold",
+    "rm_episode",
+    "rm_episode_list_idx",
+    "rm_mode",
+    "rm_timestep",
+    "rm_intv_source",
+    "rm_ep_filter",
+    "rm_top_k",
+    "rm_influence_window",
+    "rm_agg",
+    "rm_node_color_map",
+    "rm_upload",
 )
 
 
@@ -338,13 +353,22 @@ def main() -> None:
 
     _render_sidebar_config_import()
 
-    tab_clustering, tab_behavior, tab_vlm, tab_curation, tab_comparison, tab_mimicgen_eef = st.tabs([
+    (
+        tab_clustering,
+        tab_behavior,
+        tab_vlm,
+        tab_curation,
+        tab_comparison,
+        tab_mimicgen_eef,
+        tab_runtime_monitor,
+    ) = st.tabs([
         "Clustering",
         "Behavior Graph",
         "VLM annotation",
         "Curation",
         "Comparison",
         "MimicGen EEF",
+        "Runtime Monitor",
     ])
 
     with tab_clustering:
@@ -370,6 +394,10 @@ def main() -> None:
     with tab_mimicgen_eef:
         from policy_doctor.streamlit_app.tabs import mimicgen_eef
         mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
+
+    with tab_runtime_monitor:
+        from policy_doctor.streamlit_app.tabs import runtime_monitor
+        runtime_monitor.render_tab(config=config, data=data, task_config_stem=config_name)
 
 
 if __name__ == "__main__":
