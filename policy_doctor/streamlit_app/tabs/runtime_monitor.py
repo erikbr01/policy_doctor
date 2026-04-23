@@ -115,9 +115,26 @@ def _get_node_color_map(df: pd.DataFrame) -> Dict[str, str]:
 # Sub-renderers
 # ──────────────────────────────────────────────────────────
 
-def _render_load_section() -> Optional[pd.DataFrame]:
+def _suggested_csv_path(config: VisualizerConfig) -> Optional[Path]:
+    """Return the most likely monitor_assignments.csv path from config.eval_dir."""
+    if not config.eval_dir:
+        return None
+    from policy_doctor.paths import REPO_ROOT
+    p = Path(config.eval_dir)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    candidate = p / "monitor_assignments.csv"
+    return candidate
+
+
+def _render_load_section(config: VisualizerConfig) -> Optional[pd.DataFrame]:
     """Section 1 — CSV upload or path input. Returns parsed DataFrame or None."""
     st.subheader("1. Load Monitor Data")
+
+    suggested = _suggested_csv_path(config)
+    default_path = st.session_state.get("rm_path", "")
+    if not default_path and suggested is not None:
+        default_path = str(suggested)
 
     col_upload, col_path = st.columns([1, 1])
     with col_upload:
@@ -131,11 +148,17 @@ def _render_load_section() -> Optional[pd.DataFrame]:
         )
     with col_path:
         path_str = st.text_input(
-            "…or paste CSV path",
-            value=st.session_state.get("rm_path", ""),
+            "…or path",
+            value=default_path,
             key="rm_path_input",
             placeholder="/path/to/monitor_assignments.csv",
+            help="Defaults to <eval_dir>/monitor_assignments.csv from the sidebar task config.",
         )
+        if suggested is not None:
+            if suggested.exists():
+                st.caption(f"✓ found at `{suggested}`")
+            else:
+                st.caption(f"Not yet at `{suggested}`")
 
     df: Optional[pd.DataFrame] = st.session_state.get("rm_df")
 
@@ -702,7 +725,7 @@ def render_tab(
     )
 
     # ── 1. Load data ─────────────────────────────────────
-    df = _render_load_section()
+    df = _render_load_section(config)
     if df is None:
         return
 
