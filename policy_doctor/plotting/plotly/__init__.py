@@ -33,6 +33,11 @@ from policy_doctor.plotting.plotly.frames import (
     create_label_timeline,
     create_state_action_scatter,
 )
+from policy_doctor.plotting.plotly.monitoring import (
+    create_demo_influence_bar,
+    create_intervention_scatter,
+    create_monitoring_timeline,
+)
 from policy_doctor.plotting.plotly.heatmaps import (
     create_aggregated_influence_grid,
     create_asymmetry_variance_plot,

@@ -24,6 +24,9 @@ from policy_doctor.plotting.common import (
 )
 from policy_doctor.plotting.plotly import (
     CLUSTER_COLORS,
+    create_demo_influence_bar,
+    create_intervention_scatter,
+    create_monitoring_timeline,
     create_advantage_matrix_heatmap,
     create_aggregated_influence_grid,
     create_annotated_frame,
@@ -160,4 +163,7 @@ __all__ = [
     "create_influence_matrices_with_variance",
     "create_cluster_influence_box_plot",
     "create_confusion_matrix_plot",
+    "create_monitoring_timeline",
+    "create_intervention_scatter",
+    "create_demo_influence_bar",
 ]

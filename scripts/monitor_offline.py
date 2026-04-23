@@ -54,10 +54,11 @@ def _build_classifier(args, mode: str):
     )
 
 
-def _results_to_rows(timesteps_and_results):
+def _results_to_rows(timesteps_and_results, episode: int = 0):
     rows = []
     for t, r in timesteps_and_results:
         rows.append({
+            "episode": episode,
             "timestep": t,
             "cluster_id": r.assignment.cluster_id if r.assignment else "",
             "node_id": r.assignment.node_id if r.assignment else "",
@@ -117,6 +118,9 @@ def main():
     parser.add_argument("--output", metavar="CSV", default=None,
                         help="Save assignments to this CSV path (default: print only)")
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--episode_idx", type=int, default=0, metavar="N",
+                        help="Episode index written to the 'episode' column in the output CSV "
+                             "(default: 0). Useful when appending results from multiple episodes.")
 
     args = parser.parse_args()
 
@@ -144,7 +148,7 @@ def main():
             results = classifier.classify_demo_from_hdf5(demo_group)
 
     print(f"\nClassified {len(results)} timesteps\n")
-    rows = _results_to_rows(results)
+    rows = _results_to_rows(results, episode=args.episode_idx)
     _print_table(rows)
     _print_summary(rows)
 
