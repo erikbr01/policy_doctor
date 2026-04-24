@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from policy_doctor.monitoring.base import AssignmentResult, MonitorResult
+from policy_doctor.monitoring.intervention import InterventionDecision, InterventionRule
 from policy_doctor.monitoring.monitored_policy import MonitoredPolicy
 from policy_doctor.monitoring.trajectory_classifier import TrajectoryClassifier
 
@@ -175,6 +176,175 @@ class TestMonitoredPolicyDelegation(unittest.TestCase):
         mp = MonitoredPolicy(policy, _make_mock_classifier())
         mp.set_normalizer("something")
         policy.set_normalizer.assert_called_once_with("something")
+
+
+def _make_mock_classifier_with_scores(scores_array: np.ndarray):
+    classifier = MagicMock(spec=TrajectoryClassifier)
+    classifier.classify_sample.return_value = MonitorResult(
+        embedding=np.zeros(50, dtype=np.float32),
+        influence_scores=scores_array,
+        assignment=AssignmentResult(cluster_id=0, node_id=0, distance=0.1, node_name="B0"),
+        timing_ms={"total_ms": 1.0},
+    )
+    return classifier
+
+
+class TestMonitoredPolicyInterventionRule(unittest.TestCase):
+
+    def test_intervention_key_none_when_no_rule(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
+        mp.predict_action(_obs_dict())
+        self.assertIsNone(mp.episode_results[0]["intervention"])
+
+    def test_intervention_key_is_decision_when_rule_set(self):
+        rule = MagicMock(spec=InterventionRule)
+        rule.check.return_value = InterventionDecision(triggered=False, reason="ok")
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.predict_action(_obs_dict())
+        decision = mp.episode_results[0]["intervention"]
+        self.assertIsInstance(decision, InterventionDecision)
+
+    def test_rule_check_called_once_per_timestep(self):
+        rule = MagicMock(spec=InterventionRule)
+        rule.check.return_value = InterventionDecision(triggered=False)
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.predict_action(_obs_dict())
+        mp.predict_action(_obs_dict())
+        self.assertEqual(rule.check.call_count, 2)
+
+    def test_rule_check_receives_monitor_result(self):
+        rule = MagicMock(spec=InterventionRule)
+        rule.check.return_value = InterventionDecision(triggered=False)
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.predict_action(_obs_dict())
+        result_arg = rule.check.call_args[0][0]
+        self.assertIsInstance(result_arg, MonitorResult)
+
+    def test_rule_check_receives_growing_history(self):
+        rule = MagicMock(spec=InterventionRule)
+        rule.check.return_value = InterventionDecision(triggered=False)
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.predict_action(_obs_dict())
+        mp.predict_action(_obs_dict())
+        # second call: history contains both results (current was appended before check)
+        history_arg = rule.check.call_args[0][1]
+        self.assertIsInstance(history_arg, list)
+        self.assertEqual(len(history_arg), 2)
+
+    def test_rule_reset_called_on_policy_reset(self):
+        rule = MagicMock(spec=InterventionRule)
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.predict_action(_obs_dict())
+        mp.reset()
+        rule.reset.assert_called_once()
+
+    def test_rule_reset_called_even_without_prior_steps(self):
+        rule = MagicMock(spec=InterventionRule)
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.reset()
+        rule.reset.assert_called_once()
+
+    def test_triggered_decision_stored_in_results(self):
+        rule = MagicMock(spec=InterventionRule)
+        rule.check.return_value = InterventionDecision(triggered=True, reason="low_value")
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), intervention_rule=rule)
+        mp.predict_action(_obs_dict())
+        self.assertTrue(mp.episode_results[0]["intervention"].triggered)
+
+
+class TestMonitoredPolicyBuffers(unittest.TestCase):
+
+    def test_influence_buffer_maxlen_equals_window(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=3)
+        self.assertEqual(mp._influence_buffer.maxlen, 3)
+
+    def test_monitor_history_maxlen_equals_window(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=3)
+        self.assertEqual(mp._monitor_history.maxlen, 3)
+
+    def test_buffers_cleared_on_reset(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
+        mp.predict_action(_obs_dict())
+        mp.reset()
+        self.assertEqual(len(mp._influence_buffer), 0)
+        self.assertEqual(len(mp._monitor_history), 0)
+
+    def test_buffer_does_not_exceed_max_influence_window(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=3)
+        for _ in range(10):
+            mp.predict_action(_obs_dict())
+        self.assertLessEqual(len(mp._influence_buffer), 3)
+        self.assertLessEqual(len(mp._monitor_history), 3)
+
+    def test_influence_scores_none_skips_influence_buffer(self):
+        classifier = MagicMock(spec=TrajectoryClassifier)
+        classifier.classify_sample.return_value = MonitorResult(
+            embedding=np.zeros(50, dtype=np.float32),
+            influence_scores=None,
+            assignment=AssignmentResult(cluster_id=0, node_id=0, distance=0.1, node_name="B0"),
+            timing_ms={"total_ms": 1.0},
+        )
+        mp = MonitoredPolicy(_make_mock_policy(), classifier)
+        mp.predict_action(_obs_dict())
+        self.assertEqual(len(mp._influence_buffer), 0)
+        self.assertEqual(len(mp._monitor_history), 1)
+
+
+class TestMonitoredPolicyGetSliceInfluence(unittest.TestCase):
+
+    def test_empty_buffer_returns_empty_arrays(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
+        indices, scores = mp.get_slice_influence()
+        self.assertEqual(len(indices), 0)
+        self.assertEqual(len(scores), 0)
+
+    def test_returns_top_k_results(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
+        mp.predict_action(_obs_dict())  # _dummy_result has 100 influence scores
+        indices, scores = mp.get_slice_influence(top_k=20)
+        self.assertEqual(len(indices), 20)
+        self.assertEqual(len(scores), 20)
+
+    def test_top_k_capped_at_n_demo(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
+        mp.predict_action(_obs_dict())
+        indices, scores = mp.get_slice_influence(top_k=500)  # N_demo=100
+        self.assertEqual(len(indices), 100)
+        self.assertEqual(len(scores), 100)
+
+    def test_scores_descending_by_default(self):
+        scores_array = np.arange(100, dtype=np.float32)  # distinct values
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier_with_scores(scores_array))
+        mp.predict_action(_obs_dict())
+        _, scores = mp.get_slice_influence(top_k=10)
+        for i in range(len(scores) - 1):
+            self.assertGreaterEqual(scores[i], scores[i + 1])
+
+    def test_ascending_returns_lowest_scores_first(self):
+        scores_array = np.arange(100, dtype=np.float32)
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier_with_scores(scores_array))
+        mp.predict_action(_obs_dict())
+        _, scores_desc = mp.get_slice_influence(top_k=5, ascending=False)
+        _, scores_asc = mp.get_slice_influence(top_k=5, ascending=True)
+        self.assertGreater(scores_desc[0], scores_asc[0])
+
+    def test_indices_and_scores_same_length(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
+        mp.predict_action(_obs_dict())
+        indices, scores = mp.get_slice_influence(top_k=15)
+        self.assertEqual(len(indices), len(scores))
+
+    def test_multi_step_buffer_aggregated(self):
+        # Two timesteps: buffer contains 2 rows; result shape should still be (top_k,)
+        scores_array = np.arange(100, dtype=np.float32)
+        mp = MonitoredPolicy(
+            _make_mock_policy(), _make_mock_classifier_with_scores(scores_array), max_influence_window=5
+        )
+        mp.predict_action(_obs_dict())
+        mp.predict_action(_obs_dict())
+        indices, scores = mp.get_slice_influence(top_k=10)
+        self.assertEqual(len(indices), 10)
+        self.assertEqual(len(scores), 10)
 
 
 if __name__ == "__main__":
