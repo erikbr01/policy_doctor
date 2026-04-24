@@ -131,7 +131,7 @@ class RobomimicDAggerRunner:
                 intervention_decision = self.monitored_policy.episode_results[-1][
                     "intervention"
                 ]
-                if intervention_decision.triggered:
+                if intervention_decision is not None and intervention_decision.triggered:
                     # Auto-trigger: switch to human mode
                     acting_agent = "human"
                     self.env.set_acting_agent(acting_agent)
@@ -190,7 +190,7 @@ class RobomimicDAggerRunner:
             self.env.save_episode()
 
         # Return summary
-        success = info.get("success", False) if not done else False
+        success = bool(info.get("success", False)) if done else False
         record = EpisodeRecord(
             episode_idx=episode_idx,
             success=success,

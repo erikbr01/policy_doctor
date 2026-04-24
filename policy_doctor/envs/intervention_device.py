@@ -114,10 +114,10 @@ class KeyboardInterventionDevice(InterventionDevice):
                 char = key.char
                 if char and char.lower() in self.KEY_BINDINGS:
                     self._keys_pressed.add(char.lower())
-                if char == " ":  # space key
-                    self._is_intervening = not self._is_intervening
             except AttributeError:
-                pass
+                # Special key (arrows, F-keys, space, etc.)
+                if key == self._keyboard.Key.space:
+                    self._is_intervening = not self._is_intervening
 
         def on_release(key):
             try:

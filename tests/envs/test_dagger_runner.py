@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from policy_doctor.envs.intervention_device import PassthroughInterventionDevice
-from policy_doctor.envs.dagger_runner import EpisodeRecord, RobocasaDAggerRunner
+from policy_doctor.envs.dagger_runner import EpisodeRecord, RobomimicDAggerRunner
 
 
 def test_episode_record_creation():
@@ -29,12 +29,12 @@ def test_episode_record_creation():
 
 
 def test_dagger_runner_initialization():
-    """Test RobocasaDAggerRunner initialization."""
+    """Test RobomimicDAggerRunner initialization."""
     monitored_policy = MagicMock()
     env = MagicMock()
     device = PassthroughInterventionDevice()
 
-    runner = RobocasaDAggerRunner(
+    runner = RobomimicDAggerRunner(
         monitored_policy=monitored_policy,
         env=env,
         intervention_device=device,
@@ -66,7 +66,7 @@ def test_dagger_runner_run_returns_list():
     monitored_policy.predict_action.return_value = {"action": np.random.randn(1, 8, 10)}
     monitored_policy.episode_results = [{"intervention": MagicMock(triggered=False)}]
 
-    runner = RobocasaDAggerRunner(
+    runner = RobomimicDAggerRunner(
         monitored_policy=monitored_policy,
         env=env,
         intervention_device=device,
@@ -86,7 +86,7 @@ def test_dagger_runner_manual_override_handling():
     env = MagicMock()
     device = PassthroughInterventionDevice()
 
-    runner = RobocasaDAggerRunner(
+    runner = RobomimicDAggerRunner(
         monitored_policy=monitored_policy,
         env=env,
         intervention_device=device,

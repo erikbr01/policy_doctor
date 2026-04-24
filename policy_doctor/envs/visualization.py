@@ -5,10 +5,9 @@ from __future__ import annotations
 from typing import Optional
 
 import matplotlib
+matplotlib.use("TkAgg")  # Must be set before pyplot import; use "MacOSX" or "Agg" if Tk unavailable
 import matplotlib.pyplot as plt
 import numpy as np
-
-matplotlib.use("TkAgg")  # Use Tk backend (works on macOS)
 
 
 class DAggerVisualizer:
@@ -40,7 +39,10 @@ class DAggerVisualizer:
             ax.axis("off")
 
         self.text_ax = None
-        self.fig.canvas.set_window_title("DAgger Rollout Monitor")
+        try:
+            self.fig.canvas.manager.set_window_title("DAgger Rollout Monitor")
+        except AttributeError:
+            pass  # No window manager (headless or non-interactive backend)
 
     def update(
         self,
