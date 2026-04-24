@@ -81,6 +81,13 @@ class BaseWorkspace:
 
         for key, value in payload['state_dicts'].items():
             if key not in exclude_keys:
+                # Strip torch.compile _orig_mod. prefix so compiled checkpoints
+                # can be loaded into non-compiled workspaces (e.g. eval_save_episodes).
+                if isinstance(value, dict):
+                    value = {
+                        (k[len("_orig_mod."):] if k.startswith("_orig_mod.") else k): v
+                        for k, v in value.items()
+                    }
                 self.__dict__[key].load_state_dict(value, **kwargs)
         for key in include_keys:
             if key in payload['pickles']:
