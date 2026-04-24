@@ -46,6 +46,10 @@ baseline:
 # ---------------------------------------------------------------------------
 # attribution.train_date/eval_date in the baseline YAML default to jan18;
 # override here so all attribution steps use the correct apr23 run paths.
+evaluation:
+  train_date: apr23_mimicgen_pipeline_test
+  eval_date: apr23_mimicgen_pipeline_test
+
 attribution:
   train_date: apr23_mimicgen_pipeline_test
   eval_date: apr23_mimicgen_pipeline_test
