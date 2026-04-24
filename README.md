@@ -250,6 +250,53 @@ The **robocasa** env uses robosuite 1.5.2 and evaluates entirely via live rollou
 ./scripts/experiments/train_robocasa_atomic.sh OpenCabinet
 ```
 
+### Performance flags
+
+All three training scripts accept optional flags **before** any Hydra overrides to control compilation, TF32 matmul, and multi-GPU training:
+
+| Flag | Effect |
+|------|--------|
+| `--compile` | Wrap the model with `torch.compile` (requires PyTorch ≥ 2.0 — use `cupid_torch2` env) |
+| `--no-compile` | Explicitly disable compilation (pass `+training.compile=false` to Hydra) |
+| `--tf32` | Enable TF32 matmul (`torch.backends.cuda.matmul.allow_tf32 = True`) |
+| `--no-tf32` | Explicitly disable TF32 |
+| `--num-gpus N` | Use N GPUs via `torchrun` (DistributedDataParallel); default is `1` (plain `python`) |
+
+```bash
+# Single GPU with compile + TF32 (recommended for RTX 40xx)
+./scripts/experiments/train_robomimic_square.sh --compile --tf32
+
+# 2-GPU DDP run
+./scripts/experiments/train_robomimic_square.sh --num-gpus 2 --compile --tf32
+
+# MimicGen on GPU 1 with compile (use cupid_torch2 env — plain cupid has PyTorch 1.12)
+./scripts/experiments/train_mimicgen_square.sh --compile training.device=cuda:1
+
+# RoboCasa with compile and 4 GPUs
+./scripts/experiments/train_robocasa_atomic.sh --compile --tf32 --num-gpus 4 OpenCabinet
+```
+
+**Compilation notes:**
+- `torch.compile` with `fullgraph=True, dynamic=False` is the default mode — it specialises kernels for fixed shapes and gives the largest speedup on RTX 40xx hardware.
+- Both diffusion backbones (`ConditionalUnet1D` and `TransformerForDiffusion`) trace without graph breaks in this mode.
+- EMA updates read from the wrapped model via `unwrap_model()` (`ddp_util.unwrap_model`), which strips both `DDP.module` and `._orig_mod` wrappers so parameter shapes always match.
+- Multi-GPU: `torchrun` is used under the hood; DDP is initialised inside each workspace's `run()`. Rank 0 handles all W&B logging and checkpoint saves. GPU memory on rank 0 is slightly higher due to NCCL P2P staging buffers allocated on that device.
+
+**Required conda env for `--compile`:** the default `cupid` env ships PyTorch 1.12, which predates `torch.compile`. Use `cupid_torch2` (PyTorch 2.4, created by cloning `cupid`) for any run that uses `--compile`. Scripts default to `cupid_torch2` already.
+
+**`training.num_steps` — step-based training duration:**
+
+An alternative to `num_epochs` for specifying how long to train. When set, the workspace computes `num_epochs = ceil(num_steps / steps_per_epoch)` from the actual dataloader length and breaks out of the inner batch loop as soon as `global_step >= num_steps`, forcing a final eval and checkpoint at that point.
+
+```bash
+# 100 000 gradient steps regardless of dataset size or GPU count
+./scripts/experiments/train_robomimic_square.sh "+training.num_steps=100000"
+```
+
+`num_steps` and `num_epochs` are mutually exclusive — setting `num_steps` overrides `num_epochs`. Default in all pipeline configs is `num_steps: null` (epoch-based).
+
+**DDP epoch count note:** with `DistributedSampler`, each rank processes `N / num_gpus` samples per epoch, so `steps_per_epoch` is already halved with 2 GPUs. Specifying `num_steps=100000` with 2 GPUs therefore runs `ceil(100000 / 155)` epochs instead of `ceil(100000 / 309)` — the same total gradient-update count regardless of GPU count, without any LR adjustment. If you use `num_epochs` instead (the default), note that the effective batch size doubles with 2 GPUs (allreduce), so the standard practice is to scale `training.lr` by `num_gpus` manually when switching from 1 → N GPUs.
+
 ### Overriding Hydra parameters
 
 All extra positional arguments are forwarded as Hydra overrides:
@@ -301,6 +348,35 @@ Scripts resolve datasets from **`data/source/`** at the project root (symlinks t
 | `train_mimicgen_square.sh` | `data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5` |
 | `train_robocasa_atomic.sh` | `data/source/robocasa/v1.0/target/atomic/<TASK>/<latest-date>/lerobot/` (auto-discovered) |
 
+### Attribution performance flags (TRAK and InfEmbed)
+
+The attribution steps (`train_attribution` / TRAK, `compute_infembed` / InfEmbed) also support `tf32` and `compile` — configured via the attribution YAML rather than CLI flags.
+
+**YAML keys** (in `policy_doctor/configs/robomimic/attribution/low_dim/*.yaml`):
+
+```yaml
+tf32: true     # enables torch.backends.cuda.matmul.allow_tf32 and cudnn.allow_tf32
+compile: true  # wraps the policy with torch.compile before attribution
+```
+
+Both keys default to `true` in all shipped configs.
+
+**Compilation behaviour in attribution context:**
+- For TRAK the policy is compiled with `dynamic=True, fullgraph=False` because `torch.func.grad` and `vmap` introduce control flow that prevents single-graph tracing.
+- For InfEmbed the `DiffusionLossWrapper` is compiled with `fullgraph=False` for the same reason (`torch.func.functional_call` receives an `nn.Module` argument that dynamo cannot trace through with `fullgraph=True`).
+- Numerical equivalence between compiled and eager outputs is verified to `atol=1e-5` in `tests/attribution/test_attribution_flags.py` (`TestCompiledAttributionMatchesEager`).
+
+**Override on the command line:**
+
+```bash
+# Run train_attribution step with tf32/compile disabled
+python -m policy_doctor.scripts.run_pipeline \
+  steps=[train_attribution] \
+  attribution.tf32=false \
+  attribution.compile=false \
+  train_date=jan18 eval_date=jan28
+```
+
 ---
 
 ## Shell scripts (this repository)
@@ -335,7 +411,8 @@ Source package map (under `policy_doctor/`): **data** (trajectories, influence m
 | Env | Install | Role |
 |-----|---------|------|
 | **`policy_doctor`** | `environment_policy_doctor.yaml` + `./scripts/install_policy_doctor_env.sh` | Package dev, tests, Streamlit, pipeline orchestration, clustering/curation steps that only need Python deps |
-| **`cupid`** | `./scripts/install_cupid_env.sh` | Diffusion training, `eval_save_episodes`, TRAK, InfEmbed, curated retraining (Py 3.9, pinned sim stack) |
+| **`cupid`** | `./scripts/install_cupid_env.sh` | Diffusion training, `eval_save_episodes`, TRAK, InfEmbed, curated retraining (Py 3.9, PyTorch 1.12, pinned sim stack) |
+| **`cupid_torch2`** | Clone of `cupid` with PyTorch 2.4 | Same role as `cupid` but supports `torch.compile` and multi-GPU DDP; used by training scripts when `--compile` is requested |
 | **`mimicgen`** | `./scripts/install_mimicgen_env.sh` | MimicGen data generation (Py 3.8, MuJoCo 2.3.2, pinned robosuite / robomimic) |
 
 Constants: `policy_doctor.paths.CUPID_CONDA_ENV_NAME`, `MIMICGEN_CONDA_ENV_NAME`, `POLICY_DOCTOR_CONDA_ENV_NAME`.

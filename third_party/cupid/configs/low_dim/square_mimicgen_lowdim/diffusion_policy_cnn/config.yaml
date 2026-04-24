@@ -35,7 +35,7 @@ task:
   dataset:
     _target_: diffusion_policy.dataset.mimicgen_replay_lowdim_dataset.MimicgenReplayLowdimDataset
     abs_action: false
-    dataset_path: data/mimicgen/square_merged.hdf5
+    dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
     horizon: 16
     max_train_episodes: null
     obs_keys:
@@ -54,7 +54,7 @@ task:
     _target_: diffusion_policy.env_runner.mimicgen_lowdim_runner.MimicgenLowdimRunner
     abs_action: false
     crf: 22
-    dataset_path: data/mimicgen/square_merged.hdf5
+    dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
     fps: 10
     max_steps: 500
     n_action_steps: 8

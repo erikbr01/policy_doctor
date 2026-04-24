@@ -1,0 +1,29 @@
+# @package mimicgen_datagen
+# MimicGen Square task — D1 variant.
+#
+# Placement bounds (from Square_D1._get_initial_placement_bounds):
+#   nut:  x ∈ [-0.115, +0.115],  y ∈ [-0.255, +0.255],  z_rot ∈ [0, 2π]
+#   peg:  x ∈ [-0.1, +0.3],      y ∈ [-0.2, +0.2],      z_rot = 0 (fixed)
+#
+# D1 is the full-diversity variant — both nut and peg positions randomise freely.
+# MimicGen's object-centric retargeting is designed to handle this. The intent
+# here is to generate a diverse dataset covering the full state space, so pose
+# constraints are not applied.
+
+task_name: square
+env_interface_name: MG_Square
+env_interface_type: robosuite
+source_dataset_path: data/source/mimicgen/square_d1.hdf5
+
+# Trajectory variance knobs — MimicGen defaults to preserve diversity
+action_noise: 0.05
+subtask_term_offset_range: [10, 20]
+nn_k: 3
+interpolate_from_last_target_pose: true
+transform_first_robot_pose: false
+num_interpolation_steps: 5
+num_fixed_steps: 0
+
+# Object pose constraints — disabled; full randomisation is the point of D1
+fix_initial_object_poses: false
+object_pose_ranges: null

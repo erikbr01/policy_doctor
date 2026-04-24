@@ -1,0 +1,28 @@
+# @package mimicgen_datagen
+# MimicGen Coffee task.
+#
+# Coffee involves placing a coffee pod into a machine. Moderate object randomisation.
+# Defaults mirror standard MimicGen settings until a task-specific variance sweep
+# has identified which axes to constrain and by how much.
+
+task_name: coffee
+env_interface_name: MG_Coffee
+env_interface_type: robosuite
+source_dataset_path: data/source/mimicgen/coffee.hdf5
+
+# Trajectory variance knobs
+action_noise: 0.05
+subtask_term_offset_range: [10, 20]
+nn_k: 3
+interpolate_from_last_target_pose: true
+transform_first_robot_pose: false
+num_interpolation_steps: 5
+num_fixed_steps: 0
+
+# Object pose constraints
+# Enable and populate object_pose_ranges once a variance sweep has been run.
+# Example tight setting (pin everything to seed):
+#   fix_initial_object_poses: true
+#   object_pose_ranges: null   # null = pin all axes exactly
+fix_initial_object_poses: false
+object_pose_ranges: null

@@ -32,10 +32,11 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
     def compute(self) -> Dict[str, str]:
         from policy_doctor.behaviors.clustering import (
-            cluster_kmeans,
-            normalize_embeddings,
-            reduce_dimensions,
+            fit_cluster_kmeans,
+            fit_normalize_embeddings,
+            fit_reduce_dimensions,
         )
+        from policy_doctor.data.clustering_loader import save_clustering_models
         from influence_visualizer.clustering_results import save_clustering_result
         from influence_visualizer.data_loader import get_eval_dir_for_seed
 
@@ -104,18 +105,18 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
             print(f"  Slice embeddings: {embeddings_arr.shape}")
             print(f"  Normalizing: {normalize}")
-            embeddings_norm = normalize_embeddings(embeddings_arr, method=normalize)
+            embeddings_norm, normalizer_model = fit_normalize_embeddings(embeddings_arr, method=normalize)
 
             print(f"  Pre-UMAP scaling: {umap_prescale}")
-            embeddings_scaled = normalize_embeddings(embeddings_norm, method=umap_prescale)
+            embeddings_scaled, prescaler_model = fit_normalize_embeddings(embeddings_norm, method=umap_prescale)
 
             print(f"  UMAP: {embeddings_scaled.shape[1]}d -> {umap_n_components}d (n_jobs={umap_n_jobs})")
-            embeddings_reduced = reduce_dimensions(
+            embeddings_reduced, umap_model = fit_reduce_dimensions(
                 embeddings_scaled, method="umap", n_components=umap_n_components, n_jobs=umap_n_jobs
             )
 
             print(f"  K-Means: k={n_clusters}")
-            labels = cluster_kmeans(embeddings_reduced, n_clusters=n_clusters)
+            labels, kmeans_model = fit_cluster_kmeans(embeddings_reduced, n_clusters=n_clusters)
 
             n_actual = len(set(labels) - {-1})
             print(f"  Clusters: {n_actual}, noise: {int((labels == -1).sum())}")
@@ -134,7 +135,17 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                 n_clusters=n_actual,
                 n_samples=len(labels),
             )
-            print(f"  Saved: {result_dir}")
+            models_path = save_clustering_models(
+                result_dir=result_dir,
+                normalizer=normalizer_model,
+                normalizer_method=normalize,
+                prescaler=prescaler_model,
+                prescaler_method=umap_prescale,
+                reducer=umap_model,
+                reducer_method="umap",
+                kmeans=kmeans_model,
+            )
+            print(f"  Saved: {result_dir}  (models: {models_path.name})")
             result_dirs[seed] = str(result_dir)
 
         return {"clustering_dirs": result_dirs}

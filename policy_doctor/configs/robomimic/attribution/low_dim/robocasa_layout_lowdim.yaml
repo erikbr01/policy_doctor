@@ -46,3 +46,7 @@ overwrite: false
 # Example:
 #   dataset_path: data/robocasa/datasets/kitchen_lowdim_merged.hdf5
 dataset_path: null
+
+# Acceleration flags
+tf32: true
+compile: true

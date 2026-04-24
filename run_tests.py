@@ -29,6 +29,7 @@ _ORCHESTRATION_INTEGRATION_MODULES = (
 _CUPID_TEST_MODULES = (
     "tests.integration.test_mar27_transport_mimicgen_pipeline",
     "tests.integration.test_fingerprint_episode_ends",
+    "tests.integration.test_monitor_integration",
 )
 
 _MIMICGEN_TEST_MODULES = (
@@ -44,6 +45,8 @@ _ORCHESTRATION_SUBPACKAGES = (
     "tests/computations",
     "tests/curation",
     "tests/plotting",
+    "tests/training",
+    "tests/attribution",
     "tests/vlm",
 )
 

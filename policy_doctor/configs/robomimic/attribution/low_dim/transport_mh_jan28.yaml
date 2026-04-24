@@ -44,3 +44,7 @@ overwrite: false
 infembed_batch_size: 128
 projection_dim: 100
 arnoldi_dim: 200
+
+# Acceleration flags
+tf32: true
+compile: true
