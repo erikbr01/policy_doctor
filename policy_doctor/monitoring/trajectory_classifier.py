@@ -127,7 +127,7 @@ class TrajectoryClassifier:
         infembed_embeddings_path: str,
         clustering_dir: str,
         mode: Literal["rollout", "demo"] = "rollout",
-        device: str = "cuda:0",
+        device: str = "auto",
         episodes_dir: Optional[str] = None,
     ) -> "TrajectoryClassifier":
         """Build a TrajectoryClassifier from a policy checkpoint.

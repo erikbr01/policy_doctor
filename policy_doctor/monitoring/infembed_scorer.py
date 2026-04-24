@@ -25,6 +25,18 @@ from torch.utils.data import DataLoader
 from policy_doctor.monitoring.base import StreamScorer
 
 
+def _auto_device() -> str:
+    """Auto-detect device: cuda > mps > cpu.
+
+    Useful for macOS M-series (mps), NVIDIA GPUs (cuda), and CPU fallback.
+    """
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def _detect_infembed_layers(policy: "torch.nn.Module", fit_path: str) -> Optional[List[str]]:
     """Return the infembed ``layers`` filter needed to match a saved fit's parameter count.
 
@@ -121,7 +133,7 @@ class InfEmbedStreamScorer(StreamScorer):
         model_keys: Optional[str] = None,
         num_diffusion_timesteps: int = 8,
         loss_fn: str = "square",
-        device: str = "cuda:0",
+        device: str = "auto",
     ) -> None:
         from diffusion_policy.common.trak_util import (
             get_parameter_names,
@@ -146,6 +158,8 @@ class InfEmbedStreamScorer(StreamScorer):
                 "infembed not found. Ensure third_party/infembed is installed or on PYTHONPATH."
             ) from e
 
+        if device == "auto":
+            device = _auto_device()
         self.device = torch.device(device)
         self.num_diffusion_timesteps = num_diffusion_timesteps
 
