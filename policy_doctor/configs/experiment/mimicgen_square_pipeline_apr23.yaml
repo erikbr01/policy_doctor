@@ -49,6 +49,7 @@ baseline:
 evaluation:
   train_date: apr23_mimicgen_pipeline_test
   eval_date: apr23_mimicgen_pipeline_test
+  overwrite: true
 
 attribution:
   train_date: apr23_mimicgen_pipeline_test
