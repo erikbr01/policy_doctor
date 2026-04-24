@@ -85,6 +85,11 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=n_obs_steps+1))
+        # Simulator state / action buffers — populated if inner env supports
+        # _get_simulator_state(); used to write rollouts.hdf5 for MimicGen.
+        self._sim_states_buf: list = []
+        self._sim_actions_buf: list = []
+        self._episode_model_file: "str | None" = None
     
     def reset(self):
         """Resets the environment using kwargs."""
@@ -95,6 +100,16 @@ class MultiStepWrapper(gym.Wrapper):
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=self.n_obs_steps+1))
 
+        # Reset per-episode sim buffers and capture model file (once per episode).
+        self._sim_states_buf = []
+        self._sim_actions_buf = []
+        self._episode_model_file = None
+        if callable(getattr(self.env, '_get_episode_model_file', None)):
+            try:
+                self._episode_model_file = self.env._get_episode_model_file()
+            except Exception:
+                pass
+
         obs = self._get_obs(self.n_obs_steps)
         return obs
 
@@ -102,10 +117,20 @@ class MultiStepWrapper(gym.Wrapper):
         """
         actions: (n_action_steps,) + action_shape
         """
+        _has_sim_state = callable(getattr(self.env, '_get_simulator_state', None))
         for act in action:
             if len(self.done) > 0 and self.done[-1]:
                 # termination
                 break
+            # Capture simulator state BEFORE applying this action so that the
+            # accumulated buffer matches the (state[t], action[t]) layout that
+            # prepare_src_dataset / MimicGen expects.
+            if _has_sim_state:
+                try:
+                    self._sim_states_buf.append(self.env._get_simulator_state())
+                    self._sim_actions_buf.append(act.copy())
+                except Exception:
+                    pass
             observation, reward, done, info = super().step(act)
 
             self.obs.append(observation)
@@ -172,3 +197,31 @@ class MultiStepWrapper(gym.Wrapper):
             return self.env._is_success()
         else:
             raise AttributeError(f"{self.env} does not have a callable method '_is_success'.")
+
+    def _get_episode_sim_data(self) -> dict:
+        """Return accumulated simulator states, actions, and model XML for the current episode.
+
+        States and actions are aligned so that ``states[t]`` is the simulator
+        state at the moment ``actions[t]`` was applied (the layout expected by
+        MimicGen's ``prepare_src_dataset``).
+
+        Returns a dict with keys:
+          ``states``     — np.ndarray of shape (T, state_dim), dtype float64
+          ``actions``    — np.ndarray of shape (T, action_dim), dtype float64
+          ``model_file`` — MJCF XML string (str | None if env doesn't support it)
+        """
+        states = (
+            np.array(self._sim_states_buf, dtype=np.float64)
+            if self._sim_states_buf
+            else np.empty((0,), dtype=np.float64)
+        )
+        actions = (
+            np.array(self._sim_actions_buf, dtype=np.float64)
+            if self._sim_actions_buf
+            else np.empty((0,), dtype=np.float64)
+        )
+        return {
+            "states": states,
+            "actions": actions,
+            "model_file": self._episode_model_file,
+        }

@@ -104,6 +104,19 @@ class RobomimicLowdimWrapper(gym.Env):
         succ = self.env.is_success()["task"]
         return succ
 
+    def _get_simulator_state(self) -> np.ndarray:
+        """Return the current MuJoCo simulator state as a float64 array."""
+        return np.array(self.env.get_state()['states'], dtype=np.float64)
+
+    def _get_episode_model_file(self) -> str:
+        """Return MJCF XML string for the current episode (robosuite Task model XML).
+
+        Must be called after reset() so that the robosuite model has been built.
+        The returned XML is suitable for use as the ``model_file`` attribute in
+        MimicGen-compatible HDF5 datasets (read by ``prepare_src_dataset``).
+        """
+        return self.env.env.model.get_xml()
+
 
 def test():
     import robomimic.utils.file_utils as FileUtils

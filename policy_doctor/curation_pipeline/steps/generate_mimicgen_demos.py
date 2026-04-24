@@ -228,6 +228,16 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                 f"path_prob={select_result.get('selected_path_prob', 0):.3f}  "
                 f"seed_hdf5={seed_hdf5}"
             )
+        elif random_step.is_done():
+            select_result = random_step.load()
+            seed_hdf5 = pathlib.Path(select_result["seed_hdf5_path"])
+            seed_demo_key = "demo_0"
+            seed_source = "random"
+            print(
+                f"  [generate_mimicgen_demos] using randomly-selected seed: "
+                f"rollout={select_result.get('selected_rollout_idx')}  "
+                f"seed_hdf5={seed_hdf5}"
+            )
         else:
             # --- Resolve source dataset path ---
             seed_source = "source_dataset"

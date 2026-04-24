@@ -272,6 +272,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             self.episode_dir = pathlib.Path(output_dir) / "episodes"
             self.episode_dir.mkdir()
             self.media_dir = pathlib.Path(output_dir) / "media"
+        self.output_dir = pathlib.Path(output_dir)
 
     def run(self, policy: BaseLowdimPolicy):
         device = policy.device
@@ -292,6 +293,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             total_timesteps = 0
             episode_lengths = []
             episode_successes = []
+            all_sim_episodes: list = []  # per-episode dicts from _get_episode_sim_data()
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -401,6 +403,16 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             all_video_paths[this_global_slice] = env.render()[this_local_slice]
             all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
 
+            # collect per-episode simulator state/action data for rollouts.hdf5
+            if self.save_episodes:
+                try:
+                    sim_data = env.call('_get_episode_sim_data')[0]
+                    sim_data['success'] = bool(success)
+                    all_sim_episodes.append(sim_data)
+                except Exception as e:
+                    print(f"[MimicgenLowdimRunner] WARNING: could not collect sim data for "
+                          f"episode {chunk_idx}: {e}")
+
             # save episode data
             if self.save_episodes:
                 postfix = "succ" if success else "fail"
@@ -446,6 +458,9 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             value = np.mean(value)
             log_data[name] = value
 
+        if self.save_episodes and all_sim_episodes:
+            self._write_rollouts_hdf5(all_sim_episodes)
+
         if self.save_episodes:
             # rename media files based on success or failure
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
@@ -464,6 +479,40 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 yaml.safe_dump(metadata, f)
 
         return log_data
+
+    def _write_rollouts_hdf5(self, sim_episodes: list) -> pathlib.Path:
+        """Write a MimicGen-compatible ``rollouts.hdf5`` from per-episode sim data.
+
+        Each episode becomes a ``data/demo_N`` group containing:
+        - ``states``   (T, state_dim) float64 — sim state before each action
+        - ``actions``  (T, action_dim) float64 — action applied at each step
+        - ``model_file`` attribute — MJCF XML string for ``prepare_src_dataset``
+
+        The file-level ``data.attrs["env_args"]`` is populated from the runner's
+        ``env_meta`` dict (same source used to build the eval envs).
+
+        Returns the path to the written HDF5 file.
+        """
+        import json as _json
+        # Write alongside the episode pkl files so that _resolve_rollouts_hdf5()
+        # finds it at ``episodes/rollouts.hdf5`` (its primary search location).
+        out_dir = self.episode_dir if self.episode_dir is not None else self.output_dir
+        out_path = out_dir / "rollouts.hdf5"
+        with h5py.File(out_path, "w") as f:
+            grp = f.create_group("data")
+            grp.attrs["env_args"] = _json.dumps(self.env_meta)
+            grp.attrs["total"] = len(sim_episodes)
+            for i, ep in enumerate(sim_episodes):
+                demo_grp = grp.create_group(f"demo_{i}")
+                if ep["states"].ndim >= 2 and ep["states"].shape[0] > 0:
+                    demo_grp.create_dataset("states", data=ep["states"])
+                    demo_grp.create_dataset("actions", data=ep["actions"])
+                if ep.get("model_file") is not None:
+                    demo_grp.attrs["model_file"] = ep["model_file"]
+                demo_grp.attrs["success"] = int(ep.get("success", False))
+        print(f"[MimicgenLowdimRunner] rollouts.hdf5 → {out_path} "
+              f"({len(sim_episodes)} episodes)")
+        return out_path
 
     def undo_transform_action(self, action):
         raw_shape = action.shape
