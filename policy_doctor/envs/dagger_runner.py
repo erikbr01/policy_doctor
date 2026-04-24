@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import torch
 
 from policy_doctor.envs.intervention_device import InterventionDevice
 from policy_doctor.envs.robomimic_dagger_env import RobomimicDAggerEnv
@@ -28,36 +30,37 @@ class EpisodeRecord:
 
 
 class RobomimicDAggerRunner:
-    """Main loop for DAgger rollouts with automatic intervention triggering.
+    """Main loop for DAgger rollouts with threaded policy inference.
 
-    Combines MonitoredPolicy (which classifies timesteps and detects when to intervene)
-    with RobocasaDAggerEnv (which records data) and an InterventionDevice (which handles
-    human input during interventions).
+    Policy inference runs in a background thread so the sim step loop and
+    visualization run continuously.  The design is a rolling action buffer:
+
+      1. At the start of each new chunk, submit inference for the *next* chunk
+         immediately — policy thinks while the sim executes the current chunk.
+      2. When the chunk is exhausted, wait for the pending future (updating the
+         visualizer on every poll iteration so the display stays live).
+      3. Human-mode steps execute at full speed; inference is re-submitted
+         when control returns to the robot.
 
     Parameters
     ----------
     monitored_policy : MonitoredPolicy
-        Wrapped policy with behavior graph monitoring.
     env : RobomimicDAggerEnv
-        Data-recording environment wrapper.
     intervention_device : InterventionDevice
-        Human input handler (keyboard, SpaceMouse, etc.)
-    n_obs_steps : int, default 2
-        Observation history length (from policy config).
-    n_action_steps : int, default 8
-        Action prediction horizon (from policy config).
-    max_steps : int, default 500
-        Maximum steps per episode before auto-termination.
+    n_obs_steps : int
+    n_action_steps : int
+    max_steps : int
     output_dir : Path or str, optional
-        Directory to save episode pkl files.
     visualizer : DAggerVisualizer, optional
-        Live display of camera feed + node assignment + intervention status.
+    action_transform : callable, optional
+        Per-action transform applied before stepping the env (e.g. rotation_6d
+        → axis_angle conversion).
     """
 
     def __init__(
         self,
         monitored_policy: MonitoredPolicy,
-        env: RobocasaDAggerEnv,
+        env: RobomimicDAggerEnv,
         intervention_device: InterventionDevice,
         n_obs_steps: int = 2,
         n_action_steps: int = 8,
@@ -73,140 +76,167 @@ class RobomimicDAggerRunner:
         self.n_action_steps = n_action_steps
         self.max_steps = max_steps
         self.output_dir = Path(output_dir) if output_dir else None
-        self._action_transform = action_transform
         self.visualizer = visualizer
+        self._action_transform = action_transform
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _make_obs_dict(self, obs: np.ndarray, obs_queue: deque) -> dict:
+        """Build (1, n_obs_steps, obs_dim) obs dict for the policy."""
+        if obs.ndim >= 2:
+            return {"obs": obs[None]}
+        return {"obs": np.stack(list(obs_queue), axis=0)[None]}
+
+    def _unpack_action_chunk(self, result: dict) -> np.ndarray:
+        """Extract numpy action chunk from predict_action result."""
+        chunk = result["action"][0]
+        if isinstance(chunk, torch.Tensor):
+            chunk = chunk.detach().cpu().numpy()
+        return chunk  # (n_action_steps, raw_action_dim)
+
+    def _step_action(self, act: np.ndarray):
+        """Apply optional transform and step the env with a single action."""
+        if isinstance(act, torch.Tensor):
+            act = act.detach().cpu().numpy()
+        if self._action_transform is not None:
+            act = self._action_transform(act)
+        step_out = self.env.step(act)
+        obs = step_out[0]
+        reward = step_out[1]
+        done = step_out[2] if len(step_out) == 4 else (step_out[2] or step_out[3])
+        return obs, reward, done
+
+    def _update_viz(self, step: int) -> None:
+        """Render camera + push frame to the cv2 window."""
+        if self.visualizer is None:
+            return
+        try:
+            camera_imgs = {
+                name: self.env.render_camera(camera_name=name)
+                for name in self.visualizer.camera_names
+            }
+            node_name, node_value, intervention_reason = "unknown", None, ""
+            if self.monitored_policy.episode_results:
+                latest = self.monitored_policy.episode_results[-1]
+                node_name = latest.get("node_name") or "unknown"
+                node_value = latest.get("distance")
+                iv = latest.get("intervention")
+                if iv and iv.triggered:
+                    intervention_reason = iv.reason
+            self.visualizer.update(
+                camera_imgs=camera_imgs,
+                node_name=node_name,
+                node_value=node_value,
+                acting_agent=self.env._acting_agent,
+                step=step,
+                intervention_reason=intervention_reason,
+            )
+        except Exception as e:
+            print(f"Visualization update failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Episode loop
+    # ------------------------------------------------------------------
 
     def run_episode(self, episode_idx: int = 0) -> EpisodeRecord:
-        """Execute one DAgger episode with automatic intervention triggering.
+        # Two inference modes:
+        #   async (PolicyClient): submit HTTP request, execute chunk, get() at boundary
+        #   sync  (MonitoredPolicy / _BareMonitor): blocking predict_action on main thread
+        from policy_doctor.envs.policy_server import PolicyClient
+        _async = isinstance(self.monitored_policy, PolicyClient)
 
-        Main control loop:
-        1. Roll out policy in chunks
-        2. After each chunk, check if MonitoredPolicy triggered intervention
-           (based on behavior graph V-value crossing threshold)
-        3. If triggered or manual override active: hand off to human
-        4. Human provides corrective actions; when done, return to robot
-        5. Save episode with per-step acting_agent labels
-
-        Parameters
-        ----------
-        episode_idx : int
-            Episode index for logging/saving.
-
-        Returns
-        -------
-        record : EpisodeRecord
-            Summary of the episode.
-        """
-        # Initialize
         reset_out = self.env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         self.monitored_policy.reset()
         self.intervention_device.reset()
 
-        # Prime observation buffer (deque of n_obs_steps)
-        from collections import deque
-
         obs_queue = deque([obs] * self.n_obs_steps, maxlen=self.n_obs_steps)
-
         acting_agent = "robot"
         self.env.set_acting_agent(acting_agent)
 
-        n_robot_steps = 0
-        n_human_steps = 0
-        n_auto_interventions = 0
-        manual_overrides = 0
+        n_robot_steps = n_human_steps = n_auto_interventions = manual_overrides = 0
         step = 0
         done = False
+        info = {}
 
-        while not done and step < self.max_steps:
-            # --- ROBOT MODE ---
-            if acting_agent == "robot":
-                # Build obs dict for policy.
-                # MultiStepWrapper already returns (n_obs_steps, obs_dim); use directly.
-                # If obs is 1D (bare env), stack from the queue instead.
-                if obs.ndim >= 2:
-                    obs_dict = {"obs": obs[None]}  # (1, n_obs_steps, obs_dim)
-                else:
-                    stacked_obs = np.stack(list(obs_queue), axis=0)
-                    obs_dict = {"obs": stacked_obs[None]}
+        chunk: Optional[np.ndarray] = None
+        chunk_idx = 0
 
-                # Get policy action and classify
-                action_chunk = self.monitored_policy.predict_action(obs_dict)["action"][
-                    0
-                ]  # (n_action_steps, action_dim)
+        if _async:
+            # Kick off first request immediately so it runs while we set up
+            self.monitored_policy.submit(self._make_obs_dict(obs, obs_queue))
 
-                # Check if intervention was triggered by behavior graph
-                intervention_decision = self.monitored_policy.episode_results[-1][
-                    "intervention"
-                ]
-                if intervention_decision is not None and intervention_decision.triggered:
-                    # Auto-trigger: switch to human mode
-                    acting_agent = "human"
-                    self.env.set_acting_agent(acting_agent)
-                    self.intervention_device.notify(intervention_decision.reason)
-                    n_auto_interventions += 1
-                    continue
+        try:
+            while not done and step < self.max_steps:
 
-                # Also check for manual override
-                if self.intervention_device.is_intervening:
-                    acting_agent = "human"
-                    self.env.set_acting_agent(acting_agent)
-                    manual_overrides += 1
-                    continue
+                # ── ROBOT MODE ────────────────────────────────────────────
+                if acting_agent == "robot":
 
-                # Execute action chunk
-                for t in range(min(self.n_action_steps, len(action_chunk))):
-                    act = action_chunk[t]
-                    if isinstance(act, __import__("torch").Tensor):
-                        act = act.detach().cpu().numpy()
-                    if self._action_transform is not None:
-                        act = self._action_transform(act)
-                    step_out = self.env.step(act)
-                    obs, reward = step_out[0], step_out[1]
-                    done = step_out[2] if len(step_out) == 4 else (step_out[2] or step_out[3])
+                    # Fetch a new action chunk when the current one is exhausted.
+                    if chunk is None or chunk_idx >= len(chunk):
+                        if _async:
+                            # Block for the HTTP result (usually already done)
+                            chunk = self.monitored_policy.get()
+                        else:
+                            obs_dict = self._make_obs_dict(obs, obs_queue)
+                            result = self.monitored_policy.predict_action(obs_dict)
+                            chunk = self._unpack_action_chunk(result)
+                        chunk_idx = 0
+                        if _async:
+                            # Pre-submit next request immediately so it overlaps
+                            # with executing the current chunk
+                            self.monitored_policy.submit(self._make_obs_dict(obs, obs_queue))
+
+                    # Execute one action from the chunk, update viz each step.
+                    act = chunk[chunk_idx]
+                    chunk_idx += 1
+                    obs, reward, done = self._step_action(act)
                     obs_queue.append(obs)
                     n_robot_steps += 1
                     step += 1
 
-                    if done:
-                        break
+                    # Check auto-intervention
+                    if self.monitored_policy.episode_results:
+                        iv = self.monitored_policy.episode_results[-1].get("intervention")
+                        if iv and iv.triggered:
+                            acting_agent = "human"
+                            self.env.set_acting_agent(acting_agent)
+                            n_auto_interventions += 1
 
-                    # Mid-chunk: check for manual override
+                    # Check manual override
                     if self.intervention_device.is_intervening:
                         acting_agent = "human"
                         self.env.set_acting_agent(acting_agent)
-                        break
 
-                    # Update visualization
-                    if self.visualizer is not None:
-                        self._update_viz(step, intervention_decision)
+                    self._update_viz(step)
 
-            # --- HUMAN MODE ---
-            else:
-                # Get human action from keyboard/device
-                human_action = self.intervention_device.get_action()
-                if human_action is not None:
-                    step_out = self.env.step(human_action)
-                    obs, reward = step_out[0], step_out[1]
-                    done = step_out[2] if len(step_out) == 4 else (step_out[2] or step_out[3])
-                    obs_queue.append(obs)
-                    n_human_steps += 1
-                    step += 1
+                # ── HUMAN MODE ────────────────────────────────────────────
+                else:
+                    human_action = self.intervention_device.get_action()
+                    if human_action is not None:
+                        obs, reward, done = self._step_action(human_action)
+                        obs_queue.append(obs)
+                        n_human_steps += 1
+                        step += 1
+                        self._update_viz(step)
 
-                    if self.visualizer is not None:
-                        self._update_viz(step, None)
+                    if not self.intervention_device.is_intervening:
+                        acting_agent = "robot"
+                        self.env.set_acting_agent(acting_agent)
+                        manual_overrides += 1
+                        chunk, chunk_idx = None, 0  # fetch fresh chunk on re-entry
 
-                # Check if human returned control to robot
-                if not self.intervention_device.is_intervening:
-                    acting_agent = "robot"
-                    self.env.set_acting_agent(acting_agent)
-                    self.monitored_policy.reset()  # clear history for new phase
+        finally:
+            if _async and hasattr(self.monitored_policy, "stop"):
+                self.monitored_policy.stop()
+            if self.visualizer:
+                self.visualizer.close()
 
-        # Save episode
         if self.output_dir:
             self.env.save_episode()
 
-        # Return summary
         success = bool(info.get("success", False)) if done else False
         record = EpisodeRecord(
             episode_idx=episode_idx,
@@ -217,56 +247,27 @@ class RobomimicDAggerRunner:
             n_auto_interventions=n_auto_interventions,
             manual_overrides=manual_overrides,
         )
-
         return record
 
     def run(self, n_episodes: int) -> list[EpisodeRecord]:
-        """Run multiple episodes and return summaries."""
+        """Run multiple episodes."""
+        import traceback as _tb
         records = []
         for ep_idx in range(n_episodes):
-            print(f"\n=== Episode {ep_idx + 1}/{n_episodes} ===")
-            record = self.run_episode(ep_idx)
+            print(f"\n=== Episode {ep_idx + 1}/{n_episodes} ===", flush=True)
+            try:
+                record = self.run_episode(ep_idx)
+            except Exception:
+                print("run_episode raised an exception:", flush=True)
+                _tb.print_exc()
+                break
             records.append(record)
             print(
                 f"  Steps: {record.n_steps} "
                 f"(robot={record.n_robot_steps}, human={record.n_human_steps}) "
                 f"| Auto-triggers: {record.n_auto_interventions} "
                 f"| Manual overrides: {record.manual_overrides} "
-                f"| Success: {record.success}"
+                f"| Success: {record.success}",
+                flush=True,
             )
-
         return records
-
-    def _update_viz(self, step: int, intervention_decision) -> None:
-        """Update live visualization."""
-        if self.visualizer is None:
-            return
-
-        try:
-            camera_imgs = {
-                name: self.env.render_camera(camera_name=name)
-                for name in self.visualizer.camera_names
-            }
-            node_name = "unknown"
-            node_value = None
-
-            if self.monitored_policy.episode_results:
-                latest = self.monitored_policy.episode_results[-1]
-                node_name = latest.get("node_name") or "unknown"
-                node_value = latest.get("distance")
-
-            acting_agent = self.env._acting_agent
-            intervention_reason = ""
-            if intervention_decision and intervention_decision.triggered:
-                intervention_reason = intervention_decision.reason
-
-            self.visualizer.update(
-                camera_imgs=camera_imgs,
-                node_name=node_name,
-                node_value=node_value,
-                acting_agent=acting_agent,
-                step=step,
-                intervention_reason=intervention_reason,
-            )
-        except Exception as e:
-            print(f"Visualization update failed: {e}")

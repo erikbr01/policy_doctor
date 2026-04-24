@@ -77,7 +77,4 @@ class DAggerVisualizer:
         cv2.destroyWindow(self._window)
 
     def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
+        pass  # runner calls close() explicitly; avoid double-close from GC

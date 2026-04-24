@@ -177,6 +177,20 @@ def resolve_checkpoint(train_dir: str, train_ckpt: str) -> Path:
     type=click.Path(exists=True),
     help="Directory with metadata.yaml for window-level NearestCentroidAssigner (required for sliding-window clustering).",
 )
+@click.option(
+    "--no_monitor",
+    is_flag=True,
+    help="Skip InfEmbed monitoring entirely — just run the raw policy. "
+         "Removes the per-step gradient pass so inference is ~2x faster.",
+)
+@click.option(
+    "--server_url",
+    default=None,
+    help="HTTP policy server URL (e.g. http://localhost:5001). "
+         "When set, policy inference is delegated to the server process "
+         "instead of running locally. Start the server with "
+         "run_policy_server_square_feb5.sh first.",
+)
 def main(
     task: str,
     train_dir: str,
@@ -192,6 +206,8 @@ def main(
     no_visualization: bool,
     dagger_config: str,
     episodes_dir: str,
+    no_monitor: bool,
+    server_url: str,
 ) -> None:
     """Run DAgger episodes on any robomimic-compatible environment with behavior graph intervention timing."""
 
@@ -242,45 +258,118 @@ def main(
     if "robocasa" in task.lower():
         ensure_robocasa_on_path()
 
-    # --- Load TrajectoryClassifier and build MonitoredPolicy ---
+    # --- Load policy (+ optionally the full monitoring stack) ---
     checkpoint = resolve_checkpoint(train_dir, train_ckpt)
-    click.echo(f"Loading checkpoint and behavior graph for task: {task}")
     click.echo(f"Checkpoint: {checkpoint}")
-    classifier = TrajectoryClassifier.from_checkpoint(
-        checkpoint=str(checkpoint),
-        infembed_fit_path=infembed_fit,
-        infembed_embeddings_path=infembed_npz,
-        clustering_dir=clustering_dir,
-        mode="rollout",
-        device=device,
-        episodes_dir=episodes_dir,
-    )
 
-    from policy_doctor.data.clustering_loader import load_clustering_result_from_path
-    import pathlib
-    cluster_labels, cluster_metadata, _ = load_clustering_result_from_path(pathlib.Path(clustering_dir))
-    graph, node_values, _, _ = get_behavior_graph_and_slice_values(
-        cluster_labels=cluster_labels,
-        metadata=cluster_metadata,
-    )
+    if server_url:
+        # HTTP server mode: delegate all inference to the running server process.
+        # No local model loading — the server handles its own MPS context.
+        from policy_doctor.envs.policy_server import PolicyClient
+        import requests as _requests
+        click.echo(f"Using policy server at {server_url}")
+        try:
+            resp = _requests.get(f"{server_url}/health", timeout=5)
+            info = resp.json()
+            click.echo(f"  server status: {info.get('status')} | device: {info.get('device')}")
+        except Exception as e:
+            raise click.ClickException(
+                f"Cannot reach policy server at {server_url}: {e}\n"
+                f"Start it with: ./scripts/experiments/run_policy_server_square_feb5.sh"
+            )
 
-    # Load DAgger config
-    click.echo(f"Loading DAgger config: {dagger_config}")
-    dagger_cfg = load_dagger_config(dagger_config)
+        # Read abs_action from checkpoint config for the action transform
+        import dill as _dill, torch as _torch
+        payload = _torch.load(open(str(checkpoint), "rb"), pickle_module=_dill, map_location="cpu")
+        from omegaconf import OmegaConf as _OC
+        abs_action = bool(_OC.select(payload["cfg"], "task.dataset.abs_action") or False)
+        n_obs_steps_val = int(_OC.select(payload["cfg"], "n_obs_steps") or 2)
+        n_action_steps_val = int(_OC.select(payload["cfg"], "n_action_steps") or 8)
+        del payload
 
-    # Use config threshold if not overridden via CLI
-    if intervention_threshold == 0.0:  # default value
-        intervention_threshold = get_intervention_threshold(dagger_cfg)
-    click.echo(f"Intervention threshold: {intervention_threshold}")
+        monitored_policy = PolicyClient(url=server_url)
+        monitored_policy.start()
+        classifier_n_obs_steps = n_obs_steps_val
+        classifier_n_action_steps = n_action_steps_val
+        dagger_cfg = load_dagger_config(dagger_config)
+    elif no_monitor:
+        # Bare-policy mode: load checkpoint directly, skip InfEmbed entirely.
+        click.echo("Monitor disabled — loading bare policy (no InfEmbed gradient pass)")
+        import dill as _dill
+        import hydra as _hydra
+        import torch as _torch
+        from diffusion_policy.common.trak_util import get_best_checkpoint
+        payload = _torch.load(open(str(checkpoint), "rb"), pickle_module=_dill)
+        cfg = payload["cfg"]
+        cls = _hydra.utils.get_class(cfg._target_)
+        workspace = cls(cfg, output_dir=str(output_dir))
+        workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+        raw_policy = workspace.ema_model if getattr(cfg.training, "use_ema", False) else workspace.model
+        raw_policy.to(device)
+        raw_policy.eval()
 
-    intervention_rule = NodeValueThresholdRule(
-        node_values=node_values, threshold=intervention_threshold
-    )
-    monitored_policy = MonitoredPolicy(
-        policy=classifier.monitor.scorer.policy,
-        classifier=classifier,
-        intervention_rule=intervention_rule,
-    )
+        abs_action_flag = bool(getattr(getattr(cfg, "task", None) and getattr(cfg.task, "dataset", None) and cfg.task.dataset, "abs_action", False))
+
+        from omegaconf import OmegaConf as _OC
+        abs_action_flag = bool(_OC.select(cfg, "task.dataset.abs_action") or False)
+        n_obs_steps_val = int(_OC.select(cfg, "n_obs_steps") or 2)
+        n_action_steps_val = int(_OC.select(cfg, "n_action_steps") or 16)
+
+        class _BareMonitor:
+            """Thin shim so RobomimicDAggerRunner works without monitoring."""
+            def __init__(self): self.episode_results = []
+            def reset(self): self.episode_results = []
+            def predict_action(self, obs_dict): return raw_policy.predict_action(obs_dict)
+
+        monitored_policy = _BareMonitor()
+        classifier_n_obs_steps = n_obs_steps_val
+        classifier_n_action_steps = n_action_steps_val
+        abs_action = abs_action_flag
+    else:
+        click.echo(f"Loading checkpoint and behavior graph for task: {task}")
+        classifier = TrajectoryClassifier.from_checkpoint(
+            checkpoint=str(checkpoint),
+            infembed_fit_path=infembed_fit,
+            infembed_embeddings_path=infembed_npz,
+            clustering_dir=clustering_dir,
+            mode="rollout",
+            device=device,
+            episodes_dir=episodes_dir,
+        )
+
+        from policy_doctor.data.clustering_loader import load_clustering_result_from_path
+        import pathlib
+        cluster_labels, cluster_metadata, _ = load_clustering_result_from_path(pathlib.Path(clustering_dir))
+        graph, node_values, _, _ = get_behavior_graph_and_slice_values(
+            cluster_labels=cluster_labels,
+            metadata=cluster_metadata,
+        )
+
+        # Load DAgger config
+        click.echo(f"Loading DAgger config: {dagger_config}")
+        dagger_cfg = load_dagger_config(dagger_config)
+
+        if intervention_threshold == 0.0:
+            intervention_threshold = get_intervention_threshold(dagger_cfg)
+        click.echo(f"Intervention threshold: {intervention_threshold}")
+
+        intervention_rule = NodeValueThresholdRule(
+            node_values=node_values, threshold=intervention_threshold
+        )
+        monitored_policy = MonitoredPolicy(
+            policy=classifier.monitor.scorer.policy,
+            classifier=classifier,
+            intervention_rule=intervention_rule,
+        )
+        classifier_n_obs_steps = classifier.n_obs_steps
+        classifier_n_action_steps = classifier.n_action_steps
+        abs_action = classifier.abs_action
+
+    if not no_monitor:
+        # Load DAgger config for device/viz settings (already done above for monitor path)
+        pass
+    else:
+        dagger_cfg = load_dagger_config(dagger_config)
 
     # --- Create robomimic environment ---
     click.echo(f"Setting up {task} environment...")
@@ -291,11 +380,11 @@ def main(
     ObsUtils.initialize_obs_modality_mapping_from_dict({"low_dim": obs_keys})
 
     # Build action transformer: policy outputs rotation_6d, env expects axis_angle
-    abs_action = classifier.abs_action
     rotation_transformer = None
     if abs_action:
         from diffusion_policy.model.common.rotation_transformer import RotationTransformer
         rotation_transformer = RotationTransformer("axis_angle", "rotation_6d")
+        # robosuite 1.5 uses input_type="absolute" instead of control_delta=False
         env_meta["env_kwargs"]["controller_configs"]["control_delta"] = False
 
     def convert_action(action_10d) -> "np.ndarray":
@@ -333,6 +422,12 @@ def main(
     env = create_env()
 
     # --- Create intervention device and visualizer ---
+    # When monitoring is disabled there is no behavior-graph trigger, so we
+    # default to passthrough (autonomous rollout) to avoid pynput accessibility
+    # issues on macOS.
+    if no_monitor and dagger_cfg.get("device", "keyboard") == "keyboard":
+        dagger_cfg = dict(dagger_cfg)  # copy so we don't mutate the loaded config
+        dagger_cfg["device"] = "passthrough"
     device_type = dagger_cfg.get("device", "keyboard")
     click.echo(f"Initializing {device_type} intervention device...")
     try:
@@ -371,8 +466,8 @@ def main(
         monitored_policy=monitored_policy,
         env=env,
         intervention_device=intervention_device,
-        n_obs_steps=classifier.n_obs_steps,
-        n_action_steps=classifier.n_action_steps,
+        n_obs_steps=classifier_n_obs_steps,
+        n_action_steps=classifier_n_action_steps,
         max_steps=500,
         output_dir=output_dir,
         visualizer=visualizer,

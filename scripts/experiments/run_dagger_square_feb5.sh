@@ -31,6 +31,8 @@ OUTPUT_DIR="/tmp/dagger_square_feb5"
 DEVICE="mps"
 DAGGER_CONFIG="keyboard_default"
 NO_VIZ=false
+NO_MONITOR=false
+SERVER_URL=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -41,6 +43,8 @@ while [[ $# -gt 0 ]]; do
         --device)         DEVICE="$2";          shift 2 ;;
         --dagger-config)  DAGGER_CONFIG="$2";   shift 2 ;;
         --no-viz)         NO_VIZ=true;          shift   ;;
+        --no-monitor)     NO_MONITOR=true;      shift   ;;
+        --server-url)     SERVER_URL="$2";      shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -70,7 +74,9 @@ echo "  dagger config   : $DAGGER_CONFIG"
 echo ""
 
 EXTRA_ARGS=()
-"$NO_VIZ" && EXTRA_ARGS+=(--no_visualization)
+"$NO_VIZ"     && EXTRA_ARGS+=(--no_visualization)
+"$NO_MONITOR" && EXTRA_ARGS+=(--no_monitor)
+[[ -n "$SERVER_URL" ]] && EXTRA_ARGS+=(--server_url "$SERVER_URL")
 
 # Use direct conda activation for DAgger visualization (matplotlib needs macOS GUI thread).
 # conda run spawns a subprocess that breaks NSApp on macOS.
