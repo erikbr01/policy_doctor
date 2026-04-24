@@ -248,6 +248,29 @@ class TrajectoryClassifier:
     # Classification entry points
     # ------------------------------------------------------------------
 
+    def classify_sample_embed_only(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+    ) -> MonitorResult:
+        """Classify without computing influence scores (embedding + assignment only).
+
+        ``MonitorResult.influence_scores`` is ``None``.  Use when only the graph node
+        assignment is needed at runtime; call :meth:`score_embedding` separately if
+        scores are needed (e.g. on intervention trigger).
+        """
+        if self.mode == "demo":
+            action = self._apply_action_transform(action)
+        return self.monitor.process_sample_embed_only(obs, action)
+
+    def score_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        """Compute influence scores from a pre-computed embedding (no gradient pass).
+
+        Returns ``(N_demo,)`` float32 array.  Requires the underlying scorer to
+        support ``score_from_embedding`` (``InfEmbedStreamScorer`` does).
+        """
+        return self.monitor.score_from_embedding(embedding)
+
     def classify_sample(
         self,
         obs: np.ndarray,

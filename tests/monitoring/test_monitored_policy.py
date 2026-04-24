@@ -34,9 +34,21 @@ def _make_mock_policy(B=1, n_action_steps=8, action_dim=14, use_action_pred=Fals
     return policy
 
 
+def _dummy_embed_only_result(cluster_id=0):
+    return MonitorResult(
+        embedding=np.zeros(50, dtype=np.float32),
+        influence_scores=None,
+        assignment=AssignmentResult(cluster_id=cluster_id, node_id=cluster_id,
+                                    distance=0.1, node_name=f"Behavior {cluster_id}"),
+        timing_ms={"total_ms": 1.0, "gradient_project_ms": 0.8, "assign_ms": 0.2},
+    )
+
+
 def _make_mock_classifier():
     classifier = MagicMock(spec=TrajectoryClassifier)
     classifier.classify_sample.return_value = _dummy_result()
+    classifier.classify_sample_embed_only.return_value = _dummy_embed_only_result()
+    classifier.score_embedding.return_value = np.zeros(100, dtype=np.float32)
     return classifier
 
 
@@ -81,7 +93,7 @@ class TestMonitoredPolicyPredictAction(unittest.TestCase):
         classifier = _make_mock_classifier()
         mp = MonitoredPolicy(policy, classifier)
         mp.predict_action(_obs_dict())
-        action_arg = classifier.classify_sample.call_args[0][1]
+        action_arg = classifier.classify_sample_embed_only.call_args[0][1]
         # action_pred is all randn, action is all zeros — verify non-zero was used
         self.assertFalse(np.allclose(action_arg, 0.0))
 
@@ -90,7 +102,7 @@ class TestMonitoredPolicyPredictAction(unittest.TestCase):
         classifier = _make_mock_classifier()
         mp = MonitoredPolicy(policy, classifier)
         mp.predict_action(_obs_dict())
-        classifier.classify_sample.assert_called_once()
+        classifier.classify_sample_embed_only.assert_called_once()
 
     def test_batch_size_gt1_classifies_each_env(self):
         B = 3
@@ -98,7 +110,7 @@ class TestMonitoredPolicyPredictAction(unittest.TestCase):
         classifier = _make_mock_classifier()
         mp = MonitoredPolicy(policy, classifier)
         mp.predict_action(_obs_dict(B=B))
-        self.assertEqual(classifier.classify_sample.call_count, B)
+        self.assertEqual(classifier.classify_sample_embed_only.call_count, B)
         self.assertEqual(len(mp.episode_results), B)
 
     def test_batch_env_idx_stored_correctly(self):
@@ -180,12 +192,9 @@ class TestMonitoredPolicyDelegation(unittest.TestCase):
 
 def _make_mock_classifier_with_scores(scores_array: np.ndarray):
     classifier = MagicMock(spec=TrajectoryClassifier)
-    classifier.classify_sample.return_value = MonitorResult(
-        embedding=np.zeros(50, dtype=np.float32),
-        influence_scores=scores_array,
-        assignment=AssignmentResult(cluster_id=0, node_id=0, distance=0.1, node_name="B0"),
-        timing_ms={"total_ms": 1.0},
-    )
+    classifier.classify_sample.return_value = _dummy_result()
+    classifier.classify_sample_embed_only.return_value = _dummy_embed_only_result()
+    classifier.score_embedding.return_value = scores_array
     return classifier
 
 
@@ -219,6 +228,7 @@ class TestMonitoredPolicyInterventionRule(unittest.TestCase):
         mp.predict_action(_obs_dict())
         result_arg = rule.check.call_args[0][0]
         self.assertIsInstance(result_arg, MonitorResult)
+        self.assertIsNone(result_arg.influence_scores)  # embed-only result
 
     def test_rule_check_receives_growing_history(self):
         rule = MagicMock(spec=InterventionRule)
@@ -254,9 +264,9 @@ class TestMonitoredPolicyInterventionRule(unittest.TestCase):
 
 class TestMonitoredPolicyBuffers(unittest.TestCase):
 
-    def test_influence_buffer_maxlen_equals_window(self):
+    def test_embedding_buffer_maxlen_equals_window(self):
         mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=3)
-        self.assertEqual(mp._influence_buffer.maxlen, 3)
+        self.assertEqual(mp._embedding_buffer.maxlen, 3)
 
     def test_monitor_history_maxlen_equals_window(self):
         mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=3)
@@ -266,28 +276,22 @@ class TestMonitoredPolicyBuffers(unittest.TestCase):
         mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
         mp.predict_action(_obs_dict())
         mp.reset()
-        self.assertEqual(len(mp._influence_buffer), 0)
+        self.assertEqual(len(mp._embedding_buffer), 0)
         self.assertEqual(len(mp._monitor_history), 0)
 
     def test_buffer_does_not_exceed_max_influence_window(self):
         mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=3)
         for _ in range(10):
             mp.predict_action(_obs_dict())
-        self.assertLessEqual(len(mp._influence_buffer), 3)
+        self.assertLessEqual(len(mp._embedding_buffer), 3)
         self.assertLessEqual(len(mp._monitor_history), 3)
 
-    def test_influence_scores_none_skips_influence_buffer(self):
-        classifier = MagicMock(spec=TrajectoryClassifier)
-        classifier.classify_sample.return_value = MonitorResult(
-            embedding=np.zeros(50, dtype=np.float32),
-            influence_scores=None,
-            assignment=AssignmentResult(cluster_id=0, node_id=0, distance=0.1, node_name="B0"),
-            timing_ms={"total_ms": 1.0},
-        )
-        mp = MonitoredPolicy(_make_mock_policy(), classifier)
+    def test_embedding_buffered_every_step(self):
+        mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier(), max_influence_window=5)
         mp.predict_action(_obs_dict())
-        self.assertEqual(len(mp._influence_buffer), 0)
-        self.assertEqual(len(mp._monitor_history), 1)
+        mp.predict_action(_obs_dict())
+        self.assertEqual(len(mp._embedding_buffer), 2)
+        self.assertEqual(len(mp._monitor_history), 2)
 
 
 class TestMonitoredPolicyGetSliceInfluence(unittest.TestCase):
@@ -299,8 +303,9 @@ class TestMonitoredPolicyGetSliceInfluence(unittest.TestCase):
         self.assertEqual(len(scores), 0)
 
     def test_returns_top_k_results(self):
+        # score_embedding returns 100 scores by default in _make_mock_classifier
         mp = MonitoredPolicy(_make_mock_policy(), _make_mock_classifier())
-        mp.predict_action(_obs_dict())  # _dummy_result has 100 influence scores
+        mp.predict_action(_obs_dict())
         indices, scores = mp.get_slice_influence(top_k=20)
         self.assertEqual(len(indices), 20)
         self.assertEqual(len(scores), 20)

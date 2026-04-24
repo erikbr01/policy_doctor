@@ -34,11 +34,11 @@ class MonitoredPolicy:
     :class:`~policy_doctor.monitoring.intervention.InterventionDecision` is stored in
     the episode result entry under the ``"intervention"`` key.
 
-    A rolling buffer of the last ``max_influence_window`` influence-score vectors
-    (one ``(N_demo,)`` array per timestep) is maintained.  Call
-    :meth:`get_slice_influence` to rank training demonstrations by their aggregate
-    influence over the current window — useful for finding training data that most
-    strongly drove the policy into a low-value state.
+    A rolling buffer of the last ``max_influence_window`` embeddings is maintained.
+    Call :meth:`get_slice_influence` to rank training demonstrations by their aggregate
+    influence over the current window — scores are computed lazily from the buffered
+    embeddings (one matmul per step, no gradient pass), so it is cheap to call only
+    when an intervention is triggered.
 
     Parameters
     ----------
@@ -75,7 +75,7 @@ class MonitoredPolicy:
         self._episode_idx: int = 0
         self._timestep: int = 0
 
-        self._influence_buffer: Deque[np.ndarray] = deque(maxlen=max_influence_window)
+        self._embedding_buffer: Deque[np.ndarray] = deque(maxlen=max_influence_window)
         self._monitor_history: Deque[MonitorResult] = deque(maxlen=max_influence_window)
 
     def reset(self) -> None:
@@ -83,7 +83,7 @@ class MonitoredPolicy:
         if self._timestep > 0:
             self._episode_idx += 1
         self._timestep = 0
-        self._influence_buffer.clear()
+        self._embedding_buffer.clear()
         self._monitor_history.clear()
         if self._intervention_rule is not None:
             self._intervention_rule.reset()
@@ -104,14 +104,11 @@ class MonitoredPolicy:
 
         # obs: (B, To, Do), action: (B, Ta, Da)
         for i in range(obs.shape[0]):
-            result = self._classifier.classify_sample(obs[i], action[i])
+            result = self._classifier.classify_sample_embed_only(obs[i], action[i])
 
             # Update rolling buffers
             self._monitor_history.append(result)
-            if result.influence_scores is not None:
-                self._influence_buffer.append(
-                    np.asarray(result.influence_scores, dtype=np.float32)
-                )
+            self._embedding_buffer.append(result.embedding)
 
             # Evaluate intervention rule
             decision: Optional[InterventionDecision] = None
@@ -179,10 +176,14 @@ class MonitoredPolicy:
         """
         from policy_doctor.computations.slice_influence import rank_demo_indices_by_slice_influence
 
-        if not self._influence_buffer:
+        if not self._embedding_buffer:
             return np.array([], dtype=np.int64), np.array([], dtype=np.float32)
 
-        block = np.stack(list(self._influence_buffer), axis=0)  # (rollout_window, N_demo)
+        # Score each buffered embedding lazily — no gradient pass, just matmul per step.
+        scores_per_step = [
+            self._classifier.score_embedding(e) for e in self._embedding_buffer
+        ]
+        block = np.stack(scores_per_step, axis=0)  # (rollout_window, N_demo)
         sorted_indices, sorted_scores, _ = rank_demo_indices_by_slice_influence(
             block,
             window_width_demo=window_width_demo,
