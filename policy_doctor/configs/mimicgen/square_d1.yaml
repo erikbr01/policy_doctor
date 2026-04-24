@@ -19,15 +19,26 @@ source_dataset_path: data/source/mimicgen/source/square.hdf5
 # nn_k=3 selects from all 10 source demos per trial for best coverage.
 use_full_source_dataset: true
 
-# Trajectory variance knobs — MimicGen defaults to preserve diversity
+# Trajectory variance knobs — match D0 tight settings
 action_noise: 0.05
-subtask_term_offset_range: [10, 20]
-nn_k: 3
-interpolate_from_last_target_pose: true
+subtask_term_offset_range: [0, 10]
+nn_k: 1                              # pick the single best-matching source demo per trial
+interpolate_from_last_target_pose: false
 transform_first_robot_pose: false
 num_interpolation_steps: 5
 num_fixed_steps: 0
 
-# Object pose constraints — disabled; full randomisation is the point of D1
-fix_initial_object_poses: false
-object_pose_ranges: null
+# Object pose constraints (offsets from seed demo_0 pose)
+# Nut: same ranges as D0 (x=±50mm, y=±200mm, z_rot=±90°)
+# Peg: human demos always have peg at (0.230, 0.100); constrain it near there
+#      so MimicGen retargeting stays in a regime the source demos can handle.
+fix_initial_object_poses: true
+object_pose_ranges:
+  nut:
+    x: [-0.05, 0.05]     # ±50 mm
+    y: [-0.2, 0.2]       # ±200 mm around seed y
+    z_rot: [-1.57, 1.57] # ±90° around seed rotation
+  peg:
+    x: [-0.05, 0.05]     # ±50 mm around human demo peg x
+    y: [-0.05, 0.05]     # ±50 mm around human demo peg y
+    z_rot: [0, 0]        # peg rotation is always 0 in source — pin it
