@@ -1,8 +1,11 @@
-"""DAgger data collection wrapper around robocasa gym environment.
+"""DAgger data collection wrapper around robomimic-style gym environments.
 
 Records per-step observations (per-key + stacked), actions, rewards, done flags,
 acting agent labels ("robot" or "human"), and MuJoCo simulation states for
 deterministic replay and HDF5 conversion.
+
+Works with any environment using RobomimicLowdimWrapper (robomimic, kitchen,
+robocasa, libero, blockpush, mimicgen, etc.).
 """
 
 from __future__ import annotations
@@ -15,11 +18,12 @@ import numpy as np
 import pandas as pd
 
 
-class RobocasaDAggerEnv(gym.Env):
+class RobomimicDAggerEnv(gym.Env):
     """Wraps a MultiStepWrapper(RobomimicLowdimWrapper(...)) for DAgger data recording.
 
     Captures per-key obs, sim states, and acting_agent labels at each step for
-    later conversion to robomimic HDF5 format.
+    later conversion to robomimic HDF5 format. Works with any robomimic-compatible
+    environment (robomimic, kitchen, robocasa, libero, blockpush, mimicgen, etc.).
 
     Parameters
     ----------

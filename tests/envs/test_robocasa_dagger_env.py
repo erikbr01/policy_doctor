@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from policy_doctor.envs.robocasa_dagger_env import RobocasaDAggerEnv
+from policy_doctor.envs.robomimic_dagger_env import RobomimicDAggerEnv
 
 
 class MockRobomimicEnv:
@@ -87,7 +87,7 @@ def test_dagger_env_init():
     """Test DAggerEnv initialization."""
     inner_env = MockMultiStepWrapper()
     obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-    env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys)
+    env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys)
 
     assert env.obs_keys == obs_keys
     assert env._acting_agent == "robot"
@@ -98,7 +98,7 @@ def test_dagger_env_set_acting_agent():
     """Test setting acting agent label."""
     inner_env = MockMultiStepWrapper()
     obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-    env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys)
+    env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys)
 
     env.set_acting_agent("human")
     assert env._acting_agent == "human"
@@ -114,7 +114,7 @@ def test_dagger_env_step_records_data():
     """Test that step() records per-key obs and sim state."""
     inner_env = MockMultiStepWrapper()
     obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-    env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys)
+    env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys)
 
     env.reset()
     action = np.random.randn(10).astype(np.float32)
@@ -143,7 +143,7 @@ def test_dagger_env_reset_clears_data():
     """Test that reset() clears episode data."""
     inner_env = MockMultiStepWrapper()
     obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-    env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys)
+    env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys)
 
     env.reset()
     action = np.zeros(10)
@@ -163,7 +163,7 @@ def test_dagger_env_save_episode():
         inner_env = MockMultiStepWrapper()
         obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
         output_dir = Path(tmpdir)
-        env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys, output_dir=output_dir)
+        env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys, output_dir=output_dir)
 
         env.reset()
         for _ in range(5):
@@ -189,7 +189,7 @@ def test_dagger_env_acting_agent_labels():
     """Test that acting_agent labels are correctly recorded."""
     inner_env = MockMultiStepWrapper()
     obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-    env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys)
+    env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys)
 
     env.reset()
 
@@ -212,7 +212,7 @@ def test_dagger_env_render_camera():
     """Test camera rendering."""
     inner_env = MockMultiStepWrapper()
     obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
-    env = RobocasaDAggerEnv(inner_env, obs_keys=obs_keys)
+    env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys)
 
     env.reset()
 

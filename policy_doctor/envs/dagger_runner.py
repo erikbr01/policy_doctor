@@ -9,7 +9,7 @@ from typing import Optional
 import numpy as np
 
 from policy_doctor.envs.intervention_device import InterventionDevice
-from policy_doctor.envs.robocasa_dagger_env import RobocasaDAggerEnv
+from policy_doctor.envs.robomimic_dagger_env import RobomimicDAggerEnv
 from policy_doctor.envs.visualization import DAggerVisualizer
 from policy_doctor.monitoring.monitored_policy import MonitoredPolicy
 
@@ -38,7 +38,7 @@ class RobocasaDAggerRunner:
     ----------
     monitored_policy : MonitoredPolicy
         Wrapped policy with behavior graph monitoring.
-    env : RobocasaDAggerEnv
+    env : RobomimicDAggerEnv
         Data-recording environment wrapper.
     intervention_device : InterventionDevice
         Human input handler (keyboard, SpaceMouse, etc.)
