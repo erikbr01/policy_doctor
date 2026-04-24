@@ -40,8 +40,14 @@ The script installs:
 - robosuite + robocasa
 - infembed for influence scoring
 - pynput for keyboard input
+- hidapi for SpaceMouse (optional)
 
-**Note**: On first run, you'll be prompted for **Accessibility permission** (macOS requires this for keyboard monitoring). Grant it in System Preferences → Security & Privacy → Accessibility.
+**Accessibility Permission (macOS)**: On first run, you'll be prompted for **Accessibility permission** for keyboard monitoring. Grant it in System Preferences → Security & Privacy → Accessibility.
+
+**SpaceMouse Setup (Optional)**: Install 3DConnexion drivers from https://3dconnexion.com/us/support/drivers/ then verify via:
+```bash
+python -c "import hid; dev = hid.device(); dev.open(9583, 50741); print('SpaceMouse found')"
+```
 
 ### 2. Prepare Monitoring Artifacts
 
@@ -104,6 +110,45 @@ python scripts/run_dagger.py \
 
 The `--task` parameter automatically infers the dataset path. For custom dataset locations, pass `--dataset_path /path/to/dataset.hdf5`.
 
+### Device Configuration
+
+DAgger supports multiple input devices. Configure via the `--dagger_config` parameter:
+
+**Keyboard (Default):**
+```bash
+python scripts/run_dagger.py \
+  --task square_mh \
+  ... \
+  --dagger_config keyboard_default
+```
+
+**SpaceMouse:**
+```bash
+python scripts/run_dagger.py \
+  --task square_mh \
+  ... \
+  --dagger_config spacemouse_default
+```
+
+Configuration presets are stored in `policy_doctor/configs/dagger/*.yaml`:
+- `keyboard_default.yaml` — Keyboard device with standard key bindings
+- `spacemouse_default.yaml` — SpaceMouse 6-DOF input
+- `defaults.yaml` — Base configuration (customize as needed)
+
+Custom configs can extend the defaults. Example: `my_config.yaml`:
+```yaml
+device: spacemouse
+
+spacemouse:
+  deadzone: 0.15  # Increase deadzone to reduce noise
+  scale_position: 100.0  # Adjust sensitivity
+
+intervention:
+  node_value_threshold: -0.5  # More aggressive triggering
+```
+
+Then run: `--dagger_config my_config`
+
 ### 4. Convert to Training Dataset
 
 After collecting episodes:
@@ -129,9 +174,11 @@ python -m policy_doctor.scripts.run_pipeline \
 
 ---
 
-## Keyboard Controls
+## Input Device Controls
 
-During a DAgger episode:
+### Keyboard Mode
+
+During a DAgger episode with keyboard control:
 
 | Key | Action |
 |-----|--------|
@@ -148,6 +195,19 @@ During a DAgger episode:
 | **K** | Base backward |
 | **J** | Base turn left |
 | **L** | Base turn right |
+
+### SpaceMouse Mode
+
+With a 3DConnexion SpaceMouse:
+
+| Input | Action |
+|-------|--------|
+| **Translation (X/Y/Z)** | Direct 6-DOF arm control (translational) |
+| **Rotation (Roll/Pitch/Yaw)** | Direct 6-DOF arm control (rotational) |
+| **Left Button (Hold)** | Gripper close (toggle on hold) |
+| **Right Button (Toggle)** | Switch between human/robot control |
+
+The SpaceMouse provides continuous 6-DOF input, making it natural for fluid arm control. The sensitivity is configurable via `scale_position` and `scale_rotation` in the config.
 | **Ctrl+C** | Stop all episodes |
 
 ---

@@ -142,6 +142,12 @@ def auto_device() -> str:
     is_flag=True,
     help="Disable live matplotlib visualization",
 )
+@click.option(
+    "--dagger_config",
+    default="keyboard_default",
+    type=str,
+    help="DAgger config preset (keyboard_default, spacemouse_default, defaults, etc.)",
+)
 def main(
     task: str,
     train_dir: str,
@@ -155,6 +161,7 @@ def main(
     intervention_threshold: float,
     device: str,
     no_visualization: bool,
+    dagger_config: str,
 ) -> None:
     """Run DAgger episodes on any robomimic-compatible environment with behavior graph intervention timing."""
 
@@ -167,9 +174,13 @@ def main(
     from policy_doctor.data.adapters import ensure_robocasa_on_path
     from policy_doctor.envs import (
         DAggerVisualizer,
-        KeyboardInterventionDevice,
         RobomimicDAggerEnv,
         RobomimicDAggerRunner,
+    )
+    from policy_doctor.envs.dagger_config import (
+        create_intervention_device,
+        get_intervention_threshold,
+        load_dagger_config,
     )
     from policy_doctor.gym_util.multistep_wrapper import MultiStepWrapper
     from policy_doctor.monitoring.intervention import NodeValueThresholdRule
@@ -217,6 +228,15 @@ def main(
         rollout_embeddings_path=None,
     )
 
+    # Load DAgger config
+    click.echo(f"Loading DAgger config: {dagger_config}")
+    dagger_cfg = load_dagger_config(dagger_config)
+
+    # Use config threshold if not overridden via CLI
+    if intervention_threshold == 0.0:  # default value
+        intervention_threshold = get_intervention_threshold(dagger_cfg)
+    click.echo(f"Intervention threshold: {intervention_threshold}")
+
     intervention_rule = NodeValueThresholdRule(
         node_values=node_values, threshold=intervention_threshold
     )
@@ -261,17 +281,31 @@ def main(
     env = create_env()
 
     # --- Create intervention device and visualizer ---
-    click.echo("Initializing keyboard intervention device...")
-    intervention_device = KeyboardInterventionDevice(action_dim=env.action_space.shape[0])
-    click.echo("  Press SPACE to toggle human/robot control")
-    click.echo("  W/S/A/D/Q/E: move arm (z, x, y)")
-    click.echo("  G/H: gripper close/open")
-    click.echo("  I/K/J/L: move base (x, rotation)")
+    device_type = dagger_cfg.get("device", "keyboard")
+    click.echo(f"Initializing {device_type} intervention device...")
+    try:
+        intervention_device = create_intervention_device(dagger_cfg)
+        if device_type == "keyboard":
+            click.echo("  Press SPACE to toggle human/robot control")
+            click.echo("  W/S/A/D/Q/E: move arm (z, x, y)")
+            click.echo("  G/H: gripper close/open")
+            click.echo("  I/K/J/L: move base (x, rotation)")
+        elif device_type == "spacemouse":
+            click.echo("  Use SpaceMouse 6-DOF input")
+            click.echo("  Left button (hold): gripper close")
+            click.echo("  Right button: toggle human/robot control")
+    except Exception as e:
+        click.echo(f"Error creating intervention device: {e}", err=True)
+        raise click.Abort()
 
     visualizer = None
-    if not no_visualization:
+    viz_cfg = dagger_cfg.get("visualization", {})
+    if not no_visualization and viz_cfg.get("enabled", True):
         try:
-            visualizer = DAggerVisualizer(camera_names=["agentview"])
+            visualizer = DAggerVisualizer(
+                camera_names=viz_cfg.get("camera_names", ["agentview"]),
+                figsize=tuple(viz_cfg.get("figsize", [8, 5])),
+            )
             click.echo("Visualization enabled")
         except Exception as e:
             click.echo(f"Warning: Failed to create visualizer: {e}")

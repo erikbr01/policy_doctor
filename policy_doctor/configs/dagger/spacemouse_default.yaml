@@ -1,0 +1,19 @@
+# SpaceMouse + threshold-based intervention
+# Usage: python scripts/run_dagger.py ... +dagger_config=spacemouse_default
+
+device: spacemouse
+
+spacemouse:
+  vendor_id: 9583     # 3DConnexion SpaceMouse Compact (Wired)
+  product_id: 50741
+  deadzone: 0.1       # Reduce noise from stationary sensor
+  scale_position: 125.0  # Empirical scaling from reference implementation
+  scale_rotation: 50.0
+
+intervention:
+  rule: node_value_threshold
+  node_value_threshold: 0.0
+
+visualization:
+  enabled: true
+  camera_names: ["agentview"]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Optional
@@ -162,6 +164,222 @@ class KeyboardInterventionDevice(InterventionDevice):
         """Stop the listener thread."""
         if self._listener is not None:
             self._listener.stop()
+
+    def __del__(self):
+        self.close()
+
+
+class SpaceMouseInterventionDevice(InterventionDevice):
+    """3DConnexion SpaceMouse controller for arm teleoperation.
+
+    Maps 6-DOF SpaceMouse input to 10D OSC_POSE actions for PandaMobile:
+      - X/Y/Z translation → arm x/y/z
+      - Roll/Pitch/Yaw rotation → arm roll/pitch/yaw
+      - Left button (hold) → gripper close
+      - Right button (toggle) → switch is_intervening
+      - Optional keyboard controls for base movement
+
+    Requires hidapi (pip install hidapi) and SpaceMouse drivers installed.
+
+    Parameters
+    ----------
+    vendor_id : int, default 9583
+        USB vendor ID for 3DConnexion SpaceMouse Compact (Wired).
+    product_id : int, default 50741
+        USB product ID for 3DConnexion SpaceMouse Compact (Wired).
+    deadzone : float, default 0.1
+        Ignore sensor values below this magnitude to filter noise.
+    scale_position : float, default 125.0
+        Scale factor for translational movements.
+    scale_rotation : float, default 50.0
+        Scale factor for rotational movements.
+    """
+
+    ACTION_DIM = 10
+
+    def __init__(
+        self,
+        vendor_id: int = 9583,
+        product_id: int = 50741,
+        deadzone: float = 0.1,
+        scale_position: float = 125.0,
+        scale_rotation: float = 50.0,
+    ) -> None:
+        try:
+            import hid
+        except ImportError as e:
+            raise ImportError(
+                "hidapi not found. Install with: pip install hidapi"
+            ) from e
+
+        self.hid = hid
+        self.vendor_id = vendor_id
+        self.product_id = product_id
+        self.deadzone = deadzone
+        self.scale_position = scale_position
+        self.scale_rotation = scale_rotation
+
+        self._is_intervening = False
+        self._device = None
+        self._reading_thread = None
+        self._stop_reading = False
+
+        # Current state
+        self._pose = np.zeros(6, dtype=np.float32)  # x, y, z, roll, pitch, yaw
+        self._gripper_active = False
+        self._last_left_button_time = 0.0
+
+        self._open_device()
+        self._start_reading_thread()
+
+    def _open_device(self) -> None:
+        """Open SpaceMouse HID device."""
+        try:
+            self._device = self.hid.device()
+            self._device.open(self.vendor_id, self.product_id)
+            self._device.set_nonblocking(True)
+            print("[SpaceMouse] Device opened successfully")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to open SpaceMouse (vendor={self.vendor_id}, "
+                f"product={self.product_id}): {e}. "
+                "Check that 3DConnexion drivers are installed and SpaceMouse is connected."
+            ) from e
+
+    def _to_int16(self, byte1: int, byte2: int) -> int:
+        """Convert two bytes to signed 16-bit integer."""
+        val = (byte2 << 8) | byte1
+        if val >= 32768:
+            val -= 65536
+        return val
+
+    def _convert(self, byte1: int, byte2: int) -> float:
+        """Convert two bytes to normalized float in [-1, 1]."""
+        val = self._to_int16(byte1, byte2)
+        return float(val) / 350.0  # 350 is empirical max from reference
+
+    def _parse_hid_packet(self, data: list[int]) -> None:
+        """Parse a 13-byte HID packet from SpaceMouse."""
+        if not data or len(data) < 13:
+            return
+
+        if data[0] == 1:  # 6-DOF sensor reading
+            # Extract raw values (data[1:13])
+            y = self._convert(data[1], data[2])
+            x = self._convert(data[3], data[4])
+            z = -self._convert(data[5], data[6])  # negate Z per reference
+
+            roll = self._convert(data[7], data[8])
+            pitch = self._convert(data[9], data[10])
+            yaw = self._convert(data[11], data[12])
+
+            # Apply deadzone
+            if abs(x) < self.deadzone:
+                x = 0.0
+            if abs(y) < self.deadzone:
+                y = 0.0
+            if abs(z) < self.deadzone:
+                z = 0.0
+            if abs(roll) < self.deadzone:
+                roll = 0.0
+            if abs(pitch) < self.deadzone:
+                pitch = 0.0
+            if abs(yaw) < self.deadzone:
+                yaw = 0.0
+
+            self._pose = np.array([x, y, z, roll, pitch, yaw], dtype=np.float32)
+
+        elif data[0] == 3:  # Button press
+            # Left button (data[1] == 1): gripper control
+            if data[1] == 1:
+                current_time = time.time()
+                if current_time - self._last_left_button_time > 0.2:
+                    self._gripper_active = not self._gripper_active
+                    self._last_left_button_time = current_time
+
+            # Right button (data[1] == 2): toggle is_intervening
+            if data[1] == 2:
+                self._is_intervening = not self._is_intervening
+
+    def _read_loop(self) -> None:
+        """Background thread: continuously read HID packets."""
+        while not self._stop_reading:
+            try:
+                if self._device is not None:
+                    data = self._device.read(13)
+                    if data:
+                        self._parse_hid_packet(data)
+            except Exception as e:
+                print(f"[SpaceMouse] Read error: {e}")
+
+            time.sleep(0.001)  # 1ms polling interval
+
+    def _start_reading_thread(self) -> None:
+        """Start the HID reading thread."""
+        self._stop_reading = False
+        self._reading_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._reading_thread.start()
+
+    @property
+    def is_intervening(self) -> bool:
+        return self._is_intervening
+
+    def get_action(self) -> Optional[np.ndarray]:
+        """Get 10D action from current SpaceMouse state.
+
+        Maps to 10D OSC_POSE action:
+          [0:3]: arm position (x, y, z) from SpaceMouse translation
+          [3:6]: arm rotation (roll, pitch, yaw) from SpaceMouse rotation
+          [6]: gripper command (1.0 if active, 0.0 otherwise)
+          [7:10]: base movement (currently zeros - extend if needed)
+
+        Returns
+        -------
+        action : np.ndarray or None
+            10D action vector scaled to [-1, 1], or None if no input detected.
+        """
+        # Check if any non-zero input
+        if np.allclose(self._pose, 0.0) and not self._gripper_active:
+            return None
+
+        # Build 10D action
+        action = np.zeros(self.ACTION_DIM, dtype=np.float32)
+
+        # Pose: apply scaling and clipping
+        pose_scaled = self._pose.copy()
+        pose_scaled[:3] *= self.scale_position
+        pose_scaled[3:6] *= self.scale_rotation
+
+        action[0:6] = np.clip(pose_scaled, -1, 1)
+
+        # Gripper
+        action[6] = 1.0 if self._gripper_active else 0.0
+
+        # Base (leave zeros for now; can extend if keyboard controls added)
+        # action[7:10] = ...
+
+        return action
+
+    def notify(self, message: str) -> None:
+        """Print a notification message."""
+        print(f"[SpaceMouse INTERVENTION] {message}")
+
+    def reset(self) -> None:
+        """Reset internal state."""
+        self._pose.fill(0.0)
+        self._gripper_active = False
+        self._is_intervening = False
+
+    def close(self) -> None:
+        """Stop reading thread and close device."""
+        self._stop_reading = True
+        if self._reading_thread is not None:
+            self._reading_thread.join(timeout=1.0)
+        if self._device is not None:
+            try:
+                self._device.close()
+            except Exception:
+                pass
 
     def __del__(self):
         self.close()
