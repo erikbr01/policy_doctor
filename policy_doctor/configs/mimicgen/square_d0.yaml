@@ -1,0 +1,44 @@
+# @package mimicgen_datagen
+# MimicGen Square task — D0 variant.
+#
+# Placement bounds (from Square_D0._get_initial_placement_bounds):
+#   nut:  x ∈ [-0.115, -0.11]  (5 mm total), y ∈ [0.11, 0.225]  (115 mm total), z_rot ∈ [0, 2π]
+#   peg:  fixed (not randomised in D0)
+#
+# Dominant variance source: nut z-rotation (360°). With z_rot pinned to seed,
+# trajectory spread drops ~84% and success rate returns to 100%.
+#
+# Parameter rationale:
+#   z_rot: ±5° (0.087 rad) — very tight; captures minor placement jitter without
+#          the catastrophic rotation mismatch that causes the bulk of variance.
+#   y:     ±25 mm — injects meaningful pose diversity while keeping trajectories
+#          recoverable (the nut y-range in D0 is 115 mm; ±25 mm is ~43% of that).
+#   x:     null — env range is already 5 mm total; leave it free.
+#   peg:   null for all axes — peg is fixed in D0; no patching needed.
+#
+# action_noise=0.0: removes the small per-step stochasticity so the only
+#   variance source is the object starting pose, which we control explicitly.
+
+task_name: square
+env_interface_name: MG_Square
+env_interface_type: robosuite
+source_dataset_path: data/source/mimicgen/source/square.hdf5
+
+# Trajectory variance knobs
+action_noise: 0.05
+subtask_term_offset_range: [0, 10]
+nn_k: 1
+interpolate_from_last_target_pose: false
+transform_first_robot_pose: false
+num_interpolation_steps: 5
+num_fixed_steps: 0
+
+# Object pose constraints (offsets from seed demo pose)
+#   [lo, hi] = uniform range centred on seed value
+#   null     = leave env's original random range for that axis
+fix_initial_object_poses: true
+object_pose_ranges:
+  nut:
+    x: [-0.05, 0.05]     # ±50 mm
+    y: [-0.2, 0.2]       # ±200 mm around seed y
+    z_rot: [-1.57, 1.57] # ±90° around seed rotation

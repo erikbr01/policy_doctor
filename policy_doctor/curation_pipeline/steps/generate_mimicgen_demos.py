@@ -27,6 +27,28 @@ Config keys (under ``mimicgen_datagen``):
     env_interface_name   (default ``"MG_Square"``)
     env_interface_type   (default ``"robosuite"``)
 
+    Trajectory variance knobs (see docs/mimicgen_data_generation_parameters.md):
+    action_noise                     Per-step action noise (default 0.05).
+    subtask_term_offset_range        [lo, hi] random boundary offset for subtask_1
+                                     (default [0, 0]).
+    nn_k                             Nearest-neighbour top-k for subtask_1 source
+                                     selection (default 1).
+    interpolate_from_last_target_pose  (default false)
+    transform_first_robot_pose         (default false)
+    num_interpolation_steps            (default 5)
+    num_fixed_steps                    (default 0)
+
+    Object pose constraints:
+    fix_initial_object_poses  If true, constrain each object's initial pose relative
+                              to the seed demo on every env.reset() (default false).
+    object_pose_ranges        Per-object, per-axis offset ranges from the seed pose.
+                              Schema: {object_name: {x: [lo,hi]|null, y: [lo,hi]|null,
+                              z_rot: [lo,hi]|null}}.
+                              [0, 0] = pin exactly to seed value.
+                              [-d, d] = uniform ±d around seed value.
+                              null per-axis = leave that axis with env's random range.
+                              null overall = pin all axes exactly to seed ([0,0]).
+
 Result JSON (``step_dir/result.json``):
     seed_demo_key        The demo key that was actually used.
     seed_source          ``"graph"`` when wired from SelectMimicgenSeedFromGraphStep,
@@ -66,6 +88,47 @@ def _list_demo_keys(hdf5_path: pathlib.Path) -> list[str]:
         return sorted(k for k in f["data"].keys() if k.startswith("demo_"))
 
 
+def _read_all_object_poses_from_hdf5(
+    hdf5_path: pathlib.Path,
+) -> dict[str, dict[str, float]]:
+    """Return world-frame pose at t=0 for every object in datagen_info/object_poses.
+
+    Works for any MimicGen task — reads whatever objects are present in the HDF5.
+    Returns world-frame (x, y, z_rot) so that the subprocess can subtract the
+    env-specific reference to compute relative bounds offsets.
+
+    Args:
+        hdf5_path: Prepared source or generated HDF5 (must have datagen_info).
+
+    Returns:
+        Dict mapping object_name → {x: float, y: float, z_rot: float} in world frame.
+
+    Raises:
+        RuntimeError: if datagen_info/object_poses is missing (file not prepared).
+    """
+    result: dict[str, dict[str, float]] = {}
+    with h5py.File(hdf5_path, "r") as f:
+        demo_keys = sorted(k for k in f["data"].keys() if k.startswith("demo_"))
+        if not demo_keys:
+            raise RuntimeError(f"No demo_* keys found in {hdf5_path}")
+        poses_grp_key = f"data/{demo_keys[0]}/datagen_info/object_poses"
+        if poses_grp_key not in f:
+            raise RuntimeError(
+                f"datagen_info/object_poses not found in {hdf5_path} — "
+                "has prepare_src_dataset been run on this file?"
+            )
+        for obj_name in f[poses_grp_key].keys():
+            poses = np.array(f[f"{poses_grp_key}/{obj_name}"])  # (T, 4, 4)
+            pos = poses[0, :3, 3]          # world-frame translation
+            R = poses[0, :3, :3]           # rotation matrix
+            result[obj_name] = {
+                "x": float(pos[0]),
+                "y": float(pos[1]),
+                "z_rot": float(np.arctan2(R[1, 0], R[0, 0])),
+            }
+    return result
+
+
 class GenerateMimicgenDemosStep(PipelineStep[dict]):
     """Generate MimicGen demos from one seed trajectory and extract EEF data.
 
@@ -84,6 +147,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
     def compute(self) -> dict[str, Any]:
         cfg_mg = OmegaConf.select(self.cfg, "mimicgen_datagen") or {}
 
+        # --- Basic generation params ---
         num_trials: int = int(OmegaConf.select(cfg_mg, "num_trials") or 50)
         output_dir_rel: str = (
             OmegaConf.select(cfg_mg, "output_dir") or "data/outputs/mimicgen_datagen"
@@ -91,6 +155,30 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         task_name: str = OmegaConf.select(cfg_mg, "task_name") or "square"
         env_interface_name: str = OmegaConf.select(cfg_mg, "env_interface_name") or "MG_Square"
         env_interface_type: str = OmegaConf.select(cfg_mg, "env_interface_type") or "robosuite"
+
+        # --- Variance knobs ---
+        # Use OmegaConf.select with default= to avoid `0.0 or fallback` falsiness bugs.
+        action_noise: float = float(
+            OmegaConf.select(cfg_mg, "action_noise", default=0.05)
+        )
+        offset_range = OmegaConf.select(cfg_mg, "subtask_term_offset_range", default=[0, 0])
+        offset_lo: int = int(offset_range[0])
+        offset_hi: int = int(offset_range[1])
+        nn_k: int = int(OmegaConf.select(cfg_mg, "nn_k", default=1))
+        interp_from_last: bool = bool(
+            OmegaConf.select(cfg_mg, "interpolate_from_last_target_pose", default=False)
+        )
+        transform_first: bool = bool(
+            OmegaConf.select(cfg_mg, "transform_first_robot_pose", default=False)
+        )
+        num_interp_steps: int = int(OmegaConf.select(cfg_mg, "num_interpolation_steps", default=5))
+        num_fixed_steps: int = int(OmegaConf.select(cfg_mg, "num_fixed_steps", default=0))
+
+        # --- Object pose constraints ---
+        fix_initial_object_poses: bool = bool(
+            OmegaConf.select(cfg_mg, "fix_initial_object_poses") or False
+        )
+        object_pose_ranges = OmegaConf.select(cfg_mg, "object_pose_ranges")  # nested dict or None
 
         self.step_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,16 +201,35 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         else:
             # --- Fallback: load from source dataset ---
             seed_source = "source_dataset"
-            source_dataset_rel = (
+            source_dataset_str = (
                 OmegaConf.select(cfg_mg, "source_dataset_path") or _DEFAULT_SOURCE_DATASET
             )
-            source_dataset = self.repo_root / source_dataset_rel
-            if not source_dataset.exists():
-                raise FileNotFoundError(
-                    f"[generate_mimicgen_demos] source dataset not found: {source_dataset}\n"
-                    "Set mimicgen_datagen.source_dataset_path in your config, or run "
-                    "SelectMimicgenSeedFromGraphStep first."
-                )
+            source_dataset_path = pathlib.Path(source_dataset_str)
+            # If relative, try PROJECT_ROOT first (MimicGen source data lives there),
+            # then fall back to REPO_ROOT (third_party/cupid).
+            if not source_dataset_path.is_absolute():
+                candidate_project = PROJECT_ROOT / source_dataset_path
+                candidate_repo = self.repo_root / source_dataset_path
+                if candidate_project.exists():
+                    source_dataset = candidate_project
+                elif candidate_repo.exists():
+                    source_dataset = candidate_repo
+                else:
+                    raise FileNotFoundError(
+                        f"[generate_mimicgen_demos] source dataset not found at:\n"
+                        f"  {candidate_project}\n"
+                        f"  {candidate_repo}\n"
+                        "Set mimicgen_datagen.source_dataset_path in your config, or run "
+                        "SelectMimicgenSeedFromGraphStep first."
+                    )
+            else:
+                source_dataset = source_dataset_path
+                if not source_dataset.exists():
+                    raise FileNotFoundError(
+                        f"[generate_mimicgen_demos] source dataset not found: {source_dataset}\n"
+                        "Set mimicgen_datagen.source_dataset_path in your config, or run "
+                        "SelectMimicgenSeedFromGraphStep first."
+                    )
 
             seed_demo_key_cfg: str = OmegaConf.select(cfg_mg, "seed_demo_key") or "demo_0"
             seed_random_seed: int = int(OmegaConf.select(cfg_mg, "seed_random_seed") or 42)
@@ -162,6 +269,34 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             )
             print(f"  [generate_mimicgen_demos] seed HDF5 written: {seed_hdf5}")
 
+        # --- Auto-read seed world poses for all objects (always when pose-fixing is on) ---
+        seed_object_poses: dict | None = None
+        if fix_initial_object_poses:
+            # seed_hdf5 may not yet have datagen_info (prepare_src_dataset runs in the
+            # subprocess), so fall back to reading from the source dataset directly.
+            read_target = seed_hdf5
+            try:
+                seed_object_poses = _read_all_object_poses_from_hdf5(read_target)
+            except RuntimeError:
+                # seed_hdf5 not yet prepared; fall back to source dataset
+                src_str = OmegaConf.select(cfg_mg, "source_dataset_path") or _DEFAULT_SOURCE_DATASET
+                src_p = pathlib.Path(src_str)
+                if not src_p.is_absolute():
+                    src_p = PROJECT_ROOT / src_p if (PROJECT_ROOT / src_p).exists() else self.repo_root / src_p
+                read_target = src_p
+                seed_object_poses = _read_all_object_poses_from_hdf5(read_target)
+            summary = ", ".join(
+                f"{obj}=({', '.join(f'{k}:{v:.3f}' for k, v in comps.items())})"
+                for obj, comps in seed_object_poses.items()
+            )
+            print(
+                f"  [generate_mimicgen_demos] seed object poses from "
+                f"{read_target.name}: {summary}"
+            )
+            if object_pose_ranges is None:
+                print("  [generate_mimicgen_demos] object_pose_ranges=null → "
+                      "all axes pinned exactly to seed ([0,0] offsets)")
+
         # --- Output directory for generation ---
         gen_output_dir = self.repo_root / output_dir_rel / seed_demo_key
         gen_output_dir.mkdir(parents=True, exist_ok=True)
@@ -177,20 +312,45 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                 "stats": {},
                 "seed_eef_xyz": [],
                 "generated_eef_xyz": [],
+                "failed_eef_xyz": [],
             }
 
         # --- Dispatch to mimicgen conda env ---
         cmd = [
             "conda", "run", "-n", MIMICGEN_CONDA_ENV_NAME, "--no-capture-output",
             "python", str(_GENERATE_SCRIPT),
-            "--seed_hdf5", str(seed_hdf5),
-            "--output_dir", str(gen_output_dir),
-            "--task_name", task_name,
+            "--seed_hdf5",          str(seed_hdf5),
+            "--output_dir",         str(gen_output_dir),
+            "--task_name",          task_name,
             "--env_interface_name", env_interface_name,
             "--env_interface_type", env_interface_type,
-            "--num_trials", str(num_trials),
+            "--num_trials",         str(num_trials),
+            "--action_noise",       str(action_noise),
+            "--subtask_term_offset_lo", str(offset_lo),
+            "--subtask_term_offset_hi", str(offset_hi),
+            "--nn_k",               str(nn_k),
+            "--num_interpolation_steps", str(num_interp_steps),
+            "--num_fixed_steps",    str(num_fixed_steps),
         ]
-        print(f"  [generate_mimicgen_demos] running: {' '.join(cmd[:8])} ...")
+        if interp_from_last:
+            cmd.append("--interpolate_from_last_target_pose")
+        if transform_first:
+            cmd.append("--transform_first_robot_pose")
+        if fix_initial_object_poses and seed_object_poses:
+            import json as _json
+            cmd += ["--seed_object_poses", _json.dumps(seed_object_poses)]
+            if object_pose_ranges is not None:
+                ranges_plain = OmegaConf.to_container(object_pose_ranges, resolve=True)
+                cmd += ["--object_pose_ranges", _json.dumps(ranges_plain)]
+            # If object_pose_ranges is None, the subprocess defaults to [0,0] for all axes
+
+        print(f"  [generate_mimicgen_demos] running generation ...")
+        print(f"    action_noise={action_noise}  offset=({offset_lo},{offset_hi})  nn_k={nn_k}")
+        print(f"    interp_from_last={interp_from_last}  transform_first={transform_first}")
+        print(f"    num_interp={num_interp_steps}  num_fixed={num_fixed_steps}")
+        print(f"    fix_initial_object_poses={fix_initial_object_poses}  "
+              f"object_pose_ranges={object_pose_ranges}")
+
         result = subprocess.run(cmd)
         if result.returncode != 0:
             raise RuntimeError(
@@ -200,25 +360,18 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
 
         # --- Read stats ---
         stats_path = gen_output_dir / "stats.json"
-        if stats_path.exists():
-            with open(stats_path) as f:
-                stats = json.load(f)
-        else:
-            stats = {}
+        stats = json.loads(stats_path.read_text()) if stats_path.exists() else {}
 
         # --- Extract EEF trajectories ---
-        # Seed demo EEF (from prepared seed_hdf5 which now has datagen_info)
         seed_eef_xyz = extract_eef_xyz_from_hdf5(seed_hdf5)
 
-        # Generated demos EEF (successes)
         generated_hdf5 = gen_output_dir / "demo.hdf5"
         generated_eef_xyz: list[np.ndarray] = []
         if generated_hdf5.exists():
             generated_eef_xyz = extract_eef_xyz_from_hdf5(generated_hdf5)
         else:
-            print(f"  [generate_mimicgen_demos] WARNING: generated demo.hdf5 not found at {generated_hdf5}")
+            print(f"  [generate_mimicgen_demos] WARNING: generated demo.hdf5 not found")
 
-        # Failed demos EEF
         failed_hdf5 = gen_output_dir / "demo_failed.hdf5"
         failed_eef_xyz: list[np.ndarray] = []
         if failed_hdf5.exists():
@@ -238,8 +391,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             "generated_hdf5_path": str(generated_hdf5),
             "failed_hdf5_path": str(failed_hdf5) if failed_hdf5.exists() else None,
             "stats": stats,
-            # Serialise as nested lists for JSON
-            "seed_eef_xyz": [arr.tolist() for arr in seed_eef_xyz],
+            "seed_eef_xyz":      [arr.tolist() for arr in seed_eef_xyz],
             "generated_eef_xyz": [arr.tolist() for arr in generated_eef_xyz],
-            "failed_eef_xyz": [arr.tolist() for arr in failed_eef_xyz],
+            "failed_eef_xyz":    [arr.tolist() for arr in failed_eef_xyz],
         }

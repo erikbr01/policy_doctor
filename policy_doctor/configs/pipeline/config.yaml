@@ -60,6 +60,43 @@ remove_negative_influence: false
 # slice_label: null  # auto: "advantage_based_A{threshold}"
 # slice_source: null  # auto: "behavior_search_train" (filter) or "behavior_search_holdout" (selection)
 
+# ---------------------------------------------------------------------------
+# MimicGen data generation (generate_mimicgen_demos pipeline step)
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  # Source / seed
+  source_dataset_path: null        # path to source HDF5; defaults to square D1 path if null
+  seed_demo_key: demo_0            # which demo to use as seed; "random" = draw randomly
+  seed_random_seed: 42             # RNG seed used when seed_demo_key="random"
+  num_trials: 50                   # number of generation attempts
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+
+  # Trajectory variance knobs (see docs/mimicgen_data_generation_parameters.md)
+  action_noise: 0.05               # per-step action noise amplitude (0.0 = none)
+  subtask_term_offset_range: [0, 0]  # random extra steps at subtask-1 boundary [lo, hi]
+  nn_k: 1                          # nearest-neighbour top-k for subtask-1 source selection
+  interpolate_from_last_target_pose: false  # if true, interpolate from last commanded pose (more variance)
+  transform_first_robot_pose: false         # if true, transform first robot pose per subtask
+  num_interpolation_steps: 5       # interpolation steps between subtasks
+  num_fixed_steps: 0               # extra fixed-pose settling steps at subtask start
+
+  # Object pose constraints
+  # When fix_initial_object_poses=true, every env.reset() constrains each object's
+  # initial pose relative to the seed demo's pose (read automatically from the HDF5).
+  #
+  # object_pose_ranges: per-object, per-axis offset ranges from the seed value.
+  #   Schema: {object_name: {x: [lo, hi]|null, y: [lo, hi]|null, z_rot: [lo, hi]|null}}
+  #   [0, 0]        → pin exactly to seed value (no randomisation on this axis)
+  #   [-d, d]       → uniform ±d around seed value
+  #   null per-axis → leave that axis with the env's original random range (unconstrained)
+  #   null overall  → pin ALL axes exactly to seed ([0,0] for every axis of every object)
+  fix_initial_object_poses: false
+  object_pose_ranges: null
+
+# ---------------------------------------------------------------------------
 # Markov report (export_markov_report step — after run_clustering)
 markov_export:
   level: null  # null = use manifest level from clustering result

@@ -1,0 +1,33 @@
+# @package mimicgen_datagen
+# MimicGen Threading task.
+#
+# Threading requires inserting a needle through a loop — high-precision task where
+# object orientation strongly affects trajectory alignment (similar to Square_D0).
+# Consider enabling fix_initial_object_poses and pinning z_rot once a variance sweep
+# has confirmed rotation as the dominant variance source.
+
+task_name: threading
+env_interface_name: MG_Threading
+env_interface_type: robosuite
+source_dataset_path: data/source/mimicgen/threading.hdf5
+
+# Trajectory variance knobs
+action_noise: 0.05
+subtask_term_offset_range: [10, 20]
+nn_k: 3
+interpolate_from_last_target_pose: true
+transform_first_robot_pose: false
+num_interpolation_steps: 5
+num_fixed_steps: 0
+
+# Object pose constraints
+# Enable and populate object_pose_ranges once a variance sweep has been run.
+# Likely candidates based on task geometry:
+#   fix_initial_object_poses: true
+#   object_pose_ranges:
+#     <needle_object>:
+#       z_rot: [0, 0]   # pin rotation (likely dominant)
+#       x: null
+#       y: null
+fix_initial_object_poses: false
+object_pose_ranges: null

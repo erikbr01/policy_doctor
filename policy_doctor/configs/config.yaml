@@ -11,6 +11,9 @@ defaults:
   - vlm/defaults                                           # VLM slice annotation (optional step)
   # Data profile: cupid RoboMimic | MimicGen square | RoboCasa robomimic-layout (see configs/data_source/*.yaml)
   - data_source: cupid_robomimic
+  # MimicGen task profile: task-specific generation settings (see configs/mimicgen/*.yaml)
+  # Override with mimicgen=square_d0 etc. — use null when not running mimicgen generation.
+  - mimicgen: null
   - experiment: null                                       # experiment config (highest priority — use experiment=name)
 
 # Pipeline identity — override per experiment or on CLI
