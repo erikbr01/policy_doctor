@@ -19,7 +19,7 @@ DATA_SOURCE_ROOT = PROJECT_ROOT / "data" / "source"
 THIRD_PARTY_ROOT = PROJECT_ROOT / "third_party"
 CUPID_ROOT = THIRD_PARTY_ROOT / "cupid"
 # Conda env from cupid ``conda_environment.yaml`` (diffusion / transport training stack).
-CUPID_CONDA_ENV_NAME = "cupid"
+CUPID_CONDA_ENV_NAME = "cupid_torch2"
 INFLUENCE_VISUALIZER_ROOT = THIRD_PARTY_ROOT / "influence_visualizer"
 MIMICGEN_ROOT = THIRD_PARTY_ROOT / "mimicgen"
 # Conda env from ``environment_mimicgen.yaml`` (MuJoCo 2.3.2 + pinned robosuite/robomimic; see MimicGen docs).

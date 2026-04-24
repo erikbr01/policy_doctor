@@ -1,0 +1,100 @@
+# @package _global_
+# MimicGen trajectory generation experiment — Square D1, Apr 23 2026.
+#
+# Three-condition experiment:
+#   1. Baseline: 60 D1 source demos only (train_baseline)
+#   2. + Random: 60 D1 demos + ~200 MimicGen demos (random seed selection)
+#   3. + BG:     60 D1 demos + ~200 MimicGen demos (behavior-graph seed selection)
+#
+# Source dataset: demo_src_square_task_D1/demo.hdf5 (1000 demos, obs_dim=26, delta OSC)
+# Baseline cap:   60 demos via baseline.max_train_episodes (6% of 1000)
+# MimicGen:       episode_budget=250 trials → ~200 successful demos at ~80% success rate
+#
+# Usage (full run):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_pipeline_apr23
+#
+# Usage (resume from clustering):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_pipeline_apr23 \
+#     run_dir=data/pipeline_runs/mimicgen_square_pipeline_apr23 \
+#     steps=[mimicgen_random,mimicgen_behavior_graph]
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_pipeline_apr23
+seeds: [0]
+reference_seed: 0
+
+# ---------------------------------------------------------------------------
+# Baseline training (train_baseline step)
+# ---------------------------------------------------------------------------
+# max_train_episodes caps the training split to 60 demos, leaving train_ratio
+# unused for the baseline. train_on_combined_data always uses train_ratio=0.64
+# (it does not read max_train_episodes), so the full combined dataset is used.
+train_date: apr23_mimicgen_pipeline_test
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr23]
+
+baseline:
+  max_train_episodes: 60        # 6% of 1000 D1 source demos
+
+# ---------------------------------------------------------------------------
+# Attribution (train_attribution + compute_infembed steps)
+# ---------------------------------------------------------------------------
+# attribution.train_date/eval_date in the baseline YAML default to jan18;
+# override here so all attribution steps use the correct apr23 run paths.
+attribution:
+  train_date: apr23_mimicgen_pipeline_test
+  eval_date: apr23_mimicgen_pipeline_test
+  dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
+
+# ---------------------------------------------------------------------------
+# Clustering
+# ---------------------------------------------------------------------------
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen generation (shared by both arms; heuristic is set per-arm)
+# ---------------------------------------------------------------------------
+# Task variant note: seeds come from policy eval rollouts which run in Square_D1
+# (env_name inferred from env_meta in the source dataset). We therefore use the
+# square_d1 generation recipe — no pose constraints (full D1 randomization).
+# Load with: mimicgen=square_d1 on the CLI, or params are inlined below.
+mimicgen_datagen:
+  episode_budget: 250           # trials → ~200 successes at ~80% Square D1 success rate
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+  policy_seed: 0
+  success_only: true
+  top_k_paths: 5
+  min_path_probability: 0.0
+
+  # Square D1 generation parameters (from configs/mimicgen/square_d1.yaml)
+  # D1 intent: full randomization — both nut and peg positions vary freely.
+  action_noise: 0.05
+  subtask_term_offset_range: [10, 20]
+  nn_k: 3
+  interpolate_from_last_target_pose: true
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+  fix_initial_object_poses: false
+  object_pose_ranges: null
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps: [train_baseline, eval_policies, train_attribution, finalize_attribution, compute_infembed, run_clustering, mimicgen_random, mimicgen_behavior_graph]
