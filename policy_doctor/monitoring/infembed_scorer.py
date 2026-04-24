@@ -229,12 +229,18 @@ class InfEmbedStreamScorer(StreamScorer):
         embedding = self._embedder.predict(loader)  # (1, proj_dim) on CPU
         return embedding[0].float().numpy()
 
+    def score_from_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        """Compute influence scores from a pre-computed embedding (no gradient pass).
+
+        Avoids repeating the expensive forward/backward pass when the embedding is
+        already available. Returns ``(N_demo,)`` float32 array.
+        """
+        return (self._demo_embeddings @ embedding).astype(np.float32)
+
     def score(self, batch: dict) -> np.ndarray:
         """Compute influence scores of all demo training samples on ``batch``.
 
         Score ≈ dot product of ``embed(batch)`` with each training demo embedding.
         Returns ``(N_demo,)`` float32 array; higher = more influential.
         """
-        e = self.embed(batch)          # (proj_dim,)
-        scores = self._demo_embeddings @ e  # (N_demo,)
-        return scores.astype(np.float32)
+        return self.score_from_embedding(self.embed(batch))
