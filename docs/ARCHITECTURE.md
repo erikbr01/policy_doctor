@@ -88,9 +88,11 @@
 
 ---
 
-### 2. RobocasaDAggerEnv (New)
+### 2. RobomimicDAggerEnv (New)
 
 **Purpose**: Wraps `MultiStepWrapper(RobomimicLowdimWrapper(...))` to record DAgger-formatted episode data.
+
+**Generic wrapper**: Works with ANY robomimic-compatible environment (robomimic, kitchen, robocasa, libero, blockpush, mimicgen, etc.) without modification. Backward compatibility alias: `RobocasaDAggerEnv`.
 
 **Architecture** (wrapper stack):
 ```
@@ -107,10 +109,22 @@ robosuite.make() ← (existing) raw MuJoCo environment
 
 **Key interface**:
 ```python
-env = RobocasaDAggerEnv(inner_env, obs_keys, output_dir)
+env = RobomimicDAggerEnv(inner_env, obs_keys, output_dir)
 env.set_acting_agent("robot" or "human")  # Label controller
 obs, reward, done, info = env.step(action)
 path = env.save_episode()  # → ep0000.pkl (pandas DataFrame)
+```
+
+Works identically for all supported environments:
+```python
+# Kitchen stacking
+env = RobomimicDAggerEnv(inner_env_square, obs_keys, output_dir)
+
+# Robocasa pick-and-place
+env = RobomimicDAggerEnv(inner_env_robocasa, obs_keys, output_dir)
+
+# Libero long-horizon
+env = RobomimicDAggerEnv(inner_env_libero, obs_keys, output_dir)
 ```
 
 **Data recorded**:
