@@ -64,6 +64,7 @@ class RobomimicDAggerRunner:
         max_steps: int = 500,
         output_dir: Optional[Path | str] = None,
         visualizer: Optional[DAggerVisualizer] = None,
+        action_transform=None,
     ) -> None:
         self.monitored_policy = monitored_policy
         self.env = env
@@ -72,6 +73,7 @@ class RobomimicDAggerRunner:
         self.n_action_steps = n_action_steps
         self.max_steps = max_steps
         self.output_dir = Path(output_dir) if output_dir else None
+        self._action_transform = action_transform
         self.visualizer = visualizer
 
     def run_episode(self, episode_idx: int = 0) -> EpisodeRecord:
@@ -96,7 +98,8 @@ class RobomimicDAggerRunner:
             Summary of the episode.
         """
         # Initialize
-        obs = self.env.reset()
+        reset_out = self.env.reset()
+        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         self.monitored_policy.reset()
         self.intervention_device.reset()
 
@@ -118,9 +121,14 @@ class RobomimicDAggerRunner:
         while not done and step < self.max_steps:
             # --- ROBOT MODE ---
             if acting_agent == "robot":
-                # Build obs dict for policy
-                stacked_obs = np.stack(list(obs_queue), axis=0)  # (n_obs_steps, obs_dim)
-                obs_dict = {"obs": stacked_obs[None]}  # (1, n_obs_steps, obs_dim)
+                # Build obs dict for policy.
+                # MultiStepWrapper already returns (n_obs_steps, obs_dim); use directly.
+                # If obs is 1D (bare env), stack from the queue instead.
+                if obs.ndim >= 2:
+                    obs_dict = {"obs": obs[None]}  # (1, n_obs_steps, obs_dim)
+                else:
+                    stacked_obs = np.stack(list(obs_queue), axis=0)
+                    obs_dict = {"obs": stacked_obs[None]}
 
                 # Get policy action and classify
                 action_chunk = self.monitored_policy.predict_action(obs_dict)["action"][
@@ -148,7 +156,14 @@ class RobomimicDAggerRunner:
 
                 # Execute action chunk
                 for t in range(min(self.n_action_steps, len(action_chunk))):
-                    obs, reward, done, info = self.env.step(action_chunk[t])
+                    act = action_chunk[t]
+                    if isinstance(act, __import__("torch").Tensor):
+                        act = act.detach().cpu().numpy()
+                    if self._action_transform is not None:
+                        act = self._action_transform(act)
+                    step_out = self.env.step(act)
+                    obs, reward = step_out[0], step_out[1]
+                    done = step_out[2] if len(step_out) == 4 else (step_out[2] or step_out[3])
                     obs_queue.append(obs)
                     n_robot_steps += 1
                     step += 1
@@ -171,7 +186,9 @@ class RobomimicDAggerRunner:
                 # Get human action from keyboard/device
                 human_action = self.intervention_device.get_action()
                 if human_action is not None:
-                    obs, reward, done, info = self.env.step(human_action)
+                    step_out = self.env.step(human_action)
+                    obs, reward = step_out[0], step_out[1]
+                    done = step_out[2] if len(step_out) == 4 else (step_out[2] or step_out[3])
                     obs_queue.append(obs)
                     n_human_steps += 1
                     step += 1
@@ -226,16 +243,17 @@ class RobomimicDAggerRunner:
             return
 
         try:
-            camera_img = self.env.render_camera()
+            camera_imgs = {
+                name: self.env.render_camera(camera_name=name)
+                for name in self.visualizer.camera_names
+            }
             node_name = "unknown"
             node_value = None
 
             if self.monitored_policy.episode_results:
-                latest_result = self.monitored_policy.episode_results[-1]
-                if latest_result.get("result", {}).get("assignment"):
-                    assignment = latest_result["result"]["assignment"]
-                    node_name = assignment.node_name
-                    node_value = assignment.distance  # or V-value if stored
+                latest = self.monitored_policy.episode_results[-1]
+                node_name = latest.get("node_name") or "unknown"
+                node_value = latest.get("distance")
 
             acting_agent = self.env._acting_agent
             intervention_reason = ""
@@ -243,7 +261,7 @@ class RobomimicDAggerRunner:
                 intervention_reason = intervention_decision.reason
 
             self.visualizer.update(
-                camera_imgs={"agentview": camera_img},
+                camera_imgs=camera_imgs,
                 node_name=node_name,
                 node_value=node_value,
                 acting_agent=acting_agent,

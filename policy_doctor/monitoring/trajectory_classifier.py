@@ -109,6 +109,8 @@ class TrajectoryClassifier:
     ) -> None:
         self.monitor = monitor
         self.mode = mode
+        self.abs_action = abs_action
+        self.rotation_rep = rotation_rep
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self._obs_keys = obs_keys

@@ -221,7 +221,7 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
         
-        env = AsyncVectorEnv(env_fns)
+        env = AsyncVectorEnv(env_fns, shared_memory=False)
         # env = SyncVectorEnv(env_fns)
 
         self.env_meta = env_meta
@@ -245,11 +245,12 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
 
         # save episodes
         self.save_episodes = save_episodes
+        self.n_test_vis = n_test_vis
         self.episode_dir = None
         if save_episodes:
             assert n_envs == 1
             assert n_train == n_train_vis == 0
-            assert n_test > 0 and n_test == n_test_vis
+            assert n_test > 0 and n_test_vis <= n_test
             self.episode_dir = pathlib.Path(output_dir) / "episodes"
             self.episode_dir.mkdir()
             self.media_dir = pathlib.Path(output_dir) / "media"
@@ -337,7 +338,8 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
                         "episode": chunk_idx,
                         "timestep": timestep,
                         "obs": np_obs_dict["obs"].copy().astype(np.float32)[0],
-                        "img": env.call("_render_frame", "rgb_array")[0]
+                        "img": (env.call("_render_frame", "rgb_array")[0]
+                                if self.n_test_vis > 0 else None)
                     }
 
                     if "action_pred" in np_action_dict:
@@ -427,11 +429,10 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             value = np.mean(value)
             log_data[name] = value
 
-        if self.save_episodes:
+        if self.save_episodes and self.media_dir.is_dir():
             # rename media files based on success or failure
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
             media_files = sorted([ep for ep in self.media_dir.iterdir()])
-            assert len(episode_files) == len(media_files)
             for episode_file, media_file in zip(episode_files, media_files):
                 media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
 

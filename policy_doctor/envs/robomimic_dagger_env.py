@@ -56,15 +56,18 @@ class RobomimicDAggerEnv(gym.Env):
 
     def _get_raw_obs_dict(self) -> dict[str, np.ndarray]:
         """Get per-key obs from underlying robomimic env."""
-        # Navigate wrapper hierarchy: MultiStepWrapper -> RobomimicLowdimWrapper -> robomimic_env
-        lowdim_wrapper = self.inner_env.env
-        robomimic_env = lowdim_wrapper.env
-        return robomimic_env.get_observation()
+        # Navigate wrapper hierarchy: (MultiStepWrapper ->) RobomimicLowdimWrapper -> robomimic_env
+        inner = self.inner_env
+        robomimic_env = inner.env if hasattr(inner, "env") else inner.env.env
+        # robosuite 1.5 renamed get_observation -> _get_observations
+        if hasattr(robomimic_env, "get_observation"):
+            return robomimic_env.get_observation()
+        return robomimic_env._get_observations()
 
     def _get_sim_state(self) -> np.ndarray:
         """Get current MuJoCo state for deterministic replay."""
-        lowdim_wrapper = self.inner_env.env
-        robomimic_env = lowdim_wrapper.env
+        inner = self.inner_env
+        robomimic_env = inner.env if hasattr(inner, "env") else inner.env.env
         return robomimic_env.get_state()["states"]
 
     def set_acting_agent(self, agent: str) -> None:
@@ -83,7 +86,17 @@ class RobomimicDAggerEnv(gym.Env):
         done : bool
         info : dict
         """
-        stacked_obs, reward, done, info = self.inner_env.step(action)
+        step_out = self.inner_env.step(action)
+        obs = step_out[0]
+        reward = step_out[1]
+        done = step_out[2] if len(step_out) == 4 else (step_out[2] or step_out[3])
+        info = step_out[-1]
+
+        if isinstance(action, np.ndarray):
+            action_np = action
+        else:
+            import torch
+            action_np = action.detach().cpu().numpy() if isinstance(action, torch.Tensor) else np.array(action)
 
         # Capture per-key obs and sim state
         raw_obs = self._get_raw_obs_dict()
@@ -93,8 +106,8 @@ class RobomimicDAggerEnv(gym.Env):
             {
                 "timestep": len(self._episode_data),
                 "obs": {k: raw_obs[k].copy() for k in self.obs_keys},
-                "stacked_obs": stacked_obs.copy(),
-                "action": action.copy(),
+                "stacked_obs": obs.copy() if hasattr(obs, "copy") else obs,
+                "action": action_np.copy(),
                 "reward": float(reward),
                 "done": bool(done),
                 "acting_agent": self._acting_agent,
@@ -102,7 +115,7 @@ class RobomimicDAggerEnv(gym.Env):
             }
         )
 
-        return stacked_obs, reward, done, info
+        return obs, reward, done, info
 
     def reset(self) -> np.ndarray:
         """Reset environment and clear episode data."""
@@ -129,8 +142,8 @@ class RobomimicDAggerEnv(gym.Env):
         img : np.ndarray
             RGB image of shape (height, width, 3).
         """
-        lowdim_wrapper = self.inner_env.env
-        return lowdim_wrapper.render(mode="rgb_array", height=hw[0], width=hw[1])
+        # inner_env is RobomimicLowdimWrapper; it uses self.render_hw internally
+        return self.inner_env.render(mode="rgb_array")
 
     def save_episode(self, path: Optional[Path | str] = None) -> Path:
         """Save current episode data to pickle file in robomimic format.

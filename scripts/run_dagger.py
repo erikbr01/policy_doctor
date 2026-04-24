@@ -3,33 +3,23 @@
 
 Works with: robomimic, kitchen, robocasa, libero, blockpush, mimicgen, etc.
 
-Usage:
-    # Kitchen manipulation (square stacking)
-    python scripts/run_dagger.py \
+Run from third_party/cupid/ (diffusion_policy must be on PYTHONPATH):
+
+    # Kitchen square stacking (square_mh_feb5)
+    python ../../scripts/run_dagger.py \
       --task square_mh \
-      --train_dir third_party/cupid/data/outputs/train/square_mh/... \
+      --train_dir /abs/path/to/cupid/data/outputs/train/feb5/feb5_train_diffusion_unet_lowdim_square_mh_0 \
       --train_ckpt best \
-      --infembed_fit /path/to/infembed_fit.pt \
-      --infembed_npz /path/to/infembed_embeddings.npz \
-      --clustering_dir /path/to/clustering/result \
+      --infembed_fit /abs/path/to/infembed_fit.pt \
+      --infembed_npz /abs/path/to/infembed_embeddings.npz \
+      --clustering_dir /abs/path/to/clustering/result \
       --output_dir /tmp/dagger_square \
       --num_episodes 5
 
     # Robocasa (kitchen pick-and-place)
-    python scripts/run_dagger.py \
+    python ../../scripts/run_dagger.py \
       --task robocasa_layout_lowdim \
-      --train_dir third_party/cupid/data/outputs/train/robocasa_layout_lowdim/... \
-      --train_ckpt best \
-      --infembed_fit /path/to/infembed_fit.pt \
-      --infembed_npz /path/to/infembed_embeddings.npz \
-      --clustering_dir /path/to/clustering/result \
-      --output_dir /tmp/dagger_robocasa \
-      --num_episodes 5
-
-    # Kitchen transport task
-    python scripts/run_dagger.py \
-      --task transport_mh \
-      --train_dir third_party/cupid/data/outputs/train/transport_mh/... \
+      --train_dir /abs/path/to/train_dir \
       ...
 
 Environment: requires cupid_torch2 conda env (PyTorch 2.x, torch.func for InfEmbed)
@@ -37,26 +27,34 @@ Environment: requires cupid_torch2 conda env (PyTorch 2.x, torch.func for InfEmb
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# Ensure policy_doctor is importable when the script is run from third_party/cupid/
+_PD_ROOT = Path(__file__).resolve().parent.parent
+if str(_PD_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PD_ROOT))
 
 import click
 import torch
 
+from policy_doctor.paths import REPO_ROOT
+
 TASK_CONFIG = {
     "square_mh": {
-        "dataset_path": "data/source/kitchen_square.hdf5",
+        "dataset_path": str(REPO_ROOT / "data" / "robomimic" / "datasets" / "square" / "mh" / "low_dim_abs.hdf5"),
         "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
     },
     "lift_mh": {
-        "dataset_path": "data/source/kitchen_lift.hdf5",
+        "dataset_path": str(REPO_ROOT / "data" / "robomimic" / "datasets" / "lift" / "mh" / "low_dim_abs.hdf5"),
         "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
     },
     "transport_mh": {
-        "dataset_path": "data/source/kitchen_transport.hdf5",
+        "dataset_path": str(REPO_ROOT / "data" / "robomimic" / "datasets" / "transport" / "mh" / "low_dim_abs.hdf5"),
         "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
     },
     "robocasa_layout_lowdim": {
-        "dataset_path": "data/robocasa/datasets/kitchen_lowdim_merged.hdf5",
+        "dataset_path": str(REPO_ROOT / "data" / "robocasa" / "datasets" / "kitchen_lowdim_merged.hdf5"),
         "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
     },
 }
@@ -69,6 +67,31 @@ def auto_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def resolve_checkpoint(train_dir: str, train_ckpt: str) -> Path:
+    """Resolve 'best', 'latest', or epoch number to an actual .ckpt path."""
+    import re
+    checkpoint_dir = Path(train_dir) / "checkpoints"
+    if train_ckpt == "best":
+        best, best_score = None, -1.0
+        for p in checkpoint_dir.iterdir():
+            m = re.search(r"test_mean_score=(\d+\.\d+)", p.name)
+            if m and float(m.group(1)) > best_score:
+                best_score, best = float(m.group(1)), p
+        if best is not None:
+            return best
+        return checkpoint_dir / "latest.ckpt"
+    elif train_ckpt.isdigit():
+        target = int(train_ckpt)
+        best, best_dist = None, float("inf")
+        for p in checkpoint_dir.iterdir():
+            m = re.search(r"epoch=(\d+)", p.name)
+            if m and abs(int(m.group(1)) - target) < best_dist:
+                best_dist, best = abs(int(m.group(1)) - target), p
+        if best is not None:
+            return best
+    return checkpoint_dir / f"{train_ckpt}.ckpt"
 
 
 @click.command()
@@ -148,6 +171,12 @@ def auto_device() -> str:
     type=str,
     help="DAgger config preset (keyboard_default, spacemouse_default, defaults, etc.)",
 )
+@click.option(
+    "--episodes_dir",
+    default=None,
+    type=click.Path(exists=True),
+    help="Directory with metadata.yaml for window-level NearestCentroidAssigner (required for sliding-window clustering).",
+)
 def main(
     task: str,
     train_dir: str,
@@ -162,6 +191,7 @@ def main(
     device: str,
     no_visualization: bool,
     dagger_config: str,
+    episodes_dir: str,
 ) -> None:
     """Run DAgger episodes on any robomimic-compatible environment with behavior graph intervention timing."""
 
@@ -182,11 +212,11 @@ def main(
         get_intervention_threshold,
         load_dagger_config,
     )
-    from policy_doctor.gym_util.multistep_wrapper import MultiStepWrapper
+    from diffusion_policy.gym_util.multistep_wrapper import MultiStepWrapper
     from policy_doctor.monitoring.intervention import NodeValueThresholdRule
     from policy_doctor.monitoring.monitored_policy import MonitoredPolicy
     from policy_doctor.monitoring.trajectory_classifier import TrajectoryClassifier
-    from policy_doctor.env.robomimic.robomimic_lowdim_wrapper import (
+    from diffusion_policy.env.robomimic.robomimic_lowdim_wrapper import (
         RobomimicLowdimWrapper,
     )
 
@@ -213,19 +243,25 @@ def main(
         ensure_robocasa_on_path()
 
     # --- Load TrajectoryClassifier and build MonitoredPolicy ---
+    checkpoint = resolve_checkpoint(train_dir, train_ckpt)
     click.echo(f"Loading checkpoint and behavior graph for task: {task}")
+    click.echo(f"Checkpoint: {checkpoint}")
     classifier = TrajectoryClassifier.from_checkpoint(
-        checkpoint=str(Path(train_dir) / f"checkpoints/{train_ckpt}.ckpt"),
+        checkpoint=str(checkpoint),
         infembed_fit_path=infembed_fit,
         infembed_embeddings_path=infembed_npz,
         clustering_dir=clustering_dir,
         mode="rollout",
         device=device,
+        episodes_dir=episodes_dir,
     )
 
-    graph, node_values = get_behavior_graph_and_slice_values(
-        clustering_dir=clustering_dir,
-        rollout_embeddings_path=None,
+    from policy_doctor.data.clustering_loader import load_clustering_result_from_path
+    import pathlib
+    cluster_labels, cluster_metadata, _ = load_clustering_result_from_path(pathlib.Path(clustering_dir))
+    graph, node_values, _, _ = get_behavior_graph_and_slice_values(
+        cluster_labels=cluster_labels,
+        metadata=cluster_metadata,
     )
 
     # Load DAgger config
@@ -241,7 +277,7 @@ def main(
         node_values=node_values, threshold=intervention_threshold
     )
     monitored_policy = MonitoredPolicy(
-        policy=classifier.monitor.scorer._policy,
+        policy=classifier.monitor.scorer.policy,
         classifier=classifier,
         intervention_rule=intervention_rule,
     )
@@ -254,6 +290,25 @@ def main(
 
     ObsUtils.initialize_obs_modality_mapping_from_dict({"low_dim": obs_keys})
 
+    # Build action transformer: policy outputs rotation_6d, env expects axis_angle
+    abs_action = classifier.abs_action
+    rotation_transformer = None
+    if abs_action:
+        from diffusion_policy.model.common.rotation_transformer import RotationTransformer
+        rotation_transformer = RotationTransformer("axis_angle", "rotation_6d")
+        env_meta["env_kwargs"]["controller_configs"]["control_delta"] = False
+
+    def convert_action(action_10d) -> "np.ndarray":
+        """Convert rotation_6d action (10-dim) to axis_angle (7-dim) for robosuite."""
+        import numpy as _np
+        if rotation_transformer is None:
+            return action_10d
+        pos = action_10d[..., :3]
+        rot = action_10d[..., 3:9]
+        gripper = action_10d[..., [9]]
+        rot_aa = rotation_transformer.inverse(rot)
+        return _np.concatenate([pos, rot_aa, gripper], axis=-1)
+
     def create_env():
         """Create one instance of the environment stack."""
         robomimic_env = EnvUtils.create_env_from_metadata(
@@ -265,14 +320,11 @@ def main(
         lowdim_wrapper = RobomimicLowdimWrapper(
             env=robomimic_env, obs_keys=obs_keys, init_state=None
         )
-        multistep_wrapper = MultiStepWrapper(
-            lowdim_wrapper,
-            n_obs_steps=classifier.n_obs_steps,
-            n_action_steps=classifier.n_action_steps,
-            max_episode_steps=500,
-        )
+        # Do NOT wrap with MultiStepWrapper: the DAgger runner steps one action
+        # at a time (to allow mid-chunk intervention), so it handles obs stacking
+        # manually via its own obs_queue deque.
         dagger_env = RobomimicDAggerEnv(
-            inner_env=multistep_wrapper,
+            inner_env=lowdim_wrapper,
             obs_keys=obs_keys,
             output_dir=output_dir,
         )
@@ -324,6 +376,7 @@ def main(
         max_steps=500,
         output_dir=output_dir,
         visualizer=visualizer,
+        action_transform=convert_action,
     )
 
     try:
