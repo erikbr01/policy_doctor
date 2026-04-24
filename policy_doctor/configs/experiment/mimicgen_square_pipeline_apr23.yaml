@@ -67,6 +67,10 @@ clustering_aggregation: sum
 # ---------------------------------------------------------------------------
 # MimicGen generation (shared by both arms; heuristic is set per-arm)
 # ---------------------------------------------------------------------------
+# Task variant note: seeds come from policy eval rollouts which run in Square_D1
+# (env_name inferred from env_meta in the source dataset). We therefore use the
+# square_d1 generation recipe — no pose constraints (full D1 randomization).
+# Load with: mimicgen=square_d1 on the CLI, or params are inlined below.
 mimicgen_datagen:
   episode_budget: 250           # trials → ~200 successes at ~80% Square D1 success rate
   output_dir: data/outputs/mimicgen_datagen
@@ -77,6 +81,18 @@ mimicgen_datagen:
   success_only: true
   top_k_paths: 5
   min_path_probability: 0.0
+
+  # Square D1 generation parameters (from configs/mimicgen/square_d1.yaml)
+  # D1 intent: full randomization — both nut and peg positions vary freely.
+  action_noise: 0.05
+  subtask_term_offset_range: [10, 20]
+  nn_k: 3
+  interpolate_from_last_target_pose: true
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+  fix_initial_object_poses: false
+  object_pose_ranges: null
 
 # ---------------------------------------------------------------------------
 # Steps

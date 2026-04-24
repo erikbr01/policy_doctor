@@ -61,18 +61,31 @@ remove_negative_influence: false
 # slice_source: null  # auto: "behavior_search_train" (filter) or "behavior_search_holdout" (selection)
 
 # ---------------------------------------------------------------------------
-# MimicGen data generation (generate_mimicgen_demos pipeline step)
+# MimicGen trajectory generation pipeline
+# Steps: select_mimicgen_seed → generate_mimicgen_demos → train_on_combined_data
 # ---------------------------------------------------------------------------
 mimicgen_datagen:
-  # Source / seed
-  source_dataset_path: null        # path to source HDF5; defaults to square D1 path if null
-  seed_demo_key: demo_0            # which demo to use as seed; "random" = draw randomly
-  seed_random_seed: 42             # RNG seed used when seed_demo_key="random"
-  num_trials: 50                   # number of generation attempts
+  # Seed-trajectory selection (select_mimicgen_seed step)
+  seed_selection_heuristic: behavior_graph  # "behavior_graph" (proposed) or "random" (baseline)
+  num_seeds: 1                 # Number of seed trajectories to write into seed.hdf5 for MimicGen
+  top_k_paths: 5               # BehaviorGraphPathHeuristic: number of candidate paths to try
+  min_path_probability: 0.0    # BehaviorGraphPathHeuristic: minimum path probability threshold
+  success_only: true           # Both heuristics: only draw from successful rollouts
+  random_seed: null            # RandomSelectionHeuristic: RNG seed (null = non-deterministic)
+  policy_seed: null            # Which policy seed's clustering to use (null = first available)
+
+  # Generation budget and output (generate_mimicgen_demos step)
+  episode_budget: 50           # number of generation attempts (alias: num_trials)
+  num_trials: 50               # legacy alias for episode_budget — episode_budget takes precedence
   output_dir: data/outputs/mimicgen_datagen
   task_name: square
   env_interface_name: MG_Square
   env_interface_type: robosuite
+
+  # Fallback source dataset (used when no seed-selection step has been run)
+  source_dataset_path: null    # null = use default MimicGen Square D1 dataset
+  seed_demo_key: demo_0        # which demo to use as fallback seed; "random" = draw randomly
+  seed_random_seed: 42         # RNG seed used when seed_demo_key="random"
 
   # Trajectory variance knobs (see docs/mimicgen_data_generation_parameters.md)
   action_noise: 0.05               # per-step action noise amplitude (0.0 = none)
@@ -105,24 +118,3 @@ markov_export:
   method: chi2
   n_permutations: 10000
   random_state: null
-
-# MimicGen trajectory generation pipeline
-# Steps: select_mimicgen_seed → generate_mimicgen_demos → train_on_combined_data
-mimicgen_datagen:
-  # Seed-trajectory selection
-  seed_selection_heuristic: behavior_graph  # "behavior_graph" (proposed) or "random" (baseline)
-  top_k_paths: 5               # BehaviorGraphPathHeuristic: number of candidate paths to try
-  min_path_probability: 0.0    # BehaviorGraphPathHeuristic: minimum path probability threshold
-  success_only: true           # Both heuristics: only draw from successful rollouts
-  random_seed: null            # RandomSelectionHeuristic: RNG seed (null = non-deterministic)
-  policy_seed: null            # Which policy seed's clustering to use (null = first available)
-
-  # MimicGen generation
-  episode_budget: 50           # Number of MimicGen generation trials to run
-  output_dir: data/outputs/mimicgen_datagen
-  task_name: square
-  env_interface_name: MG_Square
-  env_interface_type: robosuite
-
-  # Fallback source dataset (used when no seed-selection step has been run)
-  source_dataset_path: null    # null = use default MimicGen Square D1 dataset

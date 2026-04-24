@@ -97,12 +97,13 @@ class TrainBaselineStep(PipelineStep[None]):
         compile_ = bool(OmegaConf.select(baseline, "compile") or False)
 
         # Determine training dispatch mode.
-        # If the data source requires a conda env other than the cupid default, use subprocess.
+        # Always use subprocess when a conda_env is specified — the pipeline orchestrator runs
+        # in the policy_doctor env, which does not have cupid's training packages installed.
         conda_env = (
             OmegaConf.select(baseline, "conda_env")
             or OmegaConf.select(cfg, "data_source.conda_env_train")
         )
-        use_subprocess = bool(conda_env) and conda_env != CUPID_CONDA_ENV_NAME
+        use_subprocess = bool(conda_env)
 
         for seed in seeds:
             train_name = get_train_name(train_date, task, policy, seed)
@@ -110,8 +111,7 @@ class TrainBaselineStep(PipelineStep[None]):
 
             if use_subprocess:
                 # Subprocess mode: invoke `conda run -n <env> python train.py` so that
-                # the correct interpreter (e.g. robocasa env) is used.  Skip HDF5-specific
-                # dataset_mask_kwargs overrides which don't apply to image datasets.
+                # the correct interpreter (e.g. cupid_torch2 env) is used.
                 overrides = self._subprocess_overrides(
                     exp_name=exp_name,
                     device=device,
@@ -126,6 +126,7 @@ class TrainBaselineStep(PipelineStep[None]):
                     policy=policy,
                     project=project,
                     run_output_dir=run_output_dir,
+                    max_train_episodes=max_train_episodes,
                 )
                 overrides.extend(baseline_diffusion_extra_overrides(baseline))
                 overrides.extend([
@@ -162,7 +163,7 @@ class TrainBaselineStep(PipelineStep[None]):
                     f"task.dataset.seed={seed}",
                     f"task.dataset.val_ratio={val_ratio}",
                     *(
-                        [f"+task.dataset.dataset_mask_kwargs.max_train_episodes={max_train_episodes}"]
+                        [f"task.dataset.max_train_episodes={max_train_episodes}"]
                         if max_train_episodes is not None
                         else [
                             f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
@@ -223,13 +224,15 @@ class TrainBaselineStep(PipelineStep[None]):
         policy: str,
         project: str,
         run_output_dir: str,
+        max_train_episodes: "int | None" = None,
     ) -> list:
-        """Build the core Hydra override list for subprocess (non-HDF5) training.
+        """Build the core Hydra override list for subprocess training.
 
-        Intentionally omits ``dataset_mask_kwargs`` and ``train_ratio`` overrides
-        that only apply to HDF5-backed cupid dataset classes.
+        Omits ``dataset_mask_kwargs`` / ``train_ratio`` overrides that only apply
+        to HDF5-backed cupid dataset classes.  Pass ``max_train_episodes`` to cap
+        the training split (e.g. for baseline vs. combined-data conditions).
         """
-        return [
+        overrides = [
             f"name={exp_name}",
             f"training.device={device}",
             f"training.seed={seed}",
@@ -245,6 +248,9 @@ class TrainBaselineStep(PipelineStep[None]):
             f"multi_run.wandb_name_base={train_name}",
             f"multi_run.run_dir={run_output_dir}",
         ]
+        if max_train_episodes is not None:
+            overrides.append(f"task.dataset.max_train_episodes={max_train_episodes}")
+        return overrides
 
     def _run_subprocess_train(
         self,

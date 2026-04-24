@@ -19,6 +19,7 @@ Two selection strategies are supported via ``mimicgen_datagen.seed_selection_heu
 
 Config keys (under ``mimicgen_datagen``):
     seed_selection_heuristic   ``"behavior_graph"`` | ``"random"`` (default: ``"behavior_graph"``).
+    num_seeds                  How many seed trajectories to write into seed.hdf5 (default 1).
     top_k_paths                Number of candidate paths to try for ``behavior_graph`` (default 5).
     min_path_probability       Min path probability for ``behavior_graph`` (default 0.0).
     success_only               Only consider successful rollouts (default True).
@@ -30,9 +31,10 @@ Also reads standard pipeline config keys used by ``RunClusteringStep``:
 
 Result JSON:
     seed_hdf5_path       Absolute path to the materialised ``seed.hdf5``.
-    rollout_idx          Episode index of the selected rollout.
+    num_seeds            Number of seed trajectories written to seed.hdf5.
+    rollout_idxs         List of episode indices of the selected rollouts.
     heuristic            Name of the heuristic used.
-    selection_info       Heuristic-specific metadata (path, probability, etc.).
+    selection_info       List of heuristic-specific metadata dicts (one per seed).
     policy_seed          Which policy seed's clustering was used.
     clustering_dir       Resolved clustering directory.
     rollouts_hdf5        Path to the source rollout HDF5.
@@ -72,6 +74,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         cfg_mg = OmegaConf.select(self.cfg, "mimicgen_datagen") or {}
 
         heuristic_name: str = OmegaConf.select(cfg_mg, "seed_selection_heuristic") or "behavior_graph"
+        num_seeds: int = int(OmegaConf.select(cfg_mg, "num_seeds") or 1)
         top_k_paths: int = int(OmegaConf.select(cfg_mg, "top_k_paths") or 5)
         min_path_probability: float = float(OmegaConf.select(cfg_mg, "min_path_probability") or 0.0)
         success_only_raw = OmegaConf.select(cfg_mg, "success_only")
@@ -80,7 +83,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         random_seed: int | None = int(random_seed_raw) if random_seed_raw is not None else None
 
         print(
-            f"  [select_mimicgen_seed] heuristic={heuristic_name!r}  "
+            f"  [select_mimicgen_seed] heuristic={heuristic_name!r}  num_seeds={num_seeds}  "
             f"success_only={success_only}  top_k_paths={top_k_paths}"
         )
 
@@ -136,38 +139,45 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             random_seed=random_seed,
         )
 
-        result: SeedSelectionResult = heuristic.select(
+        results: list[SeedSelectionResult] = heuristic.select_multiple(
+            n=num_seeds,
             cluster_labels=labels,
             metadata=metadata,
             rollout_hdf5_path=str(rollouts_hdf5),
             level=level,
         )
 
-        traj = result.trajectory
-        rollout_idx = result.rollout_idx
-        print(
-            f"  [select_mimicgen_seed] selected rollout_idx={rollout_idx}  "
-            f"T={traj.states.shape[0]}  info={result.info}"
-        )
+        for r in results:
+            print(
+                f"  [select_mimicgen_seed] selected rollout_idx={r.rollout_idx}  "
+                f"T={r.trajectory.states.shape[0]}  info={r.info}"
+            )
 
-        # --- Materialise seed HDF5 ---
+        # --- Materialise seed HDF5 (one demo per trajectory) ---
         self.step_dir.mkdir(parents=True, exist_ok=True)
         seed_hdf5 = self.step_dir / "seed.hdf5"
         mat = RobomimicSeedMaterializer()
-        mat.write_source_dataset(
-            states=traj.states,
-            actions=traj.actions,
-            env_meta=traj.env_meta,
-            output_path=seed_hdf5,
-            model_file=traj.model_file,
-        )
-        print(f"  [select_mimicgen_seed] seed HDF5 written: {seed_hdf5}")
+        if len(results) == 1:
+            mat.write_source_dataset(
+                states=results[0].trajectory.states,
+                actions=results[0].trajectory.actions,
+                env_meta=results[0].trajectory.env_meta,
+                output_path=seed_hdf5,
+                model_file=results[0].trajectory.model_file,
+            )
+        else:
+            mat.write_multi_demo_source_dataset(
+                trajectories=[r.trajectory for r in results],
+                output_path=seed_hdf5,
+            )
+        print(f"  [select_mimicgen_seed] seed HDF5 written ({len(results)} demos): {seed_hdf5}")
 
         return {
             "seed_hdf5_path": str(seed_hdf5.resolve()),
-            "rollout_idx": rollout_idx,
+            "num_seeds": len(results),
+            "rollout_idxs": [r.rollout_idx for r in results],
             "heuristic": heuristic_name,
-            "selection_info": result.info,
+            "selection_info": [r.info for r in results],
             "policy_seed": seed,
             "clustering_dir": str(cdir),
             "rollouts_hdf5": str(rollouts_hdf5),
