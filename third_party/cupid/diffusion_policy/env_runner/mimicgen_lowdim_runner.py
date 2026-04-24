@@ -240,11 +240,12 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
         
-        env = AsyncVectorEnv(env_fns)
-        # env = SyncVectorEnv(env_fns)
-
+        # Defer AsyncVectorEnv creation to run() so that __init__ does not
+        # require the sim environment (e.g. Square_D1) to be registered at
+        # import time. This allows training in envs that don't have MimicGen
+        # installed (cupid_torch2) while still running rollouts when needed.
         self.env_meta = env_meta
-        self.env = env
+        self.env = None  # lazily created in run()
         self.env_fns = env_fns
         self.env_seeds = env_seeds
         self.env_prefixs = env_prefixs
@@ -277,6 +278,15 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
     def run(self, policy: BaseLowdimPolicy):
         device = policy.device
         dtype = policy.dtype
+        # Lazy env creation deferred from __init__ so that training in envs
+        # without MimicGen-registered environments (e.g. cupid_torch2) works.
+        if self.env is None:
+            try:
+                self.env = AsyncVectorEnv(self.env_fns)
+            except Exception as e:
+                print(f"[MimicgenLowdimRunner] WARNING: could not create env ({e}). "
+                      "Skipping rollout evaluation (env not registered in this conda env).")
+                return dict()
         env = self.env
         
         # plan for rollout
