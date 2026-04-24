@@ -250,13 +250,25 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
         }
 
     def _resolve_original_dataset_path(self, baseline: Any) -> pathlib.Path:
-        """Locate the original training HDF5 from config or Hydra defaults."""
+        """Locate the original training HDF5 from config or Hydra defaults.
+
+        Priority:
+        1. ``mimicgen_datagen.original_dataset_path`` (explicit override — preferred)
+        2. ``task.dataset.dataset_path`` / ``dataset_path`` (pipeline task config)
+        3. Hydra training config file (``baseline.config_dir/config_name``)
+        """
+        from policy_doctor.paths import PROJECT_ROOT
+
         cfg = self.cfg
 
-        dataset_path = (
-            OmegaConf.select(cfg, "task.dataset.dataset_path")
-            or OmegaConf.select(cfg, "dataset_path")
-        )
+        # Priority 1: explicit original dataset path (e.g. 60-demo subset)
+        dataset_path = OmegaConf.select(cfg, "mimicgen_datagen.original_dataset_path")
+
+        if not dataset_path:
+            dataset_path = (
+                OmegaConf.select(cfg, "task.dataset.dataset_path")
+                or OmegaConf.select(cfg, "dataset_path")
+            )
         if dataset_path is None:
             config_dir = (
                 OmegaConf.select(baseline, "config_dir")
@@ -281,7 +293,11 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
 
         p = pathlib.Path(dataset_path)
         if not p.is_absolute():
-            p = (self.repo_root / p).resolve()
+            # Try repo_root first (third_party/cupid), then project root
+            candidate = (self.repo_root / p).resolve()
+            if not candidate.exists():
+                candidate = (PROJECT_ROOT / p).resolve()
+            p = candidate
         if not p.exists():
             raise FileNotFoundError(f"Original dataset not found: {p}")
         return p

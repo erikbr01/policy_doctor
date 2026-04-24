@@ -73,6 +73,8 @@ clustering_aggregation: sum
 # Load with: mimicgen=square_d1 on the CLI, or params are inlined below.
 mimicgen_datagen:
   episode_budget: 250           # trials → ~200 successes at ~80% Square D1 success rate
+  # Original 60-demo subset to combine with generated data (60+200=260 total)
+  original_dataset_path: data/mimicgen/square_d1_60.hdf5   # relative to PROJECT_ROOT
   output_dir: data/outputs/mimicgen_datagen
   task_name: square
   env_interface_name: MG_Square
