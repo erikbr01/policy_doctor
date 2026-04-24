@@ -13,9 +13,10 @@
 task_name: square
 env_interface_name: MG_Square
 env_interface_type: robosuite
-source_dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
-# Pass all 1000 source demos to MimicGen so nn_k=3 nearest-neighbour selection
-# has full coverage across all nut/peg configurations.
+source_dataset_path: data/source/mimicgen/source/square.hdf5
+# Use the full 10-demo human source dataset directly (no single-seed materialization).
+# MimicGen retargets the D0 human demos into D1's wider nut+peg placement distribution.
+# nn_k=3 selects from all 10 source demos per trial for best coverage.
 use_full_source_dataset: true
 
 # Trajectory variance knobs — MimicGen defaults to preserve diversity
