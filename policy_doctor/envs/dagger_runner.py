@@ -27,7 +27,7 @@ class EpisodeRecord:
     manual_overrides: int
 
 
-class RobocasaDAggerRunner:
+class RobomimicDAggerRunner:
     """Main loop for DAgger rollouts with automatic intervention triggering.
 
     Combines MonitoredPolicy (which classifies timesteps and detects when to intervene)

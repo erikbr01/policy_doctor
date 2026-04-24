@@ -169,8 +169,7 @@ def main(
         DAggerVisualizer,
         KeyboardInterventionDevice,
         RobomimicDAggerEnv,
-        RobocasaDAggerEnv,
-        RobocasaDAggerRunner,
+        RobomimicDAggerRunner,
     )
     from policy_doctor.gym_util.multistep_wrapper import MultiStepWrapper
     from policy_doctor.monitoring.intervention import NodeValueThresholdRule
@@ -282,7 +281,7 @@ def main(
     click.echo(f"Starting DAgger rollouts for task: {task}")
     click.echo("=" * 60)
 
-    runner = RobocasaDAggerRunner(
+    runner = RobomimicDAggerRunner(
         monitored_policy=monitored_policy,
         env=env,
         intervention_device=intervention_device,
