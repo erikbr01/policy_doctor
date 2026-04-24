@@ -66,7 +66,11 @@ remove_negative_influence: false
 mimicgen_datagen:
   # Source / seed
   source_dataset_path: null        # path to source HDF5; defaults to square D1 path if null
+  use_full_source_dataset: false   # if true, pass the entire source HDF5 to MimicGen instead
+                                   # of materializing a single seed demo. Required for D1-style
+                                   # tasks where nn_k > 1 needs a diverse source pool.
   seed_demo_key: demo_0            # which demo to use as seed; "random" = draw randomly
+                                   # (ignored when use_full_source_dataset=true)
   seed_random_seed: 42             # RNG seed used when seed_demo_key="random"
   num_trials: 50                   # number of generation attempts
   output_dir: data/outputs/mimicgen_datagen

@@ -12,14 +12,19 @@ the source-dataset lookup entirely.  The graph-based seed always takes
 precedence when available.
 
 Config keys (under ``mimicgen_datagen``):
-    source_dataset_path  Path to the robomimic HDF5 with source demos.
-                         Defaults to the standard MimicGen Square D1 path.
-                         Ignored when SelectMimicgenSeedFromGraphStep is done.
-    seed_demo_key        Demo to use as the seed.  Default ``"demo_0"``.
-                         Set to ``"random"`` to draw randomly from available
-                         ``demo_*`` keys (deterministic via ``seed_random_seed``).
-                         Ignored when SelectMimicgenSeedFromGraphStep is done.
-    seed_random_seed     RNG seed used when ``seed_demo_key="random"`` (default 42).
+    source_dataset_path      Path to the robomimic HDF5 with source demos.
+                             Defaults to the standard MimicGen Square D1 path.
+                             Ignored when SelectMimicgenSeedFromGraphStep is done.
+    use_full_source_dataset  If true, pass the entire source HDF5 to MimicGen
+                             without materializing a single demo. Required for
+                             D1-style tasks where nn_k > 1 needs a diverse source
+                             pool (default false).
+    seed_demo_key            Demo to use as seed. Default ``"demo_0"``.
+                             Set to ``"random"`` to draw randomly (deterministic
+                             via ``seed_random_seed``).
+                             Ignored when use_full_source_dataset=true or
+                             SelectMimicgenSeedFromGraphStep is done.
+    seed_random_seed         RNG seed used when ``seed_demo_key="random"`` (default 42).
     num_trials           Number of MimicGen generation attempts (default 50).
     output_dir           Base output directory (default
                          ``"data/outputs/mimicgen_datagen"``).
@@ -180,6 +185,10 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         )
         object_pose_ranges = OmegaConf.select(cfg_mg, "object_pose_ranges")  # nested dict or None
 
+        use_full_source: bool = bool(
+            OmegaConf.select(cfg_mg, "use_full_source_dataset", default=False)
+        )
+
         self.step_dir.mkdir(parents=True, exist_ok=True)
 
         # --- Auto-wire: check if SelectMimicgenSeedFromGraphStep has been run ---
@@ -199,14 +208,12 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                 f"seed_hdf5={seed_hdf5}"
             )
         else:
-            # --- Fallback: load from source dataset ---
+            # --- Resolve source dataset path ---
             seed_source = "source_dataset"
             source_dataset_str = (
                 OmegaConf.select(cfg_mg, "source_dataset_path") or _DEFAULT_SOURCE_DATASET
             )
             source_dataset_path = pathlib.Path(source_dataset_str)
-            # If relative, try PROJECT_ROOT first (MimicGen source data lives there),
-            # then fall back to REPO_ROOT (third_party/cupid).
             if not source_dataset_path.is_absolute():
                 candidate_project = PROJECT_ROOT / source_dataset_path
                 candidate_repo = self.repo_root / source_dataset_path
@@ -231,43 +238,54 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                         "SelectMimicgenSeedFromGraphStep first."
                     )
 
-            seed_demo_key_cfg: str = OmegaConf.select(cfg_mg, "seed_demo_key") or "demo_0"
-            seed_random_seed: int = int(OmegaConf.select(cfg_mg, "seed_random_seed") or 42)
-
-            available_keys = _list_demo_keys(source_dataset)
-            if not available_keys:
-                raise RuntimeError(f"No demo_* keys found in {source_dataset}")
-
-            if seed_demo_key_cfg == "random":
-                rng = random.Random(seed_random_seed)
-                seed_demo_key = rng.choice(available_keys)
+            if use_full_source:
+                # Pass the full source dataset directly — no materialization.
+                # Required for tasks like D1 where nn_k > 1 needs a diverse pool.
+                seed_hdf5 = source_dataset
+                seed_demo_key = "full_source"
+                n_demos = len(_list_demo_keys(source_dataset))
                 print(
-                    f"  [generate_mimicgen_demos] random seed_demo_key={seed_demo_key!r}"
-                    f" (seed={seed_random_seed}, choices={len(available_keys)})"
+                    f"  [generate_mimicgen_demos] using full source dataset: "
+                    f"{source_dataset.name} ({n_demos} demos)"
                 )
             else:
-                if seed_demo_key_cfg not in available_keys:
-                    raise ValueError(
-                        f"seed_demo_key={seed_demo_key_cfg!r} not found in {source_dataset}. "
-                        f"Available: {available_keys[:10]}"
+                seed_demo_key_cfg: str = OmegaConf.select(cfg_mg, "seed_demo_key") or "demo_0"
+                seed_random_seed: int = int(OmegaConf.select(cfg_mg, "seed_random_seed") or 42)
+
+                available_keys = _list_demo_keys(source_dataset)
+                if not available_keys:
+                    raise RuntimeError(f"No demo_* keys found in {source_dataset}")
+
+                if seed_demo_key_cfg == "random":
+                    rng = random.Random(seed_random_seed)
+                    seed_demo_key = rng.choice(available_keys)
+                    print(
+                        f"  [generate_mimicgen_demos] random seed_demo_key={seed_demo_key!r}"
+                        f" (seed={seed_random_seed}, choices={len(available_keys)})"
                     )
-                seed_demo_key = seed_demo_key_cfg
+                else:
+                    if seed_demo_key_cfg not in available_keys:
+                        raise ValueError(
+                            f"seed_demo_key={seed_demo_key_cfg!r} not found in {source_dataset}. "
+                            f"Available: {available_keys[:10]}"
+                        )
+                    seed_demo_key = seed_demo_key_cfg
 
-            print(f"  [generate_mimicgen_demos] loading seed demo: {seed_demo_key}")
-            traj = MimicGenSeedTrajectory.from_robomimic_hdf5_demo(
-                source_dataset, demo_key=seed_demo_key
-            )
+                print(f"  [generate_mimicgen_demos] loading seed demo: {seed_demo_key}")
+                traj = MimicGenSeedTrajectory.from_robomimic_hdf5_demo(
+                    source_dataset, demo_key=seed_demo_key
+                )
 
-            seed_hdf5 = self.step_dir / "seed_demo.hdf5"
-            mat = RobomimicSeedMaterializer()
-            mat.write_source_dataset(
-                states=traj.states,
-                actions=traj.actions,
-                env_meta=traj.env_meta,
-                output_path=seed_hdf5,
-                model_file=traj.model_file,
-            )
-            print(f"  [generate_mimicgen_demos] seed HDF5 written: {seed_hdf5}")
+                seed_hdf5 = self.step_dir / "seed_demo.hdf5"
+                mat = RobomimicSeedMaterializer()
+                mat.write_source_dataset(
+                    states=traj.states,
+                    actions=traj.actions,
+                    env_meta=traj.env_meta,
+                    output_path=seed_hdf5,
+                    model_file=traj.model_file,
+                )
+                print(f"  [generate_mimicgen_demos] seed HDF5 written: {seed_hdf5}")
 
         # --- Auto-read seed world poses for all objects (always when pose-fixing is on) ---
         seed_object_poses: dict | None = None

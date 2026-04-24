@@ -13,7 +13,10 @@
 task_name: square
 env_interface_name: MG_Square
 env_interface_type: robosuite
-source_dataset_path: data/source/mimicgen/square_d1.hdf5
+source_dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
+# Pass all 1000 source demos to MimicGen so nn_k=3 nearest-neighbour selection
+# has full coverage across all nut/peg configurations.
+use_full_source_dataset: true
 
 # Trajectory variance knobs — MimicGen defaults to preserve diversity
 action_noise: 0.05
