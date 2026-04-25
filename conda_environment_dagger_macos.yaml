@@ -1,0 +1,56 @@
+name: policy_doctor_dagger
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python
+  - python=3.10
+
+  # PyTorch 2.x with MPS support (for macOS M-series)
+  - pytorch::pytorch=2.2.0
+  - pytorch::torchvision
+  - pytorch::pytorch-cuda=11.8  # or pytorch::cpuonly if CPU-only
+
+  # Scientific computing
+  - numpy=1.23
+  - scipy
+  - pandas
+  - scikit-learn
+
+  # Data/config
+  - h5py
+  - pyyaml
+  - dill
+
+  # Visualization
+  - matplotlib
+
+  # Utilities
+  - tqdm
+  - click
+
+  # MuJoCo (modern version for Apple Silicon support)
+  - mujoco::mujoco=3.1
+
+  # Dev/build
+  - pip
+  - git
+
+  - pip:
+    # Keyboard input for interventions (needs Accessibility permission on macOS)
+    - pynput==1.7.6
+
+    # Hydra for config management
+    - hydra-core==1.2.0
+    - omegaconf==2.2.0
+
+    # Tensor utilities
+    - einops
+    - imageio
+
+    # Local packages (after env creation, install these):
+    # pip install -e .
+    # pip install -e third_party/cupid
+    # pip install -e third_party/cupid/third_party/infembed
+    # pip install -e third_party/robocasa

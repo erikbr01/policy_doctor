@@ -109,6 +109,8 @@ class TrajectoryClassifier:
     ) -> None:
         self.monitor = monitor
         self.mode = mode
+        self.abs_action = abs_action
+        self.rotation_rep = rotation_rep
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self._obs_keys = obs_keys
@@ -127,7 +129,7 @@ class TrajectoryClassifier:
         infembed_embeddings_path: str,
         clustering_dir: str,
         mode: Literal["rollout", "demo"] = "rollout",
-        device: str = "cuda:0",
+        device: str = "auto",
         episodes_dir: Optional[str] = None,
     ) -> "TrajectoryClassifier":
         """Build a TrajectoryClassifier from a policy checkpoint.

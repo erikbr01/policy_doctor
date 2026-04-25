@@ -42,7 +42,7 @@ from collections import Counter
 from pathlib import Path
 
 
-def _build_classifier(args, mode: str):
+def _build_classifier(args, mode: str, episodes_dir=None):
     from policy_doctor.monitoring.trajectory_classifier import TrajectoryClassifier
     return TrajectoryClassifier.from_checkpoint(
         checkpoint=args.checkpoint,
@@ -51,6 +51,7 @@ def _build_classifier(args, mode: str):
         clustering_dir=args.clustering_dir,
         mode=mode,
         device=args.device,
+        episodes_dir=episodes_dir,
     )
 
 
@@ -118,6 +119,11 @@ def main():
     parser.add_argument("--output", metavar="CSV", default=None,
                         help="Save assignments to this CSV path (default: print only)")
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--episodes_dir", default=None, metavar="DIR",
+        help="Directory containing metadata.yaml with episode lengths. Required when "
+             "clustering was done at the window/rollout level (NearestCentroidAssigner fallback).",
+    )
     parser.add_argument("--episode_idx", type=int, default=0, metavar="N",
                         help="Episode index written to the 'episode' column in the output CSV "
                              "(default: 0). Useful when appending results from multiple episodes.")
@@ -126,7 +132,7 @@ def main():
 
     mode = "demo" if args.hdf5 else "rollout"
     print(f"Building classifier (mode={mode})...")
-    classifier = _build_classifier(args, mode)
+    classifier = _build_classifier(args, mode, episodes_dir=args.episodes_dir)
 
     if args.episode:
         print(f"\nLoading episode: {args.episode}")

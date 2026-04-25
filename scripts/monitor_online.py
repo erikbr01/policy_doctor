@@ -111,7 +111,7 @@ def main(
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
     cfg.task.env_runner.n_test = num_episodes
-    cfg.task.env_runner.n_test_vis = num_episodes
+    cfg.task.env_runner.n_test_vis = 0  # disable offscreen video capture
     cfg.task.env_runner.test_start_seed = test_start_seed
 
     workspace = cls(cfg, output_dir=output_dir)
