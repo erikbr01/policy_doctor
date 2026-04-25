@@ -90,9 +90,9 @@ TRAIN_ARGS=(
 
 if [[ "$NUM_GPUS" -gt 1 ]]; then
   echo "    gpus:   ${NUM_GPUS} (torchrun)"
-  exec conda run -n cupid_torch2 --no-capture-output \
+  exec conda run -n mimicgen_torch2 --no-capture-output \
     torchrun --nproc_per_node="$NUM_GPUS" train.py "${TRAIN_ARGS[@]}"
 else
-  exec conda run -n cupid_torch2 --no-capture-output \
+  exec conda run -n mimicgen_torch2 --no-capture-output \
     python train.py "${TRAIN_ARGS[@]}"
 fi

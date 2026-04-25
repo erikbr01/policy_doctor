@@ -1,0 +1,9 @@
+algorithm: kmeans
+scaling: none
+influence_source: infembed
+representation: sliding_window
+level: rollout
+n_clusters: 15
+n_samples: 2482
+created: '2026-04-24T09:02:26.416592'
+task_config: square_mh_apr23_mimicgen_pipeline

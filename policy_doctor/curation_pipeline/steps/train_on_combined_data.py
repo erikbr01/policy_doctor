@@ -39,7 +39,9 @@ Result JSON:
 
 from __future__ import annotations
 
+import os
 import pathlib
+import subprocess
 from typing import Any
 
 import yaml
@@ -49,29 +51,7 @@ from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.diffusion_overrides import baseline_diffusion_extra_overrides
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_train_name
 from policy_doctor.mimicgen.combine_datasets import combine_hdf5_datasets
-
-
-def _train_combined_worker(
-    run_output_dir: str,
-    config_dir_str: str,
-    config_name: str,
-    overrides: list,
-) -> None:
-    """Hydra-compose combined-data training in an isolated child process."""
-    import hydra
-    from hydra.core.global_hydra import GlobalHydra
-    from omegaconf import OmegaConf
-
-    GlobalHydra.instance().clear()
-    hydra.initialize_config_dir(config_dir=config_dir_str, version_base=None)
-    try:
-        cfg = hydra.compose(config_name=config_name, overrides=overrides)
-        OmegaConf.resolve(cfg)
-        cls = hydra.utils.get_class(cfg._target_)
-        workspace = cls(cfg, output_dir=run_output_dir)
-        workspace.run()
-    finally:
-        GlobalHydra.instance().clear()
+from policy_doctor.paths import CUPID_ROOT
 
 
 class TrainOnCombinedDataStep(PipelineStep[dict]):
@@ -145,10 +125,6 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
         )
         if not config_dir:
             raise ValueError("baseline.config_dir is required for training")
-        config_dir_abs = str((self.repo_root / config_dir).resolve())
-        if not pathlib.Path(config_dir_abs).exists():
-            raise FileNotFoundError(f"Config dir not found: {config_dir_abs}")
-
         config_name = OmegaConf.select(baseline, "config_name") or "config.yaml"
         task = OmegaConf.select(baseline, "task") or OmegaConf.select(cfg, "task")
         policy = OmegaConf.select(baseline, "policy") or "diffusion_unet_lowdim"
@@ -160,13 +136,9 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
         num_epochs = int(OmegaConf.select(baseline, "num_epochs") or OmegaConf.select(cfg, "num_epochs") or 1001)
         checkpoint_topk = int(OmegaConf.select(baseline, "checkpoint_topk") or 3)
         checkpoint_every = int(OmegaConf.select(baseline, "checkpoint_every") or 50)
-        train_ratio = float(OmegaConf.select(baseline, "train_ratio") or 0.64)
         val_ratio = float(OmegaConf.select(baseline, "val_ratio") or 0.04)
-        uniform_quality = OmegaConf.select(baseline, "uniform_quality")
-        if uniform_quality is None:
-            uniform_quality = True
         output_dir = OmegaConf.select(cfg, "output_dir") or "data/outputs/train"
-        project = OmegaConf.select(cfg, "project") or "cupid"
+        project = OmegaConf.select(cfg, "project") or OmegaConf.select(baseline, "project") or "influence-clustering"
         wandb_tags = OmegaConf.select(cfg, "wandb_tags") or []
         if isinstance(wandb_tags, str):
             wandb_tags = [wandb_tags]
@@ -177,12 +149,19 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
         )
         device = OmegaConf.select(cfg, "device") or "cuda:0"
         run_tag = OmegaConf.select(cfg, "run_tag")
+        tf32 = bool(OmegaConf.select(baseline, "tf32") or False)
+        compile_ = bool(OmegaConf.select(baseline, "compile") or False)
+        num_gpus = int(OmegaConf.select(baseline, "num_gpus") or OmegaConf.select(cfg, "num_gpus") or 1)
+        exp_name = f"train_{policy}"
 
-        import multiprocessing as mp
-        mp_ctx = mp.get_context("spawn")
+        # Training must run in the cupid/mimicgen_torch2 env — never in-process.
+        conda_env = (
+            OmegaConf.select(baseline, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+            or "mimicgen_torch2"
+        )
 
         train_dirs: list[str] = []
-        procs: list[tuple] = []
 
         for seed in seeds:
             base_name = get_train_name(train_date, task, policy, seed)
@@ -193,6 +172,8 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
             train_dirs.append(run_output_dir)
 
             overrides = [
+                f"name={exp_name}",
+                f"training.device={device}",
                 f"training.seed={seed}",
                 f"training.num_epochs={num_epochs}",
                 f"checkpoint.topk.k={checkpoint_topk}",
@@ -200,16 +181,20 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                 f"training.rollout_every={checkpoint_every}",
                 f"task.dataset.seed={seed}",
                 f"task.dataset.val_ratio={val_ratio}",
-                f"training.device={device}",
-                f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
-                f"+task.dataset.dataset_mask_kwargs.uniform_quality={uniform_quality}",
                 f"logging.name={train_name}",
-                f"logging.group={train_date}_train_{policy}_{task}",
+                f"logging.group={train_date}_{exp_name}_{task}",
                 f"logging.project={project}",
                 f"multi_run.wandb_name_base={train_name}",
                 f"multi_run.run_dir={run_output_dir}",
+                f"hydra.run.dir={run_output_dir}",
                 f"++task.dataset.dataset_path={combined_hdf5_path}",
-                f"++task.env_runner.dataset_path={combined_hdf5_path}",
+                # Disable video recording in rollout workers: with has_offscreen_renderer=False,
+                # VideoRecordingWrapper.step() asserts frame.dtype==uint8 which fails.
+                # n_train_vis/n_test_vis=0 prevents file_path from being set, skipping render.
+                "++task.env_runner.n_train_vis=0",
+                "++task.env_runner.n_test_vis=0",
+                f"+training.tf32={str(tf32).lower()}",
+                f"+training.compile={str(compile_).lower()}",
             ]
             if wandb_tags:
                 tags_str = "[" + ",".join(str(t) for t in wandb_tags) + "]"
@@ -218,25 +203,28 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
 
             if self.dry_run:
                 print(f"[dry_run] TrainOnCombinedDataStep seed={seed}  output_dir={run_output_dir}")
-                print(f"[dry_run] overrides={overrides}")
+                print(f"[dry_run]   conda_env={conda_env}  config_dir={config_dir}")
+                print(f"[dry_run]   overrides={overrides}")
                 continue
 
             pathlib.Path(run_output_dir).mkdir(parents=True, exist_ok=True)
-            p = mp_ctx.Process(
-                target=_train_combined_worker,
-                args=(run_output_dir, config_dir_abs, config_name, overrides),
-                daemon=False,
-            )
-            p.start()
-            procs.append((p, seed, run_output_dir))
-            print(f"  [launched] pid={p.pid}  output_dir={run_output_dir}")
-
-        for p, seed, run_output_dir in procs:
-            p.join()
-            if p.exitcode != 0:
+            if num_gpus > 1:
+                launcher = ["torchrun", f"--nproc_per_node={num_gpus}", str(CUPID_ROOT / "train.py")]
+            else:
+                launcher = ["python", str(CUPID_ROOT / "train.py")]
+            cmd = [
+                "conda", "run", "-n", conda_env, "--no-capture-output",
+                *launcher,
+                "--config-path", config_dir,
+                "--config-name", config_name,
+                *overrides,
+            ]
+            env_vars = {**os.environ, "WANDB_RESUME": "never"}
+            print(f"  [train_on_combined_data] conda_env={conda_env}  seed={seed}  output_dir={run_output_dir}")
+            result = subprocess.run(cmd, cwd=str(CUPID_ROOT), env=env_vars)
+            if result.returncode != 0:
                 raise RuntimeError(
-                    f"[train_on_combined_data] seed={seed} process (pid={p.pid}) "
-                    f"exited with code {p.exitcode}"
+                    f"[train_on_combined_data] seed={seed} subprocess failed with exit code {result.returncode}"
                 )
 
         return {

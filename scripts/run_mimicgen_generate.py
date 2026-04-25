@@ -44,13 +44,34 @@ def _ensure_mimicgen_on_path() -> None:
 
 
 def _apply_robomimic_base_env_shim() -> None:
-    """Patch robomimic EnvRobosuite.base_env if missing (MimicGen compatibility)."""
+    """Patch robomimic for MimicGen compatibility.
+
+    1. EnvRobosuite.base_env: property missing in robomimic 0.2.x — add it.
+    2. EnvUtils.create_env_for_data_processing: robomimic 0.3.0 lacks the
+       ``env_class`` kwarg that MimicGen (newer) passes — wrap it to absorb the
+       unknown keyword silently (env_class=None is the only value MimicGen passes,
+       so dropping it is safe).
+    """
     try:
         import robomimic.envs.env_robosuite as er
     except ImportError:
         return
     if not hasattr(er.EnvRobosuite, "base_env"):
         er.EnvRobosuite.base_env = property(lambda self: self.env)  # type: ignore[attr-defined]
+
+    try:
+        import inspect
+        import robomimic.utils.env_utils as eu
+        _orig_create = eu.create_env_for_data_processing
+        _accepted = set(inspect.signature(_orig_create).parameters)
+        if not {"env_class", "render", "render_offscreen", "use_image_obs", "use_depth_obs"}.issubset(_accepted):
+            # robomimic 0.3.0 has a narrower signature — strip unknown kwargs
+            def _patched_create(*args, **kwargs):
+                filtered = {k: v for k, v in kwargs.items() if k in _accepted}
+                return _orig_create(*args, **filtered)
+            eu.create_env_for_data_processing = _patched_create
+    except Exception:
+        pass
 
 
 def main(argv: list[str] | None = None) -> None:

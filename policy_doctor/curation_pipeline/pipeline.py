@@ -31,9 +31,30 @@ ALL_STEPS: List[str] = [
     "eval_curated",
     "compare",
     # MimicGen trajectory generation pipeline
-    # Composite arms (each runs select → generate → train under a namespaced dir):
-    "mimicgen_random",              # RandomSelectionHeuristic
-    "mimicgen_behavior_graph",      # BehaviorGraphPathHeuristic
+    # Composite arms (each runs select → generate → train → eval under a namespaced dir):
+    "mimicgen_random",              # RandomSelectionHeuristic, budget=200
+    "mimicgen_behavior_graph",      # BehaviorGraphPathHeuristic, budget=200
+    "mimicgen_diversity",           # DiversitySelectionHeuristic, budget=200
+    # Data-volume ablation arms (budget=20):
+    "mimicgen_random_20",
+    "mimicgen_behavior_graph_20",
+    "mimicgen_diversity_20",
+    # Budget=20 variance replicates:
+    "mimicgen_random_20_rep2",
+    "mimicgen_random_20_rep3",
+    "mimicgen_behavior_graph_20_rep2",
+    "mimicgen_behavior_graph_20_rep3",
+    "mimicgen_diversity_20_rep2",
+    "mimicgen_diversity_20_rep3",
+    # Variance replicates (random_seed=1,2):
+    "mimicgen_random_rep2",
+    "mimicgen_random_rep3",
+    "mimicgen_behavior_graph_rep2",
+    "mimicgen_behavior_graph_rep3",
+    "mimicgen_diversity_rep2",
+    "mimicgen_diversity_rep3",
+    # Baseline evaluation (60 demos only):
+    "eval_baseline",
     # Flat steps (standalone / legacy runs):
     "select_mimicgen_seed_from_graph",
     "select_mimicgen_seed",
@@ -70,7 +91,24 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.mimicgen_arm import (
         MimicgenRandomArmStep,
         MimicgenBehaviorGraphArmStep,
+        MimicgenDiversityArmStep,
+        MimicgenRandom20ArmStep,
+        MimicgenBehaviorGraph20ArmStep,
+        MimicgenDiversity20ArmStep,
+        MimicgenRandomRep2ArmStep,
+        MimicgenRandomRep3ArmStep,
+        MimicgenBehaviorGraphRep2ArmStep,
+        MimicgenBehaviorGraphRep3ArmStep,
+        MimicgenDiversityRep2ArmStep,
+        MimicgenDiversityRep3ArmStep,
+        MimicgenRandom20Rep2ArmStep,
+        MimicgenRandom20Rep3ArmStep,
+        MimicgenBehaviorGraph20Rep2ArmStep,
+        MimicgenBehaviorGraph20Rep3ArmStep,
+        MimicgenDiversity20Rep2ArmStep,
+        MimicgenDiversity20Rep3ArmStep,
     )
+    from policy_doctor.curation_pipeline.steps.eval_baseline import EvalBaselineStep
 
     return {
         "train_baseline": TrainBaselineStep,
@@ -90,6 +128,23 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "compare": CompareStep,
         "mimicgen_random": MimicgenRandomArmStep,
         "mimicgen_behavior_graph": MimicgenBehaviorGraphArmStep,
+        "mimicgen_diversity": MimicgenDiversityArmStep,
+        "mimicgen_random_20": MimicgenRandom20ArmStep,
+        "mimicgen_behavior_graph_20": MimicgenBehaviorGraph20ArmStep,
+        "mimicgen_diversity_20": MimicgenDiversity20ArmStep,
+        "mimicgen_random_rep2": MimicgenRandomRep2ArmStep,
+        "mimicgen_random_rep3": MimicgenRandomRep3ArmStep,
+        "mimicgen_behavior_graph_rep2": MimicgenBehaviorGraphRep2ArmStep,
+        "mimicgen_behavior_graph_rep3": MimicgenBehaviorGraphRep3ArmStep,
+        "mimicgen_diversity_rep2": MimicgenDiversityRep2ArmStep,
+        "mimicgen_diversity_rep3": MimicgenDiversityRep3ArmStep,
+        "mimicgen_random_20_rep2": MimicgenRandom20Rep2ArmStep,
+        "mimicgen_random_20_rep3": MimicgenRandom20Rep3ArmStep,
+        "mimicgen_behavior_graph_20_rep2": MimicgenBehaviorGraph20Rep2ArmStep,
+        "mimicgen_behavior_graph_20_rep3": MimicgenBehaviorGraph20Rep3ArmStep,
+        "mimicgen_diversity_20_rep2": MimicgenDiversity20Rep2ArmStep,
+        "mimicgen_diversity_20_rep3": MimicgenDiversity20Rep3ArmStep,
+        "eval_baseline": EvalBaselineStep,
         "select_mimicgen_seed_from_graph": SelectMimicgenSeedFromGraphStep,
         "select_mimicgen_seed": SelectMimicgenSeedStep,
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,

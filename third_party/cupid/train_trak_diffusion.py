@@ -133,7 +133,6 @@ def main(
     if model_keys:
         assert isinstance(model_keys, str)
         model_keys = model_keys.split(',')
-    grad_wrt = get_parameter_names(policy, model_keys) if model_keys is not None else None
 
     # Optionally compile the policy.  Use dynamic=True / fullgraph=False so that
     # torch.func.vmap + torch.func.grad (used by the gradient computer) can trace
@@ -141,6 +140,12 @@ def main(
     if use_compile:
         from diffusion_policy.common.ddp_util import compile_model
         policy = compile_model(policy, dynamic=True, fullgraph=False)
+
+    # Compute grad_wrt AFTER compile so parameter names match those in the (possibly
+    # compiled) model.  torch.compile adds an ``_orig_mod.`` prefix to all parameter
+    # names; if we computed grad_wrt before compile the names would be stale and
+    # TRAKer.__init__ would raise a KeyError when checking numel().
+    grad_wrt = get_parameter_names(policy, model_keys) if model_keys is not None else None
 
     # Resolve dataset path: patch stale absolute paths and support explicit overrides.
     # Handles robomimic / mimicgen / robocasa HDF5 layouts uniformly.

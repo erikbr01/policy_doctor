@@ -33,7 +33,7 @@ reference_seed: 0
 # max_train_episodes caps the training split to 60 demos, leaving train_ratio
 # unused for the baseline. train_on_combined_data always uses train_ratio=0.64
 # (it does not read max_train_episodes), so the full combined dataset is used.
-train_date: apr23_mimicgen_pipeline_test
+train_date: apr23_mimicgen_pipeline_v2
 device: cuda:0
 project: mimicgen_square
 wandb_tags: [square, mimicgen, apr23]
@@ -47,13 +47,14 @@ baseline:
 # attribution.train_date/eval_date in the baseline YAML default to jan18;
 # override here so all attribution steps use the correct apr23 run paths.
 evaluation:
-  train_date: apr23_mimicgen_pipeline_test
-  eval_date: apr23_mimicgen_pipeline_test
+  train_date: apr23_mimicgen_pipeline_v2
+  eval_date: apr23_mimicgen_pipeline_v2
   overwrite: true
+  num_episodes: 500
 
 attribution:
-  train_date: apr23_mimicgen_pipeline_test
-  eval_date: apr23_mimicgen_pipeline_test
+  train_date: apr23_mimicgen_pipeline_v2
+  eval_date: apr23_mimicgen_pipeline_v2
   dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
 
 # ---------------------------------------------------------------------------
@@ -77,7 +78,8 @@ clustering_aggregation: sum
 # square_d1 generation recipe — no pose constraints (full D1 randomization).
 # Load with: mimicgen=square_d1 on the CLI, or params are inlined below.
 mimicgen_datagen:
-  episode_budget: 250           # trials → ~200 successes at ~80% Square D1 success rate
+  success_budget: 200           # run enough trials to produce at least 200 successful demos
+  num_seeds: 10                 # seed trajectories written to seed.hdf5 (MimicGen samples from all)
   # Original 60-demo subset to combine with generated data (60+200=260 total)
   original_dataset_path: data/mimicgen/square_d1_60.hdf5   # relative to PROJECT_ROOT
   output_dir: data/outputs/mimicgen_datagen
@@ -86,7 +88,7 @@ mimicgen_datagen:
   env_interface_type: robosuite
   policy_seed: 0
   success_only: true
-  top_k_paths: 5
+  top_k_paths: 20
   min_path_probability: 0.0
 
   # Square D1 generation parameters (from configs/mimicgen/square_d1.yaml)

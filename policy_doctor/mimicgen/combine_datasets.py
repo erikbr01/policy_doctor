@@ -75,6 +75,41 @@ def combine_hdf5_datasets(
         with h5py.File(generated_path, "r") as gen_f:
             for i, demo_key in enumerate(gen_demo_keys):
                 new_key = f"demo_{n_existing + i}"
-                gen_f.copy(f"data/{demo_key}", out_f["data"], name=new_key)
+                _copy_group(gen_f[f"data/{demo_key}"], out_f["data"].require_group(new_key))
+
+        total = sum(1 for k in out_f["data"].keys() if k.startswith("demo_"))
+        out_f["data"].attrs["total"] = total
 
     return _count_demos(output_path)
+
+
+def _copy_group(src: "h5py.Group", dst: "h5py.Group") -> None:
+    """Recursively copy *src* group into *dst*, reading data as numpy arrays.
+
+    Using ``gen_f.copy()`` (which calls HDF5's ``H5Ocopy()``) can silently
+    corrupt compressed chunks when the writer and reader use different HDF5
+    library versions.  This manual copy re-encodes each dataset from its
+    decompressed numpy form, which is portable across library versions.
+    """
+    # Copy group-level attributes
+    for attr_key, attr_val in src.attrs.items():
+        dst.attrs[attr_key] = attr_val
+
+    for name, item in src.items():
+        if isinstance(item, h5py.Group):
+            child = dst.require_group(name)
+            _copy_group(item, child)
+        else:
+            # Read dataset as numpy array and write with matching settings
+            data = item[()]
+            kwargs: dict = {}
+            if item.chunks is not None:
+                kwargs["chunks"] = item.chunks
+            if item.compression is not None:
+                kwargs["compression"] = item.compression
+                if item.compression_opts is not None:
+                    kwargs["compression_opts"] = item.compression_opts
+            ds = dst.create_dataset(name, data=data, **kwargs)
+            # Copy dataset-level attributes
+            for attr_key, attr_val in item.attrs.items():
+                ds.attrs[attr_key] = attr_val

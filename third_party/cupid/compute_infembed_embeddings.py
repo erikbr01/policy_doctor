@@ -337,11 +337,12 @@ def main(
     wrapper = DiffusionLossWrapper(policy, task)
 
     # Optionally compile the wrapper.  InfEmbed calls wrapper(batch) directly
-    # (no vmap/grad), so fullgraph=True and dynamic=False are safe here and
-    # give better specialisation than the TRAK path.
+    # (no vmap/grad).  Use dynamic=True / fullgraph=False to allow graph breaks
+    # at nn.ParameterDict lookups inside the normalizer (fullgraph=True causes
+    # dynamo to fail when asserting 'scale' in params during tracing).
     if use_compile:
         from diffusion_policy.common.ddp_util import compile_model
-        wrapper = compile_model(wrapper, fullgraph=True, dynamic=False)
+        wrapper = compile_model(wrapper, fullgraph=False, dynamic=True)
 
     loss_fn_none = IdentityLossNone()
 

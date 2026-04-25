@@ -10,6 +10,12 @@ implementations differ in *how* they pick among available rollouts:
   *proposed method*: informed seed selection should yield higher-quality
   generated data and thereby better retrained policies.
 
+* :class:`DiversitySelectionHeuristic` — ranks paths to SUCCESS by probability
+  but takes exactly **one** rollout per path before moving to the next.  This
+  maximises behavioral diversity: every seed comes from a different execution
+  strategy.  Contrast with :class:`BehaviorGraphPathHeuristic` which exhausts
+  the top path before moving to lower-probability ones.
+
 * :class:`RandomSelectionHeuristic` — picks a rollout uniformly at random
   from the eligible pool (successful by default).  Used as the *baseline* to
   isolate the effect of informed seed selection from other pipeline factors.
@@ -97,6 +103,9 @@ class BehaviorGraphPathHeuristic(TrajectorySelectionHeuristic):
         top_k_paths:         Number of candidate paths to try (default 5).
         min_path_probability: Minimum path probability to consider (default 0.0).
         success_only:        Only consider successful rollouts (default True).
+        random_seed:         If set, shuffle eligible rollouts within each path before
+                             selecting, so that different seeds pick different rollouts
+                             from the same path.  Enables reproducible variance trials.
     """
 
     def __init__(
@@ -104,10 +113,12 @@ class BehaviorGraphPathHeuristic(TrajectorySelectionHeuristic):
         top_k_paths: int = 5,
         min_path_probability: float = 0.0,
         success_only: bool = True,
+        random_seed: int | None = None,
     ) -> None:
         self.top_k_paths = top_k_paths
         self.min_path_probability = min_path_probability
         self.success_only = success_only
+        self.rng = np.random.default_rng(random_seed) if random_seed is not None else None
 
     def select_multiple(
         self,
@@ -155,14 +166,33 @@ class BehaviorGraphPathHeuristic(TrajectorySelectionHeuristic):
             for e in ranked
         ]
 
+        # Read rollouts.hdf5 success flags — more reliable than metadata for
+        # state consistency (the states we load come from rollouts.hdf5).
+        import h5py as _h5py
+        hdf5_success: dict[int, bool] = {}
+        try:
+            with _h5py.File(rollout_hdf5_path, "r") as _f:
+                for _k in _f["data"].keys():
+                    _idx = int(_k.split("_")[1])
+                    hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
+        except Exception:
+            pass
+
         results: list[SeedSelectionResult] = []
         seen: set[int] = set()
 
-        # Drain paths in probability order; within each path take rollouts in order.
+        # Drain paths in probability order; within each path take rollouts in order
+        # (or shuffled order if random_seed was set).
         for entry in ranked:
             if not entry["has_match"]:
                 continue
-            for rollout_idx in entry["rollout_idxs"]:
+            idxs = list(entry["rollout_idxs"])
+            if self.rng is not None:
+                self.rng.shuffle(idxs)
+            for rollout_idx in idxs:
+                # Skip if rollouts.hdf5 says this episode is a failure
+                if hdf5_success and not hdf5_success.get(rollout_idx, False):
+                    continue
                 if rollout_idx in seen:
                     continue
                 traj = MimicGenSeedTrajectory.from_rollout_hdf5(
@@ -203,6 +233,148 @@ class BehaviorGraphPathHeuristic(TrajectorySelectionHeuristic):
         return results
 
 
+class DiversitySelectionHeuristic(TrajectorySelectionHeuristic):
+    """Select seeds to maximise behavioral diversity — one rollout per distinct path.
+
+    Ranks paths to SUCCESS by probability (same as
+    :class:`BehaviorGraphPathHeuristic`) but takes exactly **one** rollout per
+    path before advancing to the next.  With *n* seeds and *n* or more distinct
+    paths this guarantees every seed represents a different execution strategy.
+
+    This directly tests the hypothesis that what matters is coverage of distinct
+    behavioral modes rather than concentration on the highest-probability mode.
+
+    Args:
+        top_k_paths:          Maximum number of candidate paths to consider.
+        min_path_probability: Minimum path probability to include (default 0.0).
+        success_only:         Only consider successful rollouts (default True).
+        random_seed:          If set, shuffle eligible rollouts within each path
+                              before picking, so replicates draw different
+                              individuals while preserving the per-path constraint.
+    """
+
+    def __init__(
+        self,
+        top_k_paths: int = 20,
+        min_path_probability: float = 0.0,
+        success_only: bool = True,
+        random_seed: int | None = None,
+    ) -> None:
+        self.top_k_paths = top_k_paths
+        self.min_path_probability = min_path_probability
+        self.success_only = success_only
+        self.rng = np.random.default_rng(random_seed) if random_seed is not None else None
+
+    def select_multiple(
+        self,
+        n: int,
+        cluster_labels: np.ndarray,
+        metadata: list[dict[str, Any]],
+        rollout_hdf5_path: str,
+        level: str = "rollout",
+    ) -> list[SeedSelectionResult]:
+        from policy_doctor.behaviors.behavior_graph import BehaviorGraph, SUCCESS_NODE_ID
+        from policy_doctor.mimicgen.graph_seed import top_paths_with_rollouts
+
+        graph = BehaviorGraph.from_cluster_assignments(cluster_labels, metadata, level=level)
+
+        if SUCCESS_NODE_ID not in graph.nodes:
+            raise RuntimeError(
+                "Behavior graph has no SUCCESS node — all rollouts may have failed."
+            )
+
+        ranked = top_paths_with_rollouts(
+            graph,
+            cluster_labels,
+            metadata,
+            top_k=self.top_k_paths,
+            min_path_probability=self.min_path_probability,
+            success_only=self.success_only,
+            level=level,
+        )
+
+        if not ranked:
+            raise RuntimeError(
+                "DiversitySelectionHeuristic: no paths to SUCCESS found in graph."
+            )
+
+        import h5py as _h5py
+        hdf5_success: dict[int, bool] = {}
+        try:
+            with _h5py.File(rollout_hdf5_path, "r") as _f:
+                for _k in _f["data"].keys():
+                    _idx = int(_k.split("_")[1])
+                    hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
+        except Exception:
+            pass
+
+        top_paths_info = [
+            {
+                "path": e["path"],
+                "path_prob": e["path_prob"],
+                "cluster_seq": e["cluster_seq"],
+                "rollout_idxs": e["rollout_idxs"],
+            }
+            for e in ranked
+        ]
+
+        results: list[SeedSelectionResult] = []
+        seen: set[int] = set()
+
+        # One pass: take exactly one rollout per path (in probability order).
+        # If we haven't reached n after exhausting all paths, do a second pass
+        # to backfill from paths that had more than one eligible rollout.
+        for pass_num in range(2):
+            for entry in ranked:
+                if not entry["has_match"]:
+                    continue
+                idxs = list(entry["rollout_idxs"])
+                if self.rng is not None:
+                    self.rng.shuffle(idxs)
+                # First pass: take only 1 per path; second pass: take remaining.
+                limit = 1 if pass_num == 0 else len(idxs)
+                taken_this_path = 0
+                for rollout_idx in idxs:
+                    if hdf5_success and not hdf5_success.get(rollout_idx, False):
+                        continue
+                    if rollout_idx in seen:
+                        continue
+                    if taken_this_path >= limit:
+                        break
+                    traj = MimicGenSeedTrajectory.from_rollout_hdf5(
+                        rollout_hdf5_path, demo_key=f"demo_{rollout_idx}"
+                    )
+                    results.append(
+                        SeedSelectionResult(
+                            trajectory=traj,
+                            rollout_idx=rollout_idx,
+                            info={
+                                "heuristic": "diversity",
+                                "selected_path": entry["path"],
+                                "selected_path_prob": entry["path_prob"],
+                                "selected_cluster_seq": entry["cluster_seq"],
+                                "pass": pass_num,
+                                "top_paths": top_paths_info,
+                            },
+                        )
+                    )
+                    seen.add(rollout_idx)
+                    taken_this_path += 1
+                    if len(results) == n:
+                        return results
+
+        if not results:
+            raise RuntimeError(
+                "DiversitySelectionHeuristic: no rollout matched any path to SUCCESS."
+            )
+        if len(results) < n:
+            print(
+                f"  [DiversitySelectionHeuristic] WARNING: requested {n} seeds but only "
+                f"{len(results)} distinct rollouts available across top-{self.top_k_paths} paths."
+            )
+        return results
+
+
 class RandomSelectionHeuristic(TrajectorySelectionHeuristic):
     """Randomly select a successful rollout as the MimicGen seed.
 
@@ -231,14 +403,31 @@ class RandomSelectionHeuristic(TrajectorySelectionHeuristic):
         rollout_hdf5_path: str,
         level: str = "rollout",
     ) -> list[SeedSelectionResult]:
+        import h5py as _h5py
         from policy_doctor.mimicgen.graph_seed import episode_success_map
 
-        success_map = episode_success_map(metadata, level=level)
+        # Prefer rollouts.hdf5 success flags over metadata: the states loaded
+        # come from rollouts.hdf5, so success must be consistent with it.
+        hdf5_success: dict[int, bool] = {}
+        try:
+            with _h5py.File(rollout_hdf5_path, "r") as _f:
+                for _k in _f["data"].keys():
+                    _idx = int(_k.split("_")[1])
+                    hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
+        except Exception:
+            pass
 
-        if self.success_only:
-            eligible = [idx for idx, success in success_map.items() if success]
+        if hdf5_success:
+            if self.success_only:
+                eligible = [idx for idx, success in hdf5_success.items() if success]
+            else:
+                eligible = list(hdf5_success.keys())
         else:
-            eligible = list(success_map.keys())
+            success_map = episode_success_map(metadata, level=level)
+            if self.success_only:
+                eligible = [idx for idx, success in success_map.items() if success]
+            else:
+                eligible = list(success_map.keys())
 
         if not eligible:
             raise RuntimeError(
@@ -284,11 +473,15 @@ def build_heuristic(
     """Factory: build a heuristic by name.
 
     Args:
-        heuristic_name: ``"behavior_graph"`` or ``"random"``.
-        top_k_paths:    For :class:`BehaviorGraphPathHeuristic`.
-        min_path_probability: For :class:`BehaviorGraphPathHeuristic`.
-        success_only:   For both heuristics.
-        random_seed:    For :class:`RandomSelectionHeuristic`.
+        heuristic_name: ``"behavior_graph"``, ``"diversity"``, or ``"random"``.
+        top_k_paths:    For :class:`BehaviorGraphPathHeuristic` and
+                        :class:`DiversitySelectionHeuristic`.
+        min_path_probability: Minimum path probability to consider.
+        success_only:   Only consider successful rollouts.
+        random_seed:    RNG seed.  For :class:`RandomSelectionHeuristic` this
+                        controls which rollouts are drawn; for the graph-based
+                        heuristics it shuffles eligible rollout order within
+                        each path so replicates pick different individuals.
 
     Returns:
         A concrete :class:`TrajectorySelectionHeuristic` instance.
@@ -301,6 +494,14 @@ def build_heuristic(
             top_k_paths=top_k_paths,
             min_path_probability=min_path_probability,
             success_only=success_only,
+            random_seed=random_seed,
+        )
+    if heuristic_name == "diversity":
+        return DiversitySelectionHeuristic(
+            top_k_paths=top_k_paths,
+            min_path_probability=min_path_probability,
+            success_only=success_only,
+            random_seed=random_seed,
         )
     if heuristic_name == "random":
         return RandomSelectionHeuristic(
@@ -309,5 +510,5 @@ def build_heuristic(
         )
     raise ValueError(
         f"Unknown heuristic: {heuristic_name!r}.  "
-        "Valid options: 'behavior_graph', 'random'."
+        "Valid options: 'behavior_graph', 'diversity', 'random'."
     )
