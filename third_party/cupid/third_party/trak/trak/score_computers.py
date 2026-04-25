@@ -157,7 +157,10 @@ class BasicScoreComputer(AbstractScoreComputer):
     def get_x_xtx_inv(self, grads: Tensor, xtx: Tensor) -> Tensor:
         blocks = ch.split(grads, split_size_or_sections=self.CUDA_MAX_DIM_SIZE, dim=0)
 
-        xtx_reg = xtx + self.lambda_reg * torch.eye(
+        # Use max(lambda_reg, eps) so the matrix remains invertible when the
+        # training set is smaller than proj_dim (rank-deficient XtX).
+        _lambda = max(self.lambda_reg, 1e-6)
+        xtx_reg = xtx + _lambda * torch.eye(
             xtx.size(dim=0), device=xtx.device, dtype=xtx.dtype
         )
         xtx_inv = ch.linalg.inv(xtx_reg.to(ch.float32))

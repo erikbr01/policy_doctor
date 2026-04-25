@@ -1,0 +1,70 @@
+# @package _global_
+# MimicGen trajectory generation pipeline for Square task — random baseline.
+#
+# Seed selection: random heuristic (uniform draw from successful rollouts).
+# This is the control condition: it isolates the contribution of the behavior-graph
+# seed selection (mimicgen_square_bg_pipeline.yaml) from simply running MimicGen at all.
+#
+# Pipeline: run_clustering → select_mimicgen_seed → generate_mimicgen_demos → train_on_combined_data
+#
+# Usage (reuse clustering from bg run, only redo selection + generation + training):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_random_pipeline \
+#     run_dir=data/pipeline_runs/mimicgen_square_random_pipeline
+#
+# To share clustering with the BG run (saves re-computing embeddings):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_random_pipeline \
+#     run_dir=data/pipeline_runs/mimicgen_square_random_pipeline \
+#     clustering_dir=<path from bg run's run_clustering/result.json> \
+#     steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data]
+
+task_config: square_mh_feb15
+experiment_name: mimicgen_square_random_pipeline
+seeds: [0]
+reference_seed: 0
+
+# ---------------------------------------------------------------------------
+# Clustering (run_clustering step — same params as BG run for a fair comparison)
+# ---------------------------------------------------------------------------
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen seed selection + generation
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  # Seed selection
+  seed_selection_heuristic: random
+  random_seed: 42                  # fixed seed for reproducibility
+  success_only: true
+  policy_seed: 0
+
+  # Generation (identical budget to BG run for a fair comparison)
+  episode_budget: 50
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+
+# ---------------------------------------------------------------------------
+# Training on combined data
+# ---------------------------------------------------------------------------
+train_date: mimicgen_square_random  # run dir: ...-mimicgen_combined-random
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, random]
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps: [run_clustering, mimicgen_random]

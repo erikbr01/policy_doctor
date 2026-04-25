@@ -82,6 +82,7 @@ Switching **task** (e.g. lift vs transport) requires consistent Hydra groups: se
 Ordered list (from `policy_doctor.curation_pipeline.pipeline.ALL_STEPS`):
 
 1. `train_baseline` → `eval_policies` → `train_attribution` → `finalize_attribution` → `compute_demonstration_scores` → `compute_infembed` → `run_clustering` → `export_markov_report` → `annotate_slices_vlm` → `summarize_behaviors_vlm` → `evaluate_cluster_coherency_vlm` → `run_curation_config` → `train_curated` → `eval_curated` → `compare`
+2. **MimicGen sub-pipeline** (run as a subset — see [MimicGen trajectory generation pipeline](#mimicgen-trajectory-generation-pipeline)): `select_mimicgen_seed` → `generate_mimicgen_demos` → `train_on_combined_data`
 
 Optional VLM steps are no-ops unless configured; `finalize_attribution` skips when `attribution.num_ckpts <= 1`. `export_markov_report` reads `run_clustering/result.json`; `evaluate_cluster_coherency_vlm` requires `annotate_slices_vlm` outputs in the same `run_dir`.
 
@@ -107,8 +108,117 @@ Unless noted, run from the project root with `python -m policy_doctor.scripts.ru
 | `train_curated` | `cupid` | `steps=[train_curated] ...` | If `curation_config_path` unset, loads paths from `run_curation_config` in the same run. New training dirs under `data/outputs/train/` with curated naming from Hydra workspace. |
 | `eval_curated` | `cupid` | `steps=[eval_curated] ...` | New eval dirs under `data/outputs/eval_save_episodes/`. |
 | `compare` | `policy_doctor` | `steps=[compare] ...` | Reads `eval_log.json` for baseline vs curated runs; result in `compare/result.json` and printed table. |
+| `select_mimicgen_seed` | `policy_doctor` | `steps=[select_mimicgen_seed] mimicgen_datagen.seed_selection_heuristic=behavior_graph` | Requires `run_clustering` result. Writes `select_mimicgen_seed/seed.hdf5`. Result JSON includes `seed_hdf5_path`, `rollout_idx`, `heuristic`, `selection_info`. |
+| `generate_mimicgen_demos` | `mimicgen` (subprocess) | `steps=[generate_mimicgen_demos] mimicgen_datagen.episode_budget=50` | Requires `select_mimicgen_seed` or `select_mimicgen_seed_from_graph` (auto-wired); otherwise falls back to `mimicgen_datagen.source_dataset_path`. Writes `generated_hdf5_path` and EEF data in result JSON. |
+| `train_on_combined_data` | `cupid` | `steps=[train_on_combined_data] ...` | Requires `generate_mimicgen_demos`. Merges original + generated HDF5, trains a new policy. Run name encodes the heuristic (e.g. `...-mimicgen_combined-behavior_graph`). Result: `combined_hdf5_path`, `train_dirs`. |
 
 </details>
+
+## MimicGen trajectory generation pipeline
+
+This pipeline extends data-driven curation with **MimicGen-based augmentation**: instead of only selecting which original demonstrations to train on, it also generates new demonstrations and retrains on the combined dataset.
+
+### Motivation
+
+The central hypothesis is that the *choice of seed trajectory* given to MimicGen determines the quality of generated data. A seed that follows the highest-probability behavioral path to task success should yield more successful generated demonstrations than a randomly-chosen seed. This pipeline makes that comparison concrete and reproducible.
+
+### Pipeline overview
+
+```
+run_clustering
+  → select_mimicgen_seed      (heuristic-based: behavior_graph or random)
+  → generate_mimicgen_demos   (MimicGen, episode_budget trials)
+  → train_on_combined_data    (train on original + generated demos)
+```
+
+### Seed selection heuristics
+
+Two heuristics are available via `mimicgen_datagen.seed_selection_heuristic`:
+
+| Heuristic | Key | Description |
+|-----------|-----|-------------|
+| **Behavior graph path** (proposed) | `behavior_graph` | Builds a behavior graph from the clustering result. Ranks paths to the SUCCESS node by probability. Selects the first rollout whose collapsed cluster-label sequence exactly matches the highest-probability path. |
+| **Random** (baseline) | `random` | Picks a successful rollout uniformly at random. Used to isolate the benefit of informed seed selection from simply running MimicGen at all. |
+
+Both heuristics are implemented as subclasses of `TrajectorySelectionHeuristic` (`policy_doctor/mimicgen/heuristics.py`). New heuristics can be added by subclassing and registering in `build_heuristic()`.
+
+### Config reference (`mimicgen_datagen`)
+
+All keys live under `mimicgen_datagen` in `policy_doctor/configs/pipeline/config.yaml` or in any experiment YAML.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `seed_selection_heuristic` | `behavior_graph` | `"behavior_graph"` or `"random"` |
+| `top_k_paths` | `5` | (`behavior_graph` only) Number of candidate paths to try before giving up |
+| `min_path_probability` | `0.0` | (`behavior_graph` only) Discard paths below this probability |
+| `success_only` | `true` | Both heuristics: only draw from successful rollouts |
+| `random_seed` | `null` | (`random` only) Integer RNG seed for reproducibility |
+| `policy_seed` | `null` | Which policy seed's clustering result to use (null = first available) |
+| `episode_budget` | `50` | Number of MimicGen generation trials |
+| `output_dir` | `data/outputs/mimicgen_datagen` | Base directory for generated HDF5s |
+| `task_name` | `square` | MimicGen task name |
+| `env_interface_name` | `MG_Square` | MimicGen env interface class |
+| `env_interface_type` | `robosuite` | MimicGen env interface type |
+| `source_dataset_path` | `null` | Fallback source HDF5 when no seed-selection step has run |
+
+### Running the experiment
+
+Both runs must share the same `run_dir` so `select_mimicgen_seed` can read the `run_clustering` result. The heuristic name is embedded in the training run directory, so the two training runs land in separate output directories automatically.
+
+```bash
+# Step 0: clustering (shared between both runs)
+python -m policy_doctor.scripts.run_pipeline \
+  run_dir=data/pipeline_runs/mimicgen_experiment \
+  steps=[run_clustering]
+
+# Proposed method — behavior graph seed selection
+python -m policy_doctor.scripts.run_pipeline \
+  run_dir=data/pipeline_runs/mimicgen_experiment \
+  mimicgen_datagen.seed_selection_heuristic=behavior_graph \
+  steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data]
+
+# Baseline — random seed selection
+python -m policy_doctor.scripts.run_pipeline \
+  run_dir=data/pipeline_runs/mimicgen_experiment_random \
+  mimicgen_datagen.seed_selection_heuristic=random \
+  steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data]
+```
+
+Because different heuristics write to different step result files (`select_mimicgen_seed/result.json`), you can also run both in separate `run_dir`s that each reuse the same clustering result via `clustering_dir=<path>`.
+
+Alternatively, use the pre-configured experiment YAMLs (both require `data_source=mimicgen_square`):
+
+```bash
+# Proposed method (behavior graph)
+python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_square \
+  experiment=mimicgen_square_bg_pipeline
+
+# Baseline (random selection)
+python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_square \
+  experiment=mimicgen_square_random_pipeline
+```
+
+### Output artifacts
+
+| Artifact | Location | Description |
+|----------|----------|-------------|
+| `seed.hdf5` | `<run_dir>/select_mimicgen_seed/` | Materialised seed trajectory for MimicGen |
+| `select_mimicgen_seed/result.json` | `<run_dir>/` | Rollout index, heuristic name, selection info (path/prob for graph; eligible count for random) |
+| `generate_mimicgen_demos/result.json` | `<run_dir>/` | Generated HDF5 path, EEF trajectories, MimicGen stats |
+| `combined.hdf5` | `<run_dir>/train_on_combined_data/` | Merged original + generated dataset used for training |
+| Training run | `data/outputs/train/<date>/<name>-mimicgen_combined-<heuristic>/` | Policy checkpoint trained on combined data |
+
+### Implementation notes
+
+- **`policy_doctor/mimicgen/heuristics.py`** — `TrajectorySelectionHeuristic` ABC, `BehaviorGraphPathHeuristic`, `RandomSelectionHeuristic`, `build_heuristic()` factory.
+- **`policy_doctor/mimicgen/combine_datasets.py`** — `combine_hdf5_datasets()`: copies original HDF5, appends generated demos as `demo_N`, `demo_{N+1}`, … Returns the total demo count.
+- **`policy_doctor/curation_pipeline/steps/select_mimicgen_seed.py`** — `SelectMimicgenSeedStep`: reads clustering, resolves rollout HDF5 via the same eval-dir chain as `SelectMimicgenSeedFromGraphStep`, dispatches to the configured heuristic, materialises `seed.hdf5`.
+- **`policy_doctor/curation_pipeline/steps/train_on_combined_data.py`** — `TrainOnCombinedDataStep`: merges datasets, trains via `++task.dataset.dataset_path=<combined>` Hydra override (same pattern as `TrainCuratedStep`).
+- **`generate_mimicgen_demos`** auto-wires with `SelectMimicgenSeedStep` (checked first) or the legacy `SelectMimicgenSeedFromGraphStep` (fallback).
+
+---
 
 ## Diffusion policy training
 

@@ -1,0 +1,114 @@
+# @package _global_
+# Random seed selection for MimicGen data augmentation (comparison baseline).
+#
+# Same setup as mimicgen_behavior_graph_seed.yaml but uses a randomly selected
+# rollout as the MimicGen seed instead of the behavior-graph top path.
+#
+# Run AFTER mimicgen_behavior_graph_seed.yaml uses the SAME baseline policy
+# (apr23_d1_60 train_date) — skip train_baseline and eval_policies if they
+# already completed (pipeline is idempotent via skip_if_done).
+#
+# Orchestrator env: mimicgen_torch2 (same as behavior-graph experiment).
+#
+#   conda run -n mimicgen_torch2 python -m policy_doctor.scripts.run_pipeline \
+#     +experiment=mimicgen_random_seed \
+#     steps=[select_mimicgen_seed_random,generate_mimicgen_demos,train_on_combined_data]
+#
+# NOTE: Uses a separate run_dir (experiment_name) so combined training outputs
+# don't collide with the behavior-graph run.
+
+defaults:
+  - override /data_source: mimicgen_square
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_random_seed
+seeds: [0]
+
+train_date: apr23_d1_60
+device: "cuda:0"
+project: influence-clustering
+wandb_tags: [square_mimicgen, random_seed, d1_60demo]
+
+# Same baseline as the behavior-graph experiment (skip train_baseline if already done)
+baseline:
+  task: square_mh_mimicgen
+  policy: diffusion_unet_lowdim
+  config_dir: configs/low_dim/square_mimicgen_lowdim/diffusion_policy_cnn
+  config_name: config.yaml
+  seeds: [0]
+  num_epochs: 1751
+  checkpoint_topk: 3
+  checkpoint_every: 50
+  max_train_episodes: 60
+  val_ratio: 0.04
+  output_dir: data/outputs/train
+  project: influence-clustering
+  num_gpus: 1
+  tf32: true
+  compile: true
+
+evaluation:
+  task: square_mh_mimicgen
+  policy: diffusion_unet_lowdim
+  train_date: apr23_d1_60
+  eval_date: apr23_d1_60
+  train_ckpt: latest
+  num_episodes: 100
+  test_start_seed: 100000
+  eval_output_dir: data/outputs/eval_save_episodes
+  train_output_dir: data/outputs/train
+
+# Attribution / clustering config (same as behavior-graph run)
+attribution:
+  train_date: apr23_d1_60
+  eval_date: apr23_d1_60
+  task: square_mh_mimicgen
+  policy: diffusion_unet_lowdim
+  state: low_dim
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+advantage_gamma: 0.99
+advantage_reward_success: 1.0
+advantage_reward_failure: -1.0
+advantage_reward_end: 0.0
+
+# MimicGen generation config (same generation params, random seed selection)
+mimicgen_datagen:
+  # Random seed selection
+  success_only: true
+  random_seed: 42
+  policy_seed: 0
+
+  # Generation (same 200 trials as behavior-graph run)
+  num_trials: 200
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+
+  action_noise: 0.05
+  subtask_term_offset_range: [0, 10]
+  nn_k: 1
+  interpolate_from_last_target_pose: false
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    SquareNut:
+      x: [-0.05, 0.05]
+      y: [-0.05, 0.05]
+      z_rot: [-0.5, 0.5]
+
+  original_dataset_path: data/mimicgen/square_d1_60.hdf5
+  combined_train_date: apr23_d1_60_combined_random

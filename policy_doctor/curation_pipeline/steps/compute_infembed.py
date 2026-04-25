@@ -71,7 +71,10 @@ class ComputeInfembedStep(PipelineStep[None]):
                 raise FileNotFoundError(f"Eval dir not found: {eval_dir}")
 
             tf32 = bool(OmegaConf.select(attribution, "tf32") or False)
-            use_compile = bool(OmegaConf.select(attribution, "compile") or False)
+            # InfEmbed's Arnoldi iteration does many small backward passes — compiling
+            # the wrapper offers little benefit and causes dynamo tracing failures in
+            # einops / nn.ParameterDict ops inside the policy forward.  Always run eager.
+            use_compile = False
 
             cmd_args = [
                 "--exp_name=auto",

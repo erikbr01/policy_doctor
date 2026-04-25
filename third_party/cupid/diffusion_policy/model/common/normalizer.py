@@ -51,6 +51,7 @@ class LinearNormalizer(DictOfTensorMixin):
     def __setitem__(self, key: str , value: 'SingleFieldLinearNormalizer'):
         self.params_dict[key] = value.params_dict
 
+    @torch._dynamo.disable  # nn.ParameterDict key lookups are not dynamo-traceable
     def _normalize_impl(self, x, forward=True):
         if isinstance(x, dict):
             result = dict()

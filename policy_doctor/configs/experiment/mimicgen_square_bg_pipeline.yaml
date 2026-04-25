@@ -1,0 +1,79 @@
+# @package _global_
+# MimicGen trajectory generation pipeline for Square task — proposed method.
+#
+# Seed selection: behavior graph path heuristic.
+# Builds a behavior graph from the clustering result, ranks paths to SUCCESS
+# by probability, and selects the rollout whose cluster sequence best matches
+# the top path. The hypothesis is that this informed seed yields higher-quality
+# generated demos and thereby a better retrained policy.
+#
+# Pipeline: run_clustering → select_mimicgen_seed → generate_mimicgen_demos → train_on_combined_data
+#
+# Usage (full run from scratch):
+#   conda activate policy_doctor   # clustering + seed selection
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_bg_pipeline
+#
+# Usage (resume / run subset):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_bg_pipeline \
+#     run_dir=data/pipeline_runs/mimicgen_square_bg_pipeline \
+#     steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data]
+#
+# Baseline comparison: see mimicgen_square_random_pipeline.yaml
+#   Run with the same run_dir to reuse clustering; the random experiment
+#   writes to a separate run_dir so train output names do not collide.
+
+task_config: square_mh_feb15        # IV task YAML — resolves eval_dir for rollout HDF5 lookup
+experiment_name: mimicgen_square_bg_pipeline
+seeds: [0]                          # which policy seed's rollouts to cluster + use as seed source
+reference_seed: 0
+
+# ---------------------------------------------------------------------------
+# Clustering (run_clustering step)
+# ---------------------------------------------------------------------------
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15          # fewer clusters than transport; square is simpler
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen seed selection + generation
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  # Seed selection
+  seed_selection_heuristic: behavior_graph
+  top_k_paths: 5                   # try up to 5 candidate paths before giving up
+  min_path_probability: 0.0
+  success_only: true
+  policy_seed: 0                   # use seed-0's clustering for selection
+
+  # Generation
+  episode_budget: 50               # MimicGen generation trials
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+
+# ---------------------------------------------------------------------------
+# Training on combined data (train_on_combined_data step)
+# ---------------------------------------------------------------------------
+# baseline.* keys (config_dir, config_name, num_epochs, etc.) come from
+# data_source: mimicgen_square → robomimic/baseline/low_dim/square_mh_mimicgen.yaml.
+# Override specific values here as needed.
+train_date: mimicgen_square_bg     # embedded in run dir: ...-mimicgen_combined-behavior_graph
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, behavior_graph]
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps: [run_clustering, mimicgen_behavior_graph]

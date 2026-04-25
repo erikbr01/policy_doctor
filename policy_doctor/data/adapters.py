@@ -215,9 +215,10 @@ def patch_attribution_dataset_path(
 ) -> Optional[Path]:
     """Resolve and patch ``cfg.task.dataset.dataset_path`` in-place for attribution.
 
-    Stores the path relative to ``repo_root`` so that ``get_dataset_masks``
-    (which inspects ``Path.parts``) correctly identifies the data source name
-    (e.g. ``'mimicgen'``, ``'robomimic'``).
+    Stores the absolute path so that ``hydra.utils.instantiate`` can open the
+    file regardless of the current working directory.  Data-source detection
+    (``_detect_data_source``) checks for substrings like ``'mimicgen'`` or
+    ``'robocasa'``, which are present in the absolute path as well.
 
     Returns the resolved Path, or None if no file was found (cfg unchanged).
     """
@@ -225,11 +226,7 @@ def patch_attribution_dataset_path(
     if resolved is None:
         return None
 
-    try:
-        rel = resolved.relative_to(Path(repo_root).resolve())
-        path_str = str(rel)
-    except ValueError:
-        path_str = str(resolved)
+    path_str = str(resolved)
 
     try:
         from omegaconf import OmegaConf

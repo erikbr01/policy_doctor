@@ -27,15 +27,28 @@ from diffusion_policy.common.device_util import get_device
 @click.option('--test_start_seed', type=int, default=100000)
 @click.option('--overwrite', type=bool, default=False)
 @click.option('--device', type=str, default='cuda:0')
+@click.option('--n_test_vis', type=int, default=None,
+              help='Override n_test_vis; pass 0 to disable video recording.')
+@click.option('--save_episodes', type=bool, default=True,
+              help='Save per-episode data. Set False for headless success-rate-only eval.')
+@click.option('--n_envs', type=int, default=None,
+              help='Override number of parallel envs (default: 1 when save_episodes=True, 28 otherwise).')
+@click.option('--write_rollouts', type=bool, default=False,
+              help='Collect MuJoCo sim states and write rollouts.hdf5 even when save_episodes=False. '
+                   'Used to regenerate rollouts.hdf5 for seed selection without offscreen rendering.')
 def main(
-    output_dir: str, 
-    train_dir: str, 
-    train_ckpt: str, 
+    output_dir: str,
+    train_dir: str,
+    train_ckpt: str,
     num_episodes: int,
     test_start_seed: int,
     overwrite: bool,
     device: str,
-):  
+    n_test_vis: int,
+    save_episodes: bool,
+    n_envs: int,
+    write_rollouts: bool,
+):
     # Find checkpoint.
     checkpoint_dir = pathlib.Path(train_dir) / "checkpoints"
     checkpoints = list(checkpoint_dir.iterdir())
@@ -63,11 +76,12 @@ def main(
     cls = hydra.utils.get_class(cfg._target_)
 
     # Update configuration for evaluation.
-    cfg.task.env_runner.n_envs = 1
+    default_n_envs = 1 if save_episodes else 28
+    cfg.task.env_runner.n_envs = n_envs if n_envs is not None else default_n_envs
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
     cfg.task.env_runner.n_test = num_episodes
-    cfg.task.env_runner.n_test_vis = num_episodes
+    cfg.task.env_runner.n_test_vis = (num_episodes if n_test_vis is None else n_test_vis) if save_episodes else 0
     cfg.task.env_runner.test_start_seed = test_start_seed
 
     # Construct workspace.
@@ -88,7 +102,10 @@ def main(
     env_runner = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir,
-        save_episodes=True)
+        save_episodes=save_episodes,
+    )
+    if write_rollouts:
+        env_runner.write_rollouts_hdf5 = True
     runner_log = env_runner.run(policy)
     
     # Dump log to json.

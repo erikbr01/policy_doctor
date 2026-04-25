@@ -1,0 +1,13 @@
+# Task config: MimicGen Square D1, 60-demo baseline training run.
+#
+# Baseline policy trained on first 60 demos from the D1 generated dataset.
+# Eval runner (MimicgenLowdimRunner) writes rollouts.hdf5 under eval_dir/episodes/
+# which is consumed by select_mimicgen_seed_from_graph / select_mimicgen_seed_random.
+task: square_mh_mimicgen
+name: "Square MimicGen D1 (60-demo baseline)"
+
+train_date: apr23_d1_60
+eval_dir: "data/outputs/eval_save_episodes/apr23_d1_60/apr23_d1_60_train_diffusion_unet_lowdim_square_mh_mimicgen_0/latest"
+train_dir: "data/outputs/train/apr23_d1_60/apr23_d1_60_train_diffusion_unet_lowdim_square_mh_mimicgen_0"
+train_ckpt: "latest"
+exp_date: "default"

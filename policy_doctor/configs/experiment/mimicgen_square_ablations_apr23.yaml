@@ -1,0 +1,108 @@
+# @package _global_
+# MimicGen Square D1 ablation experiments — Apr 23 2026.
+#
+# Runs in the SAME pipeline run dir as mimicgen_square_pipeline_apr23 to reuse
+# shared upstream results (train_baseline, eval_policies, clustering).
+#
+# Ablations:
+#   eval_baseline            — 500-ep eval of the 60-demo baseline (no MimicGen)
+#   mimicgen_random_20       — budget=20 demos, random seed selection
+#   mimicgen_behavior_graph_20 — budget=20 demos, BG seed selection
+#   mimicgen_random_rep2/3   — budget=200, random_seed=1,2 (variance replicates)
+#   mimicgen_behavior_graph_rep2/3 — budget=200, BG random_seed=1,2
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_ablations_apr23
+#
+# Resume from specific steps (e.g. skip eval_baseline if already done):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_ablations_apr23 \
+#     steps=[mimicgen_random_20,mimicgen_behavior_graph_20]
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_ablations_apr23
+
+# Reuse the existing pipeline run dir from the Apr 23 main experiment
+run_dir: data/pipeline_runs/mimicgen_square_pipeline_apr23
+
+seeds: [0]
+reference_seed: 0
+
+train_date: apr23_mimicgen_pipeline_v2
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr23, ablation]
+
+baseline:
+  max_train_episodes: 60
+
+evaluation:
+  train_date: apr23_mimicgen_pipeline_v2
+  eval_date: apr23_mimicgen_pipeline_v2
+  overwrite: false       # don't re-run existing 500-ep evals
+  num_episodes: 500
+
+attribution:
+  train_date: apr23_mimicgen_pipeline_v2
+  eval_date: apr23_mimicgen_pipeline_v2
+  dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+mimicgen_datagen:
+  success_budget: 200            # default; overridden per-arm for budget ablation
+  num_seeds: 10
+  original_dataset_path: data/mimicgen/square_d1_60.hdf5
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+  policy_seed: 0
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  random_seed: null              # overridden per-arm for variance replicates
+
+  action_noise: 0.05
+  subtask_term_offset_range: [10, 20]
+  nn_k: 3
+  interpolate_from_last_target_pose: true
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+  fix_initial_object_poses: false
+  object_pose_ranges: null
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps: [
+  eval_baseline,
+  mimicgen_random_20,
+  mimicgen_behavior_graph_20,
+  mimicgen_diversity_20,
+  mimicgen_random_rep2,
+  mimicgen_random_rep3,
+  mimicgen_behavior_graph_rep2,
+  mimicgen_behavior_graph_rep3,
+  mimicgen_diversity,
+  mimicgen_diversity_rep2,
+  mimicgen_diversity_rep3,
+  mimicgen_random_20_rep2,
+  mimicgen_random_20_rep3,
+  mimicgen_behavior_graph_20_rep2,
+  mimicgen_behavior_graph_20_rep3,
+  mimicgen_diversity_20_rep2,
+  mimicgen_diversity_20_rep3,
+]

@@ -38,11 +38,14 @@ def _import_mimicgen_for_robosuite_registry() -> None:
     if importlib.util.find_spec("mimicgen") is not None:
         import mimicgen  # noqa: F401
         return
-    # ``.../third_party/cupid/diffusion_policy/env_runner/this_file`` → ``.../third_party``
-    third_party = pathlib.Path(__file__).resolve().parents[3]
-    vendored = third_party / "mimicgen"
-    if (vendored / "mimicgen").is_dir():
-        sys.path.insert(0, str(vendored))
+    # Walk up the filesystem from this file looking for third_party/mimicgen/mimicgen/__init__.py.
+    # This handles both the main repo layout and git worktrees (where third_party/mimicgen/ may be
+    # an empty checkout directory — the main repo's copy is found by walking further up).
+    for ancestor in pathlib.Path(__file__).resolve().parents:
+        candidate = ancestor / "third_party" / "mimicgen"
+        if (candidate / "mimicgen" / "__init__.py").is_file():
+            sys.path.insert(0, str(candidate))
+            break
     if importlib.util.find_spec("mimicgen") is not None:
         import mimicgen  # noqa: F401
 
@@ -92,7 +95,8 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             abs_action=False,
             tqdm_interval_sec=5.0,
             n_envs=None,
-            save_episodes=False
+            save_episodes=False,
+            write_rollouts_hdf5=False,
         ):
         """
         Assuming:
@@ -131,6 +135,11 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         # read from dataset
         env_meta = FileUtils.get_env_metadata_from_dataset(
             dataset_path)
+        # Force camera obs off: source datasets often have use_camera_obs=True from when
+        # they were originally collected with cameras, but low-dim rollout eval never
+        # needs camera rendering and EGL workers fail in headless training environments.
+        env_meta['env_kwargs']['use_camera_obs'] = False
+        env_meta['env_kwargs']['has_offscreen_renderer'] = False
         rotation_transformer = None
         if abs_action:
             env_meta['env_kwargs']['controller_configs']['control_delta'] = False
@@ -240,11 +249,12 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
         
-        env = AsyncVectorEnv(env_fns)
-        # env = SyncVectorEnv(env_fns)
-
+        # Defer AsyncVectorEnv creation to run() so that __init__ does not
+        # require the sim environment (e.g. Square_D1) to be registered at
+        # import time. This allows training in envs that don't have MimicGen
+        # installed (cupid_torch2) while still running rollouts when needed.
         self.env_meta = env_meta
-        self.env = env
+        self.env = None  # lazily created in run()
         self.env_fns = env_fns
         self.env_seeds = env_seeds
         self.env_prefixs = env_prefixs
@@ -264,18 +274,29 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
 
         # save episodes
         self.save_episodes = save_episodes
+        self.write_rollouts_hdf5 = write_rollouts_hdf5
         self.episode_dir = None
         if save_episodes:
             assert n_envs == 1
             assert n_train == n_train_vis == 0
-            assert n_test > 0 and n_test == n_test_vis
+            assert n_test > 0 and n_test_vis <= n_test
             self.episode_dir = pathlib.Path(output_dir) / "episodes"
             self.episode_dir.mkdir()
             self.media_dir = pathlib.Path(output_dir) / "media"
+        self.output_dir = pathlib.Path(output_dir)
 
     def run(self, policy: BaseLowdimPolicy):
         device = policy.device
         dtype = policy.dtype
+        # Lazy env creation deferred from __init__ so that training in envs
+        # without MimicGen-registered environments (e.g. cupid_torch2) works.
+        if self.env is None:
+            try:
+                self.env = AsyncVectorEnv(self.env_fns)
+            except Exception as e:
+                print(f"[MimicgenLowdimRunner] WARNING: could not create env ({e}). "
+                      "Skipping rollout evaluation (env not registered in this conda env).")
+                return dict()
         env = self.env
         
         # plan for rollout
@@ -288,6 +309,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         all_rewards = [None] * n_inits
 
         # total number of timesteps across episodes
+        all_sim_episodes: list = []  # per-episode dicts from _get_episode_sim_data()
         if self.save_episodes:
             total_timesteps = 0
             episode_lengths = []
@@ -383,8 +405,8 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 obs, reward, done, info = env.step(env_action)
                 done = np.all(done)
                 
-                # Terminate on success if saving episodes.
-                if self.save_episodes:
+                # Terminate on success if saving episodes or collecting sim data.
+                if self.save_episodes or self.write_rollouts_hdf5:
                     success = env.call("_is_success")[0]
                     done = success if not done else done
 
@@ -400,6 +422,16 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             # collect data for this round
             all_video_paths[this_global_slice] = env.render()[this_local_slice]
             all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
+
+            # collect per-episode simulator state/action data for rollouts.hdf5
+            if self.save_episodes or self.write_rollouts_hdf5:
+                try:
+                    sim_data = env.call('_get_episode_sim_data')[0]
+                    sim_data['success'] = bool(success)
+                    all_sim_episodes.append(sim_data)
+                except Exception as e:
+                    print(f"[MimicgenLowdimRunner] WARNING: could not collect sim data for "
+                          f"episode {chunk_idx}: {e}")
 
             # save episode data
             if self.save_episodes:
@@ -446,6 +478,9 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             value = np.mean(value)
             log_data[name] = value
 
+        if (self.save_episodes or self.write_rollouts_hdf5) and all_sim_episodes:
+            self._write_rollouts_hdf5(all_sim_episodes)
+
         if self.save_episodes:
             # rename media files based on success or failure
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
@@ -464,6 +499,40 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 yaml.safe_dump(metadata, f)
 
         return log_data
+
+    def _write_rollouts_hdf5(self, sim_episodes: list) -> pathlib.Path:
+        """Write a MimicGen-compatible ``rollouts.hdf5`` from per-episode sim data.
+
+        Each episode becomes a ``data/demo_N`` group containing:
+        - ``states``   (T, state_dim) float64 — sim state before each action
+        - ``actions``  (T, action_dim) float64 — action applied at each step
+        - ``model_file`` attribute — MJCF XML string for ``prepare_src_dataset``
+
+        The file-level ``data.attrs["env_args"]`` is populated from the runner's
+        ``env_meta`` dict (same source used to build the eval envs).
+
+        Returns the path to the written HDF5 file.
+        """
+        import json as _json
+        # Write alongside the episode pkl files so that _resolve_rollouts_hdf5()
+        # finds it at ``episodes/rollouts.hdf5`` (its primary search location).
+        out_dir = self.episode_dir if self.episode_dir is not None else self.output_dir
+        out_path = out_dir / "rollouts.hdf5"
+        with h5py.File(out_path, "w") as f:
+            grp = f.create_group("data")
+            grp.attrs["env_args"] = _json.dumps(self.env_meta)
+            grp.attrs["total"] = len(sim_episodes)
+            for i, ep in enumerate(sim_episodes):
+                demo_grp = grp.create_group(f"demo_{i}")
+                if ep["states"].ndim >= 2 and ep["states"].shape[0] > 0:
+                    demo_grp.create_dataset("states", data=ep["states"])
+                    demo_grp.create_dataset("actions", data=ep["actions"])
+                if ep.get("model_file") is not None:
+                    demo_grp.attrs["model_file"] = ep["model_file"]
+                demo_grp.attrs["success"] = int(ep.get("success", False))
+        print(f"[MimicgenLowdimRunner] rollouts.hdf5 → {out_path} "
+              f"({len(sim_episodes)} episodes)")
+        return out_path
 
     def undo_transform_action(self, action):
         raw_shape = action.shape

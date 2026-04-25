@@ -96,6 +96,47 @@ class RobomimicSeedMaterializer:
                 ep.attrs["model_file"] = model_file
 
 
+    def write_multi_demo_source_dataset(
+        self,
+        trajectories: list[Any],
+        output_path: "Path | str",
+    ) -> None:
+        """Write multiple trajectories as ``demo_0 … demo_{N-1}`` into one HDF5.
+
+        All trajectories must share the same ``env_meta`` (only the first is used
+        for the file-level ``env_args`` attribute).  The ``data.total`` attribute
+        is set to the sum of all trajectory lengths.
+
+        Args:
+            trajectories: Objects with ``states``, ``actions``, ``env_meta``, and
+                          optionally ``model_file`` attributes.
+            output_path:  Destination ``.hdf5`` file (created/overwritten).
+        """
+        if not trajectories:
+            raise ValueError("write_multi_demo_source_dataset: trajectories list is empty")
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        total_steps = sum(len(t.actions) for t in trajectories)
+
+        with h5py.File(output_path, "w") as f:
+            data = f.create_group("data")
+            data.attrs["total"] = np.int64(total_steps)
+            data.attrs["env_args"] = json.dumps(dict(trajectories[0].env_meta), indent=4)
+
+            for i, traj in enumerate(trajectories):
+                actions = np.asarray(traj.actions, dtype=np.float32)
+                states = np.asarray(traj.states, dtype=np.float32)
+                ep = data.create_group(f"demo_{i}")
+                ep.create_dataset("actions", data=actions, compression="gzip")
+                ep.create_dataset("states", data=states, compression="gzip")
+                ep.attrs["num_samples"] = np.int64(len(actions))
+                model_file = getattr(traj, "model_file", None)
+                if model_file is not None:
+                    ep.attrs["model_file"] = model_file
+
+
 def materialize_seed_trajectory(
     traj: Any,
     output_path: Path | str,

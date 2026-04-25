@@ -61,7 +61,8 @@ The codebase is split across four conda environments because `cupid` requires Py
 | `policy_doctor` | Analysis, clustering, pipeline orchestration, Streamlit, most unit tests |
 | `cupid` | Training, eval rollouts, TRAK attribution — anything that imports `diffusion_policy` |
 | `cupid_torch2` | InfEmbed attribution, runtime monitoring scripts (requires `torch.func` — absent in `cupid`'s torch 1.12); also `--compile` / `torch.compile` |
-| `mimicgen` | MimicGen data generation (Py 3.8, MuJoCo 2.3.2, older pinned stack) |
+| `mimicgen` | Legacy MimicGen env (Py 3.8, MuJoCo 2.3.2, cpu-only torch 1.12) — superseded by `mimicgen_torch2` |
+| `mimicgen_torch2` | **Primary training/eval/MimicGen env**: clone of `cupid_torch2` with robosuite 1.4.1 + robomimic 0.3.0 + mimicgen (all compatible, correct `is_success()`) |
 
 ### Three-package layout
 

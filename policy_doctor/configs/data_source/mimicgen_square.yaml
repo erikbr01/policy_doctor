@@ -1,6 +1,6 @@
 # @package _global_
 # MimicGen-merged square HDF5 → MimicgenReplayLowdimDataset + MimicgenLowdimRunner, square-shaped obs.
-# Generate data in ``mimicgen`` conda env; train in ``cupid``. Override ``task_config`` if you use IV clustering under a different name.
+# All simulation (eval, datagen) runs in mimicgen_torch2 env for consistent model XML compatibility.
 
 defaults:
   - /robomimic/baseline/low_dim@baseline: square_mh_mimicgen
@@ -20,7 +20,7 @@ data_source:
   policy_stack: diffusion_unet_lowdim
   attribution_stack: trak_infembed
   visualization: artifact_agnostic
-  conda_env_train: cupid
-  conda_env_datagen: mimicgen
+  conda_env_train: mimicgen_torch2
+  conda_env_datagen: mimicgen_torch2
   robocasa_submodule: false
   mimicgen_submodule: true
