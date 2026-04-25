@@ -385,6 +385,204 @@ class SpaceMouseInterventionDevice(InterventionDevice):
         self.close()
 
 
+class XboxControllerInterventionDevice(InterventionDevice):
+    """Xbox controller for arm teleoperation using the `inputs` library.
+
+    Axis mapping to 10D OSC_POSE:
+      Left stick  X (ABS_X):    arm x       [0]
+      Left stick  Y (ABS_Y):    arm y       [1]  (negated: push forward = +y)
+      Right stick Y (ABS_RY):   arm z       [2]  (negated: push up = +z)
+      Right stick X (ABS_RX):   arm yaw     [5]
+      RT - LT (ABS_RZ - ABS_Z): arm pitch   [4]
+
+    Button mapping:
+      LB (BTN_TL):     gripper close (action[6] = -1)
+      RB (BTN_TR):     gripper open  (action[6] = +1)
+      Start/Menu:      toggle is_intervening
+
+    Parameters
+    ----------
+    controller_index : int
+        Index of the gamepad to use (0 = first connected).
+    deadzone : float
+        Ignore axis values below this magnitude (in normalized [-1, 1] range).
+    scale_position : float
+        Scale factor applied to translational axes before clipping to [-1, 1].
+    scale_rotation : float
+        Scale factor applied to rotational axes before clipping to [-1, 1].
+    """
+
+    ACTION_DIM = 10
+    _STICK_MAX = 32768.0   # inputs reports sticks as -32768..32767
+    _TRIGGER_MAX = 255.0   # inputs reports triggers as 0..255
+
+    # Button codes that toggle is_intervening (controller-specific names)
+    _TOGGLE_CODES = frozenset({"BTN_START", "BTN_SELECT", "BTN_MODE"})
+
+    def __init__(
+        self,
+        controller_index: int = 0,
+        deadzone: float = 0.15,
+        scale_position: float = 1.0,
+        scale_rotation: float = 1.0,
+    ) -> None:
+        try:
+            from inputs import devices
+        except ImportError as e:
+            raise ImportError("inputs not found. Install with: pip install inputs") from e
+
+        # Initialize cleanup handles first so __del__ is always safe
+        self._stop = threading.Event()
+        self._reading_thread = None
+
+        gamepads = devices.gamepads
+        if not gamepads:
+            raise RuntimeError(
+                "No gamepads found. Connect your Xbox controller and try again."
+            )
+        if controller_index >= len(gamepads):
+            raise RuntimeError(
+                f"Controller index {controller_index} out of range; "
+                f"{len(gamepads)} gamepad(s) connected."
+            )
+
+        self.controller_index = controller_index
+        self.deadzone = deadzone
+        self.scale_position = scale_position
+        self.scale_rotation = scale_rotation
+
+        self._is_intervening = False
+        self._lock = threading.Lock()
+
+        # Normalized state: sticks in [-1, 1], triggers in [0, 1]
+        self._left_x = 0.0
+        self._left_y = 0.0
+        self._right_x = 0.0
+        self._right_y = 0.0
+        self._lt = 0.0
+        self._rt = 0.0
+        self._lb_held = False
+        self._rb_held = False
+
+        self._reading_thread = threading.Thread(
+            target=self._read_loop, name="xbox-controller", daemon=True
+        )
+        self._reading_thread.start()
+
+    def _apply_deadzone(self, value: float) -> float:
+        """Linear rescale from [deadzone, 1] → [0, 1], zero below deadzone."""
+        if abs(value) < self.deadzone:
+            return 0.0
+        sign = 1.0 if value > 0 else -1.0
+        return sign * (abs(value) - self.deadzone) / (1.0 - self.deadzone)
+
+    def _read_loop(self) -> None:
+        try:
+            from inputs import devices
+        except ImportError:
+            return
+
+        gamepad = devices.gamepads[self.controller_index]
+        while not self._stop.is_set():
+            try:
+                events = gamepad.read()
+            except Exception:
+                if self._stop.is_set():
+                    return
+                time.sleep(0.05)
+                continue
+
+            for event in events:
+                if self._stop.is_set():
+                    return
+                self._process_event(event)
+
+    def _process_event(self, event) -> None:
+        ev_type = event.ev_type
+        code = event.code
+        state = event.state
+
+        with self._lock:
+            if ev_type == "Absolute":
+                if code == "ABS_X":
+                    self._left_x = state / self._STICK_MAX
+                elif code == "ABS_Y":
+                    self._left_y = state / self._STICK_MAX
+                elif code == "ABS_RX":
+                    self._right_x = state / self._STICK_MAX
+                elif code == "ABS_RY":
+                    self._right_y = state / self._STICK_MAX
+                elif code == "ABS_Z":
+                    self._lt = state / self._TRIGGER_MAX
+                elif code == "ABS_RZ":
+                    self._rt = state / self._TRIGGER_MAX
+
+            elif ev_type == "Key":
+                if code == "BTN_TL":
+                    self._lb_held = bool(state)
+                elif code == "BTN_TR":
+                    self._rb_held = bool(state)
+                elif code in self._TOGGLE_CODES and state == 1:
+                    self._is_intervening = not self._is_intervening
+
+    @property
+    def is_intervening(self) -> bool:
+        return self._is_intervening
+
+    def get_action(self) -> Optional[np.ndarray]:
+        """Get 10D action from current controller state.
+
+        Returns None when all inputs are at rest (no action to apply).
+        """
+        with self._lock:
+            lx = self._apply_deadzone(self._left_x)
+            ly = self._apply_deadzone(-self._left_y)   # negate: push fwd = +y
+            rx = self._apply_deadzone(self._right_x)
+            ry = self._apply_deadzone(-self._right_y)  # negate: push up = +z
+            lt = self._lt
+            rt = self._rt
+            lb = self._lb_held
+            rb = self._rb_held
+
+        pitch = rt - lt
+        gripper = -1.0 if lb else (1.0 if rb else 0.0)
+
+        if not any([lx, ly, rx, ry, abs(pitch) > 0.01, lb, rb]):
+            return None
+
+        action = np.zeros(self.ACTION_DIM, dtype=np.float32)
+        action[0] = np.clip(lx * self.scale_position, -1, 1)   # arm x
+        action[1] = np.clip(ly * self.scale_position, -1, 1)   # arm y
+        action[2] = np.clip(ry * self.scale_position, -1, 1)   # arm z
+        action[4] = np.clip(pitch * self.scale_rotation, -1, 1)  # arm pitch
+        action[5] = np.clip(rx * self.scale_rotation, -1, 1)   # arm yaw
+        action[6] = gripper
+        return action
+
+    def notify(self, message: str) -> None:
+        print(f"[Xbox INTERVENTION] {message}")
+
+    def reset(self) -> None:
+        with self._lock:
+            self._left_x = 0.0
+            self._left_y = 0.0
+            self._right_x = 0.0
+            self._right_y = 0.0
+            self._lt = 0.0
+            self._rt = 0.0
+            self._lb_held = False
+            self._rb_held = False
+        self._is_intervening = False
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._reading_thread is not None:
+            self._reading_thread.join(timeout=1.0)
+
+    def __del__(self):
+        self.close()
+
+
 class HTTPInterventionDevice(InterventionDevice):
     """Polls intervention state from the viz server's GET /intervention endpoint.
 

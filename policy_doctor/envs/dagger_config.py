@@ -60,6 +60,7 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
         KeyboardInterventionDevice,
         PassthroughInterventionDevice,
         SpaceMouseInterventionDevice,
+        XboxControllerInterventionDevice,
     )
 
     device_type = config.get("device", "keyboard")
@@ -78,6 +79,15 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
             deadzone=params.get("deadzone", 0.1),
             scale_position=params.get("scale_position", 125.0),
             scale_rotation=params.get("scale_rotation", 50.0),
+        )
+
+    elif device_type == "xbox":
+        params = config.get("xbox", {})
+        return XboxControllerInterventionDevice(
+            controller_index=params.get("controller_index", 0),
+            deadzone=params.get("deadzone", 0.15),
+            scale_position=params.get("scale_position", 1.0),
+            scale_rotation=params.get("scale_rotation", 1.0),
         )
 
     elif device_type == "passthrough":
