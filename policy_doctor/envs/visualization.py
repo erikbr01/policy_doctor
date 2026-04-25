@@ -1,58 +1,69 @@
-"""Live OpenCV visualization for DAgger rollouts.
+"""DAgger visualization client — sends frames to the viz server over HTTP.
 
-On macOS, all cv2 window calls must happen on the main thread.  The heavy
-work (color conversion, text overlay) runs in a background thread that
-pre-builds canvases.  The main thread calls update() which:
-  1. Writes the latest state (non-blocking, lock + dict).
-  2. Displays the most recently pre-built canvas via cv2.imshow + waitKey(1).
+The viz server (viz_server.py) runs as a separate process with its own cv2
+main thread.  This client sends frames in a fire-and-forget background thread
+so the DAgger runner is never blocked by display latency.
+
+Usage
+-----
+Start the server first:
+    python -m policy_doctor.envs.viz_server --port 5002
+
+Then construct DAggerVisualizer with the server URL:
+    viz = DAggerVisualizer(server_url="http://localhost:5002")
 """
 
 from __future__ import annotations
 
+import json
+import struct
 import threading
+from queue import Empty, Queue
 from typing import Optional
 
-import cv2
 import numpy as np
+
+_DEFAULT_URL = "http://127.0.0.1:5002"
 
 
 class DAggerVisualizer:
-    """cv2 display with background canvas builder.
+    """HTTP client that streams frames to the viz server.
+
+    update() is non-blocking: it drops the frame into a single-slot queue
+    and returns immediately.  A background thread drains the queue and POSTs
+    to the server.  If the server is slow, intermediate frames are dropped
+    (latest-frame semantics).
 
     Parameters
     ----------
+    server_url : str
+        URL of the running viz_server process.
     camera_names : list[str]
-        Cameras to show side-by-side.
-    figsize : tuple[float, float]
-        Unused — kept for API compat with the old matplotlib version.
+        Cameras to include in each frame.
+    figsize : tuple
+        Unused — kept for API compat.
+    hw : tuple[int, int]
+        (height, width) to render each camera at.
     """
 
     def __init__(
         self,
+        server_url: str = _DEFAULT_URL,
         camera_names: list[str] = ["agentview"],
-        figsize: tuple[float, float] = (8, 5),
+        figsize: tuple = (8, 5),
+        hw: tuple[int, int] = (256, 256),
     ) -> None:
+        self._url = server_url.rstrip("/") + "/frame"
         self.camera_names = camera_names
-        self._window = "DAgger"
+        self._hw = hw
 
-        # Window must be created on the main thread
-        cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self._window, 640 * len(camera_names), 480)
-
-        # Shared state: main thread writes, builder thread reads
-        self._state: Optional[dict] = None
-        self._state_lock = threading.Lock()
-        self._state_event = threading.Event()  # wakes builder when new state arrives
-
-        # Shared canvas: builder thread writes, main thread reads
-        self._canvas: Optional[np.ndarray] = None
-        self._canvas_lock = threading.Lock()
-
+        # Single-slot queue: newest frame wins
+        self._queue: Queue = Queue(maxsize=1)
         self._stop = threading.Event()
-        self._builder = threading.Thread(
-            target=self._build_loop, name="dagger-canvas", daemon=True
+        self._thread = threading.Thread(
+            target=self._send_loop, name="dagger-viz-sender", daemon=True
         )
-        self._builder.start()
+        self._thread.start()
 
     # ------------------------------------------------------------------
     # Main-thread API
@@ -67,91 +78,79 @@ class DAggerVisualizer:
         step: int,
         intervention_reason: str = "",
     ) -> None:
-        """Push new state and display the latest pre-built canvas.
-
-        Fast on the main thread: one lock write + cv2.imshow.
-        """
-        # 1. Update state for the builder thread
-        with self._state_lock:
-            self._state = dict(
-                imgs=camera_imgs,
-                node_name=node_name,
-                node_value=node_value,
-                acting_agent=acting_agent,
-                step=step,
-                reason=intervention_reason,
-            )
-        self._state_event.set()
-
-        # 2. Display the most recently built canvas (or a blank frame)
-        with self._canvas_lock:
-            canvas = self._canvas
-
-        if canvas is not None:
-            cv2.imshow(self._window, canvas)
-        cv2.waitKey(1)
+        """Non-blocking: enqueue the latest frame for sending."""
+        payload = (camera_imgs, node_name, node_value, acting_agent, step, intervention_reason)
+        try:
+            self._queue.put_nowait(payload)
+        except Exception:
+            # Queue full — replace with newest frame
+            try:
+                self._queue.get_nowait()
+            except Empty:
+                pass
+            try:
+                self._queue.put_nowait(payload)
+            except Exception:
+                pass
 
     def close(self) -> None:
         self._stop.set()
-        self._state_event.set()  # unblock builder if waiting
-        self._builder.join(timeout=2)
-        cv2.destroyWindow(self._window)
+        self._thread.join(timeout=2)
 
     def __del__(self) -> None:
         pass  # runner calls close() explicitly
 
     # ------------------------------------------------------------------
-    # Builder thread — numpy-only, no cv2 window calls
+    # Sender thread — HTTP I/O only, no cv2, no MPS
     # ------------------------------------------------------------------
 
-    def _build_loop(self) -> None:
+    def _send_loop(self) -> None:
+        import requests
+        session = requests.Session()
         while not self._stop.is_set():
-            triggered = self._state_event.wait(timeout=0.5)
-            self._state_event.clear()
-            if not triggered or self._stop.is_set():
+            try:
+                payload = self._queue.get(timeout=0.1)
+            except Empty:
                 continue
+            try:
+                data = self._encode(*payload)
+                session.post(self._url, data=data,
+                             headers={"Content-Type": "application/octet-stream"},
+                             timeout=1)
+            except Exception:
+                pass  # server not running — silently drop
 
-            with self._state_lock:
-                state = dict(self._state) if self._state else None
+    def _encode(
+        self,
+        camera_imgs: dict,
+        node_name: str,
+        node_value: Optional[float],
+        acting_agent: str,
+        step: int,
+        reason: str,
+    ) -> bytes:
+        h, w = self._hw
+        meta = json.dumps({
+            "node_name": node_name,
+            "node_value": float(node_value) if node_value is not None else None,
+            "acting_agent": acting_agent,
+            "step": step,
+            "reason": reason,
+            "cameras": self.camera_names,
+            "h": h,
+            "w": w,
+        }).encode()
 
-            if state is None:
-                continue
-
-            canvas = self._build_canvas(state)
-
-            with self._canvas_lock:
-                self._canvas = canvas
-
-    def _build_canvas(self, state: dict) -> np.ndarray:
-        frames = []
+        frames_bytes = b""
         for name in self.camera_names:
-            img = state["imgs"].get(name)
+            img = camera_imgs.get(name)
             if img is None:
-                img = np.zeros((480, 640, 3), dtype=np.uint8)
+                frames_bytes += bytes(h * w * 3)
             else:
                 img = np.asarray(img, dtype=np.uint8)
-                if img.ndim == 3 and img.shape[2] == 3:
-                    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            frames.append(img)
+                if img.shape[:2] != (h, w):
+                    import cv2
+                    img = cv2.resize(img, (w, h))
+                frames_bytes += img.tobytes()
 
-        canvas = np.concatenate(frames, axis=1) if len(frames) > 1 else frames[0]
-
-        val_str = f"{state['node_value']:.3f}" if state["node_value"] is not None else "?"
-        agent_color = (0, 200, 0) if state["acting_agent"] == "robot" else (0, 80, 255)
-        lines = [
-            (f"Step {state['step']}  |  Node: {state['node_name']}  (d={val_str})",
-             (255, 255, 255)),
-            (f"Agent: {state['acting_agent'].upper()}", agent_color),
-        ]
-        if state["reason"]:
-            lines.append((f"[INTERVENTION] {state['reason']}", (0, 80, 255)))
-
-        y = 24
-        for text, color in lines:
-            cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, color, 1, cv2.LINE_AA)
-            y += 26
-
-        return canvas
+        return struct.pack(">I", len(meta)) + meta + frames_bytes

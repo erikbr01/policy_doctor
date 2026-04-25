@@ -163,7 +163,13 @@ def resolve_checkpoint(train_dir: str, train_ckpt: str) -> Path:
 @click.option(
     "--no_visualization",
     is_flag=True,
-    help="Disable live matplotlib visualization",
+    help="Disable visualization entirely.",
+)
+@click.option(
+    "--viz_url",
+    default=None,
+    help="URL of the viz server process (e.g. http://localhost:5002). "
+         "Start it with run_viz_server.sh first.",
 )
 @click.option(
     "--dagger_config",
@@ -204,6 +210,7 @@ def main(
     intervention_threshold: float,
     device: str,
     no_visualization: bool,
+    viz_url: str,
     dagger_config: str,
     episodes_dir: str,
     no_monitor: bool,
@@ -447,12 +454,14 @@ def main(
 
     visualizer = None
     viz_cfg = dagger_cfg.get("visualization", {})
-    if not no_visualization and viz_cfg.get("enabled", True):
+    if not no_visualization and (viz_url or viz_cfg.get("enabled", True)):
         try:
-            visualizer = DAggerVisualizer(
-                camera_names=viz_cfg.get("camera_names", ["agentview"]),
-                figsize=tuple(viz_cfg.get("figsize", [8, 5])),
-            )
+            camera_names = viz_cfg.get("camera_names", ["agentview"])
+            kw = dict(camera_names=viz_cfg.get("camera_names", ["agentview"]),
+                      figsize=tuple(viz_cfg.get("figsize", [8, 5])))
+            if viz_url:
+                kw["server_url"] = viz_url
+            visualizer = DAggerVisualizer(**kw)
             click.echo("Visualization enabled")
         except Exception as e:
             click.echo(f"Warning: Failed to create visualizer: {e}")
