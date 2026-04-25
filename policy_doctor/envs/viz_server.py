@@ -85,7 +85,6 @@ _key_state = {"is_intervening": False, "action": None}
 
 def _handle_key(key: int) -> None:
     """Called from the cv2 main-thread loop on each waitKey result."""
-    global _key_state
     with _key_lock:
         if key == ord(" "):
             _key_state["is_intervening"] = not _key_state["is_intervening"]
@@ -93,6 +92,97 @@ def _handle_key(key: int) -> None:
             _key_state["action"] = _KEY_ACTIONS[key]
         else:
             _key_state["action"] = None
+
+
+# ---------------------------------------------------------------------------
+# SpaceMouse reader (optional — started only when device is found)
+# ---------------------------------------------------------------------------
+
+def _start_spacemouse(vendor_id: int = 9583, product_id: int = 50741,
+                      deadzone: float = 0.1,
+                      scale_pos: float = 0.05,
+                      scale_rot: float = 0.3) -> bool:
+    """Try to open the SpaceMouse and start a reader thread.
+
+    Returns True if the device was found, False otherwise.
+    SpaceMouse state is merged into _key_state so /intervention covers both.
+    """
+    try:
+        import hid
+    except ImportError:
+        return False
+
+    try:
+        dev = hid.device()
+        dev.open(vendor_id, product_id)
+        dev.set_nonblocking(True)
+    except Exception:
+        return False
+
+    print("[viz server] SpaceMouse connected", flush=True)
+
+    _sm_pose = [0.0] * 6          # x y z roll pitch yaw
+    _sm_gripper_close = [False]
+    _sm_last_btn_time = [0.0]
+
+    def _convert(b1: int, b2: int) -> float:
+        v = (b2 << 8) | b1
+        if v >= 32768:
+            v -= 65536
+        return float(v) / 350.0
+
+    def _reader():
+        while True:
+            try:
+                data = dev.read(13)
+            except Exception:
+                break
+            if not data or len(data) < 13:
+                time.sleep(0.001)
+                continue
+
+            if data[0] == 1:
+                y  = _convert(data[1], data[2])
+                x  = _convert(data[3], data[4])
+                z  = -_convert(data[5], data[6])
+                ro = _convert(data[7], data[8])
+                pi = _convert(data[9], data[10])
+                ya = _convert(data[11], data[12])
+                _sm_pose[:] = [
+                    x if abs(x) >= deadzone else 0.0,
+                    y if abs(y) >= deadzone else 0.0,
+                    z if abs(z) >= deadzone else 0.0,
+                    ro if abs(ro) >= deadzone else 0.0,
+                    pi if abs(pi) >= deadzone else 0.0,
+                    ya if abs(ya) >= deadzone else 0.0,
+                ]
+
+            elif data[0] == 3:
+                now = time.time()
+                if data[1] == 1 and now - _sm_last_btn_time[0] > 0.2:
+                    _sm_gripper_close[0] = not _sm_gripper_close[0]
+                    _sm_last_btn_time[0] = now
+                if data[1] == 2:
+                    with _key_lock:
+                        _key_state["is_intervening"] = not _key_state["is_intervening"]
+
+            # Build 10-dim action from SpaceMouse pose
+            x, y, z, ro, pi, ya = _sm_pose
+            gripper = -1.0 if _sm_gripper_close[0] else 1.0
+            action = [
+                x * scale_pos, y * scale_pos, z * scale_pos,
+                ro * scale_rot, pi * scale_rot, ya * scale_rot,
+                gripper, 0, 0, 0,
+            ]
+            with _key_lock:
+                if _key_state["is_intervening"]:
+                    _key_state["action"] = action
+
+            time.sleep(0.01)
+
+    t = threading.Thread(target=_reader, name="spacemouse", daemon=True)
+    t.start()
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -173,8 +263,20 @@ def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def serve(port: int = 5002, fps: int = 30) -> None:
-    # Flask in a daemon thread (handles incoming POST /frame)
+def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
+    # Optional SpaceMouse
+    if device in ("spacemouse", "auto"):
+        found = _start_spacemouse()
+        if not found and device == "spacemouse":
+            print("[viz server] WARNING: SpaceMouse not found", flush=True)
+        elif found:
+            print("[viz server] Input: SpaceMouse + keyboard", flush=True)
+        else:
+            print("[viz server] Input: keyboard only", flush=True)
+    else:
+        print("[viz server] Input: keyboard only", flush=True)
+
+    # Flask in a daemon thread
     flask_thread = threading.Thread(
         target=lambda: app.run(host="127.0.0.1", port=port,
                                threaded=True, use_reloader=False),
@@ -222,5 +324,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DAgger visualization server")
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--device", default="auto",
+                        choices=["auto", "keyboard", "spacemouse"],
+                        help="auto: try SpaceMouse, fall back to keyboard")
     args = parser.parse_args()
-    serve(args.port, args.fps)
+    serve(args.port, args.fps, args.device)

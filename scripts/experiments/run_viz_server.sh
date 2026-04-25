@@ -11,10 +11,12 @@ source "${SCRIPT_DIR}/_lib.sh"
 
 PORT=5002
 FPS=30
+DEVICE="auto"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --port) PORT="$2"; shift 2 ;;
-        --fps)  FPS="$2";  shift 2 ;;
+        --port)   PORT="$2";   shift 2 ;;
+        --fps)    FPS="$2";    shift 2 ;;
+        --device) DEVICE="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -32,4 +34,5 @@ PYTHONPATH="$POLICY_DOCTOR_ROOT:$CUPID_CODE_DIR${PYTHONPATH:+:$PYTHONPATH}" \
 exec "$CONDA_PYTHON" \
     -m policy_doctor.envs.viz_server \
     --port "$PORT" \
-    --fps "$FPS"
+    --fps "$FPS" \
+    --device "$DEVICE"
