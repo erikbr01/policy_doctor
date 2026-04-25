@@ -64,11 +64,49 @@ _slot = _FrameSlot()
 
 
 # ---------------------------------------------------------------------------
+# Key state (set by cv2 loop on main thread, read by /intervention endpoint)
+# ---------------------------------------------------------------------------
+
+# 10-dim action matching KeyboardInterventionDevice.KEY_BINDINGS
+_KEY_ACTIONS = {
+    ord("w"): [0, 0,  0.05, 0, 0, 0, 0, 0, 0, 0],
+    ord("s"): [0, 0, -0.05, 0, 0, 0, 0, 0, 0, 0],
+    ord("a"): [-0.05, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ord("d"): [ 0.05, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ord("q"): [0, -0.05, 0, 0, 0, 0, 0, 0, 0, 0],
+    ord("e"): [0,  0.05, 0, 0, 0, 0, 0, 0, 0, 0],
+    ord("g"): [0, 0, 0, 0, 0, 0, -1, 0, 0, 0],
+    ord("h"): [0, 0, 0, 0, 0, 0,  1, 0, 0, 0],
+}
+
+_key_lock = threading.Lock()
+_key_state = {"is_intervening": False, "action": None}
+
+
+def _handle_key(key: int) -> None:
+    """Called from the cv2 main-thread loop on each waitKey result."""
+    global _key_state
+    with _key_lock:
+        if key == ord(" "):
+            _key_state["is_intervening"] = not _key_state["is_intervening"]
+        elif key in _KEY_ACTIONS and _key_state["is_intervening"]:
+            _key_state["action"] = _KEY_ACTIONS[key]
+        else:
+            _key_state["action"] = None
+
+
+# ---------------------------------------------------------------------------
 # Flask app (runs in worker threads)
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
 app.logger.disabled = True
+
+
+@app.get("/intervention")
+def get_intervention():
+    with _key_lock:
+        return dict(_key_state)
 
 
 @app.post("/frame")
@@ -152,8 +190,12 @@ def serve(port: int = 5002, fps: int = 30) -> None:
     delay_ms = max(1, 1000 // fps)
 
     blank = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(blank, "Waiting for frames...", (160, 240),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (180, 180, 180), 2)
+    for i, line in enumerate([
+        "Waiting for frames...",
+        "Keys: Space=toggle  W/S/A/D/Q/E=arm  G/H=gripper  Q=quit",
+    ]):
+        cv2.putText(blank, line, (20, 220 + i * 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
     cv2.imshow(window, blank)
 
     while True:
@@ -161,9 +203,11 @@ def serve(port: int = 5002, fps: int = 30) -> None:
         canvas = _slot.get_nowait()
         if canvas is not None:
             cv2.imshow(window, canvas)
-        key = cv2.waitKey(delay_ms)
+        key = cv2.waitKey(delay_ms) & 0xFF
         if key == ord("q") or cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
             break
+        if key != 255:  # 255 = no key pressed
+            _handle_key(key)
 
     cv2.destroyAllWindows()
 

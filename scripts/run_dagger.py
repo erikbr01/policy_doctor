@@ -429,28 +429,35 @@ def main(
     env = create_env()
 
     # --- Create intervention device and visualizer ---
-    # When monitoring is disabled there is no behavior-graph trigger, so we
-    # default to passthrough (autonomous rollout) to avoid pynput accessibility
-    # issues on macOS.
-    if no_monitor and dagger_cfg.get("device", "keyboard") == "keyboard":
-        dagger_cfg = dict(dagger_cfg)  # copy so we don't mutate the loaded config
-        dagger_cfg["device"] = "passthrough"
-    device_type = dagger_cfg.get("device", "keyboard")
-    click.echo(f"Initializing {device_type} intervention device...")
-    try:
-        intervention_device = create_intervention_device(dagger_cfg)
-        if device_type == "keyboard":
-            click.echo("  Press SPACE to toggle human/robot control")
-            click.echo("  W/S/A/D/Q/E: move arm (z, x, y)")
-            click.echo("  G/H: gripper close/open")
-            click.echo("  I/K/J/L: move base (x, rotation)")
-        elif device_type == "spacemouse":
-            click.echo("  Use SpaceMouse 6-DOF input")
-            click.echo("  Left button (hold): gripper close")
-            click.echo("  Right button: toggle human/robot control")
-    except Exception as e:
-        click.echo(f"Error creating intervention device: {e}", err=True)
-        raise click.Abort()
+    if viz_url:
+        # Viz server captures keys and exposes them via /intervention — no pynput needed.
+        from policy_doctor.envs.intervention_device import HTTPInterventionDevice
+        intervention_device = HTTPInterventionDevice(server_url=viz_url)
+        device_type = "http"
+        click.echo(f"Intervention via viz server ({viz_url})")
+        click.echo("  Space: toggle human/robot  W/S/A/D/Q/E: arm  G/H: gripper")
+    else:
+        # Fall back to passthrough when --no-monitor and no viz server (avoids pynput).
+        if no_monitor and dagger_cfg.get("device", "keyboard") == "keyboard":
+            dagger_cfg = dict(dagger_cfg)
+            dagger_cfg["device"] = "passthrough"
+        device_type = dagger_cfg.get("device", "keyboard")
+        click.echo(f"Initializing {device_type} intervention device...")
+        try:
+            intervention_device = create_intervention_device(dagger_cfg)
+        except Exception as e:
+            click.echo(f"Error creating intervention device: {e}", err=True)
+            raise click.Abort()
+
+    if device_type == "keyboard":
+        click.echo("  Press SPACE to toggle human/robot control")
+        click.echo("  W/S/A/D/Q/E: move arm (z, x, y)")
+        click.echo("  G/H: gripper close/open")
+        click.echo("  I/K/J/L: move base (x, rotation)")
+    if device_type == "spacemouse":
+        click.echo("  Use SpaceMouse 6-DOF input")
+        click.echo("  Left button (hold): gripper close")
+        click.echo("  Right button: toggle human/robot control")
 
     visualizer = None
     viz_cfg = dagger_cfg.get("visualization", {})

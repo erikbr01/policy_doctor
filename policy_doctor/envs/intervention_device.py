@@ -383,3 +383,72 @@ class SpaceMouseInterventionDevice(InterventionDevice):
 
     def __del__(self):
         self.close()
+
+
+class HTTPInterventionDevice(InterventionDevice):
+    """Polls intervention state from the viz server's GET /intervention endpoint.
+
+    The viz server captures cv2 key presses in its own main thread and exposes
+    them here — no pynput, no accessibility permissions required.
+
+    Key bindings (same as KeyboardInterventionDevice):
+      Space    toggle human/robot control
+      W/S/A/D  arm +z/-z/-x/+x
+      Q/E      arm -y/+y
+      G/H      gripper close/open
+
+    Parameters
+    ----------
+    server_url : str
+        Base URL of the viz server (e.g. "http://localhost:5002").
+    poll_interval : float
+        Seconds between polls (default 0.02 = 50 Hz).
+    """
+
+    def __init__(self, server_url: str, poll_interval: float = 0.02) -> None:
+        import requests
+        self._url = server_url.rstrip("/") + "/intervention"
+        self._session = requests.Session()
+        self._poll_interval = poll_interval
+        self._state: dict = {"is_intervening": False, "action": None}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._poll_loop, name="http-intervention", daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def is_intervening(self) -> bool:
+        with self._lock:
+            return self._state["is_intervening"]
+
+    def get_action(self) -> Optional[np.ndarray]:
+        with self._lock:
+            a = self._state.get("action")
+        return np.array(a, dtype=np.float32) if a is not None else None
+
+    def notify(self, message: str) -> None:
+        pass  # viz server shows it in the frame overlay
+
+    def reset(self) -> None:
+        with self._lock:
+            self._state = {"is_intervening": False, "action": None}
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2)
+
+    def __del__(self) -> None:
+        self.close()
+
+    def _poll_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                resp = self._session.get(self._url, timeout=0.5)
+                if resp.ok:
+                    with self._lock:
+                        self._state = resp.json()
+            except Exception:
+                pass
+            time.sleep(self._poll_interval)
