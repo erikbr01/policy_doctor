@@ -1,8 +1,10 @@
-"""Live OpenCV visualization for DAgger rollouts — decoupled render loop.
+"""Live OpenCV visualization for DAgger rollouts.
 
-The main thread calls update() to push the latest frame + metadata into a
-shared slot.  A background daemon thread reads from that slot and drives the
-cv2 window at ~30 fps, independently of the sim step rate.
+On macOS, all cv2 window calls must happen on the main thread.  The heavy
+work (color conversion, text overlay) runs in a background thread that
+pre-builds canvases.  The main thread calls update() which:
+  1. Writes the latest state (non-blocking, lock + dict).
+  2. Displays the most recently pre-built canvas via cv2.imshow + waitKey(1).
 """
 
 from __future__ import annotations
@@ -15,14 +17,7 @@ import numpy as np
 
 
 class DAggerVisualizer:
-    """Decoupled cv2 display for DAgger rollouts.
-
-    Usage
-    -----
-    - Call update() from the main thread after each sim step.  It is
-      non-blocking: it just writes to a shared state dict under a lock.
-    - A background thread reads that state and calls cv2.imshow at ~30 fps.
-    - Call close() at the end to stop the render thread cleanly.
+    """cv2 display with background canvas builder.
 
     Parameters
     ----------
@@ -30,26 +25,34 @@ class DAggerVisualizer:
         Cameras to show side-by-side.
     figsize : tuple[float, float]
         Unused — kept for API compat with the old matplotlib version.
-    fps : int
-        Target display frame rate for the render thread.
     """
 
     def __init__(
         self,
         camera_names: list[str] = ["agentview"],
         figsize: tuple[float, float] = (8, 5),
-        fps: int = 30,
     ) -> None:
         self.camera_names = camera_names
         self._window = "DAgger"
-        self._fps = fps
+
+        # Window must be created on the main thread
+        cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self._window, 640 * len(camera_names), 480)
+
+        # Shared state: main thread writes, builder thread reads
         self._state: Optional[dict] = None
-        self._lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._state_event = threading.Event()  # wakes builder when new state arrives
+
+        # Shared canvas: builder thread writes, main thread reads
+        self._canvas: Optional[np.ndarray] = None
+        self._canvas_lock = threading.Lock()
+
         self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._render_loop, name="dagger-viz", daemon=True
+        self._builder = threading.Thread(
+            target=self._build_loop, name="dagger-canvas", daemon=True
         )
-        self._thread.start()
+        self._builder.start()
 
     # ------------------------------------------------------------------
     # Main-thread API
@@ -64,46 +67,60 @@ class DAggerVisualizer:
         step: int,
         intervention_reason: str = "",
     ) -> None:
-        """Non-blocking: store the latest state for the render thread."""
-        with self._lock:
-            self._state = {
-                "imgs": camera_imgs,
-                "node_name": node_name,
-                "node_value": node_value,
-                "acting_agent": acting_agent,
-                "step": step,
-                "reason": intervention_reason,
-            }
+        """Push new state and display the latest pre-built canvas.
+
+        Fast on the main thread: one lock write + cv2.imshow.
+        """
+        # 1. Update state for the builder thread
+        with self._state_lock:
+            self._state = dict(
+                imgs=camera_imgs,
+                node_name=node_name,
+                node_value=node_value,
+                acting_agent=acting_agent,
+                step=step,
+                reason=intervention_reason,
+            )
+        self._state_event.set()
+
+        # 2. Display the most recently built canvas (or a blank frame)
+        with self._canvas_lock:
+            canvas = self._canvas
+
+        if canvas is not None:
+            cv2.imshow(self._window, canvas)
+        cv2.waitKey(1)
 
     def close(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=2)
+        self._state_event.set()  # unblock builder if waiting
+        self._builder.join(timeout=2)
         cv2.destroyWindow(self._window)
 
     def __del__(self) -> None:
         pass  # runner calls close() explicitly
 
     # ------------------------------------------------------------------
-    # Render thread
+    # Builder thread — numpy-only, no cv2 window calls
     # ------------------------------------------------------------------
 
-    def _render_loop(self) -> None:
-        cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self._window, 640 * len(self.camera_names), 480)
-        delay_ms = max(1, 1000 // self._fps)
-
+    def _build_loop(self) -> None:
         while not self._stop.is_set():
-            with self._lock:
-                state = self._state
+            triggered = self._state_event.wait(timeout=0.5)
+            self._state_event.clear()
+            if not triggered or self._stop.is_set():
+                continue
 
-            if state is not None:
-                try:
-                    canvas = self._build_canvas(state)
-                    cv2.imshow(self._window, canvas)
-                except Exception:
-                    pass
+            with self._state_lock:
+                state = dict(self._state) if self._state else None
 
-            cv2.waitKey(delay_ms)
+            if state is None:
+                continue
+
+            canvas = self._build_canvas(state)
+
+            with self._canvas_lock:
+                self._canvas = canvas
 
     def _build_canvas(self, state: dict) -> np.ndarray:
         frames = []
