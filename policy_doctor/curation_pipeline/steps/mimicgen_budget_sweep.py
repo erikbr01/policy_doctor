@@ -29,6 +29,31 @@ def _resolve_budgets(sweep_cfg: Any) -> list[int]:
     return list(range(start, stop + 1, step))
 
 
+def _resolve_demo_counts(sweep_cfg: Any) -> list[int] | None:
+    """Return the list of baseline demo counts to sweep over, or ``None``.
+
+    Returns ``None`` when no demo-count sweep is configured — callers should
+    then use the ``baseline.max_train_episodes`` value from the experiment YAML
+    without adding a ``_demos<N>`` suffix to ``run_dir``.
+
+    Priority:
+    1. ``demo_counts`` — explicit list (e.g. ``[60, 100, 300]``)
+    2. ``start`` / ``stop`` / ``step`` — generates ``range(start, stop+1, step)``
+    3. Neither present → returns ``None``
+    """
+    if sweep_cfg is None:
+        return None
+    counts = OmegaConf.select(sweep_cfg, "demo_counts")
+    if counts is not None:
+        return [int(c) for c in counts]
+    start = OmegaConf.select(sweep_cfg, "start")
+    if start is not None:
+        stop = int(OmegaConf.select(sweep_cfg, "stop") or start)
+        step = int(OmegaConf.select(sweep_cfg, "step") or 1)
+        return list(range(int(start), stop + 1, step))
+    return None
+
+
 class MimicgenBudgetSweepStep(PipelineStep[dict]):
     """Run all heuristic × budget combinations with a concurrent device pool.
 

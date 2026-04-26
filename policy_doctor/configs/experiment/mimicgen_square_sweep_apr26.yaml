@@ -1,0 +1,130 @@
+# @package _global_
+# MimicGen budget sweep — Square D1, Apr 26 2026.
+#
+# Sweeps success_budget over [20, 100, 500, 1000] for all three heuristics
+# (random, behavior_graph, diversity) AND sweeps baseline training set sizes
+# (60, 100, 300 demos) to test how source data quantity affects augmentation value.
+#
+# Phase 1 (upstream steps) runs up to 4 baseline policies concurrently across
+# both GPUs using the device pool in phase1_devices.
+# Phase 2 (budget sweep) uses the device pool in mimicgen_budget_sweep.devices.
+#
+# Usage (via shell script — recommended):
+#   TASK=square SEEDS="0 1 2" ./scripts/run_mimicgen_budget_sweep.sh
+#
+# Usage (manual, single seed + demo count):
+#   # Phase 1
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_sweep_apr26 \
+#     run_dir=data/pipeline_runs/mimicgen_square_apr26_sweep_seed0_demos60 \
+#     seeds=[0] \
+#     baseline.max_train_episodes=60 \
+#     steps=[train_baseline,eval_policies,train_attribution,finalize_attribution,\
+#            compute_infembed,run_clustering]
+#
+#   # Phase 2
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_sweep_apr26 \
+#     run_dir=data/pipeline_runs/mimicgen_square_apr26_sweep_seed0_demos60 \
+#     seeds=[0] \
+#     baseline.max_train_episodes=60 \
+#     steps=[mimicgen_budget_sweep]
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_sweep_apr26
+
+seeds: [0]          # overridden per-run from the shell script
+reference_seed: 0
+
+train_date: apr26_sweep
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr26, budget_sweep]
+
+# ---------------------------------------------------------------------------
+# Baseline training
+# ---------------------------------------------------------------------------
+baseline:
+  max_train_episodes: 60        # default; overridden per n_demos arm
+  checkpoint_topk: 5            # save top-5 checkpoints (evaluated at final eval step)
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+evaluation:
+  train_date: apr26_sweep
+  eval_date: apr26_sweep
+  overwrite: false
+  num_episodes: 500             # episodes per checkpoint
+
+# ---------------------------------------------------------------------------
+# Attribution
+# ---------------------------------------------------------------------------
+attribution:
+  train_date: apr26_sweep
+  eval_date: apr26_sweep
+
+# ---------------------------------------------------------------------------
+# Clustering
+# ---------------------------------------------------------------------------
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen generation — task-agnostic knobs (task-specific params in data_source)
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  success_budget: 200           # default; overridden per budget arm
+  num_seeds: 10                 # seed trajectories per arm
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 0
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  random_seed: null
+
+# ---------------------------------------------------------------------------
+# Demo count sweep — how many baseline training demos to use
+# ---------------------------------------------------------------------------
+# Use an explicit list:
+#   demo_counts: [60, 100, 300]
+# Or use start/stop/step for a regular grid:
+#   start: 60
+#   stop: 300
+#   step: 120
+n_demos_sweep:
+  demo_counts: [60, 100, 300]
+
+# ---------------------------------------------------------------------------
+# Phase 1 concurrency — up to 4 baseline training jobs across both GPUs
+# ---------------------------------------------------------------------------
+# The shell script assigns devices round-robin from this pool when launching
+# Phase 1 (upstream) steps concurrently for different (seed, n_demos) combos.
+phase1_devices: [cuda:0, cuda:0, cuda:1, cuda:1]
+
+# ---------------------------------------------------------------------------
+# Budget sweep configuration
+# ---------------------------------------------------------------------------
+mimicgen_budget_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [20, 100, 500, 1000]
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]   # 2 concurrent arms per GPU
+
+steps: [
+  train_baseline,
+  eval_policies,
+  train_attribution,
+  finalize_attribution,
+  compute_infembed,
+  run_clustering,
+  mimicgen_budget_sweep,
+]
