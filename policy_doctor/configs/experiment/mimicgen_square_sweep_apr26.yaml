@@ -54,8 +54,9 @@ baseline:
 # Evaluation
 # ---------------------------------------------------------------------------
 evaluation:
-  train_date: apr26_sweep
-  eval_date: apr26_sweep
+  # train_date / eval_date intentionally omitted — fall through to top-level
+  # train_date so per-n_demos CLI overrides (train_date=apr26_sweep_demos60)
+  # automatically propagate to eval and attribution as well.
   overwrite: false
   num_episodes: 500             # episodes per checkpoint
 
@@ -63,8 +64,7 @@ evaluation:
 # Attribution
 # ---------------------------------------------------------------------------
 attribution:
-  train_date: apr26_sweep
-  eval_date: apr26_sweep
+  # train_date / eval_date intentionally omitted — inherits top-level train_date
 
 # ---------------------------------------------------------------------------
 # Clustering

@@ -113,20 +113,28 @@ declare -a ALL_SEEDS=()
 declare -a ALL_NDEMOS=()
 declare -a ALL_RUN_DIRS=()
 declare -a ALL_DEMO_OVERRIDES=()
+declare -a ALL_DATE_OVERRIDES=()
 
 for seed in ${SEEDS}; do
     for n_demos in ${_demos_iter}; do
         if [ "${n_demos}" = "__default__" ]; then
             run_dir="data/pipeline_runs/mimicgen_${TASK}_${DATE}_sweep_seed${seed}"
+            # No demo override — use baseline.max_train_episodes from YAML.
+            # train_date stays as the experiment default (e.g. apr26_sweep).
             demos_override=""
+            date_override=""
         else
             run_dir="data/pipeline_runs/mimicgen_${TASK}_${DATE}_sweep_seed${seed}_demos${n_demos}"
+            # Include demo count in train_date so checkpoints land in a unique
+            # path per (seed, n_demos) — prevents clobbering across demo arms.
             demos_override="baseline.max_train_episodes=${n_demos}"
+            date_override="train_date=${DATE}_sweep_demos${n_demos}"
         fi
         ALL_SEEDS+=("${seed}")
         ALL_NDEMOS+=("${n_demos}")
         ALL_RUN_DIRS+=("${run_dir}")
         ALL_DEMO_OVERRIDES+=("${demos_override}")
+        ALL_DATE_OVERRIDES+=("${date_override}")
     done
 done
 
@@ -179,11 +187,16 @@ for idx in $(seq 0 $((TOTAL_COMBOS - 1))); do
     n_demos="${ALL_NDEMOS[$idx]}"
     run_dir="${ALL_RUN_DIRS[$idx]}"
     demos_override="${ALL_DEMO_OVERRIDES[$idx]}"
+    date_override="${ALL_DATE_OVERRIDES[$idx]}"
 
     slot=$(find_free_slot)
     device="${PHASE1_DEVICE_ARR[$slot]}"
 
     echo "[Phase 1 | slot=${slot} device=${device}] seed=${seed} n_demos=${n_demos} → ${run_dir}"
+
+    # Stagger starts by 30 s so each WandB service has time to bind its socket
+    # before the next parallel training job tries to start one.
+    [ "${idx}" -gt 0 ] && sleep 30
 
     (
         conda run -n policy_doctor --no-capture-output \
@@ -194,6 +207,7 @@ for idx in $(seq 0 $((TOTAL_COMBOS - 1))); do
                 seeds="[${seed}]" \
                 device="${device}" \
                 skip_if_done=true \
+                ${date_override:+"${date_override}"} \
                 ${demos_override:+"${demos_override}"} \
                 steps="${UPSTREAM_STEPS}"
     ) &
@@ -223,6 +237,7 @@ for idx in $(seq 0 $((TOTAL_COMBOS - 1))); do
     n_demos="${ALL_NDEMOS[$idx]}"
     run_dir="${ALL_RUN_DIRS[$idx]}"
     demos_override="${ALL_DEMO_OVERRIDES[$idx]}"
+    date_override="${ALL_DATE_OVERRIDES[$idx]}"
 
     echo ""
     echo "--------------------------------------------------"
@@ -235,6 +250,7 @@ for idx in $(seq 0 $((TOTAL_COMBOS - 1))); do
             experiment="${EXPERIMENT}" \
             run_dir="${run_dir}" \
             seeds="[${seed}]" \
+            ${date_override:+"${date_override}"} \
             ${demos_override:+"${demos_override}"} \
             steps="${BUDGET_STEPS}"
 
