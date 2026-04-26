@@ -53,17 +53,14 @@ def _import_mimicgen_for_robosuite_registry() -> None:
 _import_mimicgen_for_robosuite_registry()
 
 
-def create_env(env_meta, obs_keys):
+def create_env(env_meta, obs_keys, render_offscreen=False):
     ObsUtils.initialize_obs_modality_mapping_from_dict(
         {'low_dim': obs_keys})
     env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta,
-        render=False, 
-        # only way to not show collision geometry
-        # is to enable render_offscreen
-        # which uses a lot of RAM.
-        render_offscreen=False,
-        use_image_obs=False, 
+        render=False,
+        render_offscreen=render_offscreen,
+        use_image_obs=False,
     )
     return env
 
@@ -129,6 +126,14 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
 
         # assert n_obs_steps <= n_action_steps
         dataset_path = os.path.expanduser(dataset_path)
+        # Resolve relative paths against CUPID_ROOT when not found from CWD.
+        # This handles the case where eval_save_episodes is called in-process
+        # from a working directory that differs from CUPID_ROOT.
+        if not os.path.isabs(dataset_path) and not os.path.exists(dataset_path):
+            _cupid_root = pathlib.Path(__file__).parents[2]
+            _candidate = _cupid_root / dataset_path
+            if _candidate.exists():
+                dataset_path = str(_candidate)
         robosuite_fps = 20
         steps_per_render = max(robosuite_fps // fps, 1)
 
@@ -137,18 +142,53 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             dataset_path)
         # Force camera obs off: source datasets often have use_camera_obs=True from when
         # they were originally collected with cameras, but low-dim rollout eval never
-        # needs camera rendering and EGL workers fail in headless training environments.
+        # needs camera obs in the obs dict.  Keep has_offscreen_renderer from the dataset
+        # so that _render_frame() can capture visualization frames in save_episodes mode.
         env_meta['env_kwargs']['use_camera_obs'] = False
-        env_meta['env_kwargs']['has_offscreen_renderer'] = False
         rotation_transformer = None
         if abs_action:
             env_meta['env_kwargs']['controller_configs']['control_delta'] = False
             rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
 
+        # AsyncVectorEnv creates a "dummy" env in the main process to read observation /
+        # action spaces, then forks workers.  If has_offscreen_renderer=True the dummy
+        # env initialises an EGL context in the parent; forked workers then fail to
+        # create their own EGL context (race / conflict), leaving
+        # _render_context_offscreen=None.  Provide a dummy_env_fn that builds the env
+        # without the offscreen renderer so the main-process dummy is GL-free, letting
+        # each forked worker initialise EGL independently.
+        import copy as _copy
+        _dummy_env_meta = _copy.deepcopy(env_meta)
+        _dummy_env_meta['env_kwargs']['has_offscreen_renderer'] = False
+
+        def dummy_env_fn():
+            robomimic_env = create_env(env_meta=_dummy_env_meta, obs_keys=obs_keys)
+            return MultiStepWrapper(
+                VideoRecordingWrapper(
+                    RobomimicLowdimWrapper(
+                        env=robomimic_env,
+                        obs_keys=obs_keys,
+                        init_state=None,
+                        render_hw=render_hw,
+                        render_camera_name=render_camera_name
+                    ),
+                    video_recoder=VideoRecorder.create_h264(
+                        fps=fps, codec='h264', input_pix_fmt='rgb24',
+                        crf=crf, thread_type='FRAME', thread_count=1
+                    ),
+                    file_path=None,
+                    steps_per_render=steps_per_render
+                ),
+                n_obs_steps=env_n_obs_steps,
+                n_action_steps=env_n_action_steps,
+                max_episode_steps=max_steps
+            )
+
         def env_fn():
             robomimic_env = create_env(
-                    env_meta=env_meta, 
-                    obs_keys=obs_keys
+                    env_meta=env_meta,
+                    obs_keys=obs_keys,
+                    render_offscreen=save_episodes,
                 )
             # hard reset doesn't influence lowdim env
             # robomimic_env.env.hard_reset = False
@@ -256,6 +296,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         self.env_meta = env_meta
         self.env = None  # lazily created in run()
         self.env_fns = env_fns
+        self.dummy_env_fn = dummy_env_fn
         self.env_seeds = env_seeds
         self.env_prefixs = env_prefixs
         self.env_init_fn_dills = env_init_fn_dills
@@ -292,7 +333,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         # without MimicGen-registered environments (e.g. cupid_torch2) works.
         if self.env is None:
             try:
-                self.env = AsyncVectorEnv(self.env_fns)
+                self.env = AsyncVectorEnv(self.env_fns, dummy_env_fn=self.dummy_env_fn)
             except Exception as e:
                 print(f"[MimicgenLowdimRunner] WARNING: could not create env ({e}). "
                       "Skipping rollout evaluation (env not registered in this conda env).")
@@ -378,7 +419,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                         "episode": chunk_idx,
                         "timestep": timestep,
                         "obs": np_obs_dict["obs"].copy().astype(np.float32)[0],
-                        "img": env.call("_render_frame", "rgb_array")[0]
+                        "img": env.call("_render_frame", "rgb_array")[0],
                     }
 
                     if "action_pred" in np_action_dict:
@@ -482,12 +523,13 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             self._write_rollouts_hdf5(all_sim_episodes)
 
         if self.save_episodes:
-            # rename media files based on success or failure
+            # rename media files based on success or failure (skipped when n_test_vis=0)
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
-            media_files = sorted([ep for ep in self.media_dir.iterdir()])
-            assert len(episode_files) == len(media_files)
-            for episode_file, media_file in zip(episode_files, media_files):
-                media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
+            if self.media_dir.exists():
+                media_files = sorted([ep for ep in self.media_dir.iterdir()])
+                assert len(episode_files) == len(media_files)
+                for episode_file, media_file in zip(episode_files, media_files):
+                    media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
 
             # save episode metadata
             metadata = {

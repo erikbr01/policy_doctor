@@ -387,18 +387,28 @@ class AsyncVectorEnv(VectorEnv):
 
         num_errors = self.num_envs - sum(successes)
         assert num_errors > 0
+        last_exctype = None
+        last_tb_str = None
         for _ in range(num_errors):
-            index, exctype, value = self.error_queue.get()
+            index, exctype, tb_str = self.error_queue.get()
             logger.error(
                 "Received the following error from Worker-{0}: "
-                "{1}: {2}".format(index, exctype.__name__, value)
+                "{1}".format(index, exctype.__name__ if hasattr(exctype, '__name__') else str(exctype))
             )
+            logger.error("Worker-{0} traceback:\n{1}".format(index, tb_str))
             logger.error("Shutting down Worker-{0}.".format(index))
+            try:
+                sys.__stdout__.write(f"[Worker-{index}] TRACEBACK:\n{tb_str}\n")
+                sys.__stdout__.flush()
+            except Exception:
+                pass
             self.parent_pipes[index].close()
             self.parent_pipes[index] = None
+            last_exctype = exctype
+            last_tb_str = tb_str
 
         logger.error("Raising the last exception back to the main process.")
-        raise exctype(value)
+        raise last_exctype(last_tb_str) if last_exctype else RuntimeError("Unknown worker error")
     
     def call_async(self, name: str, *args, **kwargs):
         """Calls the method with name asynchronously and apply args and kwargs to the method.
@@ -606,7 +616,22 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
                     "`_check_observation_space`}.".format(command)
                 )
     except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+        import traceback as _tb
+        _tb_str = _tb.format_exc()
+        # Write to real stdout (bypass WandB wrapping) and to a debug file
+        try:
+            sys.__stdout__.write(f"[Worker-{index}] Exception:\n{_tb_str}")
+            sys.__stdout__.flush()
+        except Exception:
+            pass
+        try:
+            with open(f"/tmp/worker_{index}_traceback.txt", "w") as _f:
+                _f.write(_tb_str)
+        except Exception:
+            pass
+        # Include full traceback string as the exception value so _raise_if_errors can print it
+        exc_type, exc_val = sys.exc_info()[:2]
+        error_queue.put((index, exc_type, _tb_str))
         pipe.send((None, False))
     finally:
         env.close()
@@ -665,7 +690,20 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
                     "`_check_observation_space`}.".format(command)
                 )
     except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+        import traceback as _tb
+        _tb_str = _tb.format_exc()
+        try:
+            sys.__stdout__.write(f"[Worker-{index}] Exception:\n{_tb_str}")
+            sys.__stdout__.flush()
+        except Exception:
+            pass
+        try:
+            with open(f"/tmp/worker_{index}_traceback.txt", "w") as _f:
+                _f.write(_tb_str)
+        except Exception:
+            pass
+        exc_type, exc_val = sys.exc_info()[:2]
+        error_queue.put((index, exc_type, _tb_str))
         pipe.send((None, False))
     finally:
         env.close()

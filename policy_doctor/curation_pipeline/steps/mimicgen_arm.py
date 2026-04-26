@@ -295,3 +295,39 @@ class MimicgenDiversityRep3ArmStep(CompositeStep):
         "mimicgen_datagen.random_seed": 2,
         "run_tag": "rep3",
     }
+
+
+# ---------------------------------------------------------------------------
+# Budget sweep arms — BehaviorGraph heuristic, budgets 20..1000
+# ---------------------------------------------------------------------------
+# Used by the budget-sweep experiment (mimicgen_square_sweep_apr25).
+# One arm per budget level; each writes to <run_dir>/mimicgen_behavior_graph_budgetN/.
+# Generated via _make_bg_budget_arm_class() so the class list stays DRY.
+
+def _make_budget_arm_class(heuristic: str, budget: int) -> type:
+    """Return a CompositeStep subclass for the given heuristic and success_budget.
+
+    Used by :class:`~policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep
+    .MimicgenBudgetSweepStep` to create ephemeral arm instances at runtime from
+    config-driven heuristic × budget combinations, without requiring each pair to
+    be pre-registered in ``pipeline.py``.
+    """
+    class_name = f"Mimicgen{''.join(p.capitalize() for p in heuristic.split('_'))}Budget{budget}ArmStep"
+    step_name = f"mimicgen_{heuristic}_budget{budget}"
+    return type(
+        class_name,
+        (CompositeStep,),
+        {
+            "__doc__": (
+                f"MimicGen arm: {heuristic} selection, success_budget={budget}.\n\n"
+                f"Budget-sweep arm — results land under <run_dir>/{step_name}/."
+            ),
+            "name": step_name,
+            "sub_step_classes": _SUB_STEPS,
+            "cfg_overrides": {
+                "mimicgen_datagen.seed_selection_heuristic": heuristic,
+                "mimicgen_datagen.success_budget": budget,
+                "run_tag": f"budget{budget}",
+            },
+        }
+    )

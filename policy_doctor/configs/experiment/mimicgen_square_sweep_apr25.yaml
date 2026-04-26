@@ -1,0 +1,124 @@
+# @package _global_
+# MimicGen budget sweep — Square D1, Apr 25 2026.
+#
+# Sweeps success_budget over [20, 100, 200, ..., 1000] for all three heuristics
+# (random, behavior_graph, diversity).  Three independent baseline policies
+# (seeds 0, 1, 2) are trained; each gets its own run_dir.
+#
+# The shell script (scripts/run_mimicgen_budget_sweep.sh) manages the outer
+# loop over seeds and passes run_dir / seeds as CLI overrides.  This YAML
+# fixes everything that is shared across all runs.
+#
+# Usage (via shell script — recommended):
+#   TASK=square SEEDS="0 1 2" DEVICE=cuda:0 ./scripts/run_mimicgen_budget_sweep.sh
+#
+# Usage (manual, single seed):
+#   # Phase 1 — upstream steps (train once per seed)
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_sweep_apr25 \
+#     run_dir=data/pipeline_runs/mimicgen_square_sweep_apr25_seed0 \
+#     seeds=[0] \
+#     steps=[train_baseline,eval_policies,train_attribution,finalize_attribution,\
+#            compute_infembed,run_clustering]
+#
+#   # Phase 2 — budget sweep (all heuristics × budgets concurrently)
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_sweep_apr25 \
+#     run_dir=data/pipeline_runs/mimicgen_square_sweep_apr25_seed0 \
+#     seeds=[0] \
+#     steps=[mimicgen_budget_sweep]
+#
+# To add other tasks, create mimicgen_<task>_sweep_apr25.yaml pointing to the
+# appropriate data_source (which provides task_name, env_interface_name, etc.).
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_sweep_apr25
+
+seeds: [0]          # overridden per-run from the shell script
+reference_seed: 0
+
+train_date: apr25_sweep
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr25, budget_sweep]
+
+# ---------------------------------------------------------------------------
+# Baseline training
+# ---------------------------------------------------------------------------
+baseline:
+  max_train_episodes: 60        # 60 D1 source demos (no MimicGen augmentation)
+  checkpoint_topk: 5            # save top-5 checkpoints (evaluated at final eval step)
+  # n_test_rollouts not set — uses runner default (22 for mimicgen_lowdim_runner)
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+evaluation:
+  train_date: apr25_sweep
+  eval_date: apr25_sweep
+  overwrite: false
+  num_episodes: 500             # episodes per checkpoint
+
+# ---------------------------------------------------------------------------
+# Attribution
+# ---------------------------------------------------------------------------
+attribution:
+  train_date: apr25_sweep
+  eval_date: apr25_sweep
+  # dataset_path is provided by data_source (mimicgen_square.yaml)
+
+# ---------------------------------------------------------------------------
+# Clustering
+# ---------------------------------------------------------------------------
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen generation — task-agnostic knobs (task-specific params in data_source)
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  success_budget: 200           # default; overridden per budget arm
+  num_seeds: 10                 # seed trajectories per arm
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 0
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  random_seed: null             # fixed seed (null = non-deterministic); no replicate variation
+
+# ---------------------------------------------------------------------------
+# Budget sweep configuration
+# ---------------------------------------------------------------------------
+# MimicgenBudgetSweepStep reads these at runtime to build the heuristic ×
+# budget matrix — no arm classes need to be pre-registered in pipeline.py.
+#
+# Use an explicit list for irregular grids (e.g. [20, 100, 200, ..., 1000]):
+#   budgets: [20, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+#
+# Or use start/stop/step for a regular grid (generates range(start, stop+1, step)):
+#   start: 100
+#   stop: 1000
+#   step: 100
+mimicgen_budget_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [20, 100, 500, 1000]
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]   # 2 concurrent arms per GPU
+
+steps: [
+  train_baseline,
+  eval_policies,
+  train_attribution,
+  finalize_attribution,
+  compute_infembed,
+  run_clustering,
+  mimicgen_budget_sweep,
+]

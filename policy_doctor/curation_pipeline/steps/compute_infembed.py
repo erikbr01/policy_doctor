@@ -3,17 +3,30 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_eval_dir, get_train_dir
+from policy_doctor.paths import CUPID_ROOT
 
 
-def _call_compute_infembed_embeddings(cmd_args: list) -> None:
-    from compute_infembed_embeddings import main  # noqa: PLC0415
-
-    main(cmd_args, standalone_mode=False)
+def _call_compute_infembed_embeddings(cmd_args: list, conda_env: str | None = None) -> None:
+    if conda_env:
+        cmd = [
+            "conda", "run", "-n", conda_env, "--no-capture-output",
+            "python", str(CUPID_ROOT / "compute_infembed_embeddings.py"),
+            *cmd_args,
+        ]
+        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"[compute_infembed] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"
+            )
+    else:
+        from compute_infembed_embeddings import main  # noqa: PLC0415
+        main(cmd_args, standalone_mode=False)
 
 
 class ComputeInfembedStep(PipelineStep[None]):
@@ -57,6 +70,10 @@ class ComputeInfembedStep(PipelineStep[None]):
         arnoldi_dim = OmegaConf.select(attribution, "arnoldi_dim") or 200
         overwrite = OmegaConf.select(attribution, "overwrite") or False
         model_keys = OmegaConf.select(attribution, "model_keys") or "model."
+        conda_env = (
+            OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+        )
 
         for seed in seeds:
             train_dir = str(self.repo_root / get_train_dir(train_output_dir, train_date, task, policy, seed))
@@ -111,5 +128,5 @@ class ComputeInfembedStep(PipelineStep[None]):
                 print(f"[dry_run]   {' '.join(cmd_args)}")
                 continue
 
-            print(f"  [compute_infembed] seed={seed}")
-            _call_compute_infembed_embeddings(cmd_args=cmd_args)
+            print(f"  [compute_infembed] seed={seed}  conda_env={conda_env}")
+            _call_compute_infembed_embeddings(cmd_args=cmd_args, conda_env=conda_env)

@@ -62,9 +62,9 @@ task:
     n_latency_steps: 0
     n_obs_steps: 2
     n_test: 50
-    n_test_vis: 4
+    n_test_vis: 0
     n_train: 6
-    n_train_vis: 2
+    n_train_vis: 0
     obs_keys:
     - object
     - robot0_eef_pos

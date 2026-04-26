@@ -177,9 +177,11 @@ class CompositeStep(PipelineStep[dict]):
             OmegaConf.update(sub_cfg, dotpath, value, merge=True)
 
         # Sub-steps write into this composite's step_dir; cross-boundary lookups
-        # (e.g. RunClusteringStep) resolve against the parent run_dir.
+        # (e.g. RunClusteringStep) resolve against the top-level run root.
+        # self.parent_run_dir is the top-level root whether this composite is
+        # a direct child of the pipeline or nested inside another step.
         sub_run_dir = self.step_dir
-        parent_run_dir = self.run_dir
+        parent_run_dir = self.parent_run_dir
 
         results: dict = {}
         for cls in self.sub_step_classes:
