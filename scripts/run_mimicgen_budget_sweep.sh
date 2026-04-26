@@ -120,15 +120,20 @@ for seed in ${SEEDS}; do
         if [ "${n_demos}" = "__default__" ]; then
             run_dir="data/pipeline_runs/mimicgen_${TASK}_${DATE}_sweep_seed${seed}"
             # No demo override — use baseline.max_train_episodes from YAML.
-            # train_date stays as the experiment default (e.g. apr26_sweep).
+            # date_override left empty; experiment YAML's evaluation/attribution
+            # sub-sections provide the correct train_date for this case.
             demos_override=""
             date_override=""
         else
             run_dir="data/pipeline_runs/mimicgen_${TASK}_${DATE}_sweep_seed${seed}_demos${n_demos}"
             # Include demo count in train_date so checkpoints land in a unique
             # path per (seed, n_demos) — prevents clobbering across demo arms.
+            # Must override evaluation.* and attribution.* explicitly because the
+            # data_source YAML sets evaluation.train_date=jan18 via its defaults
+            # chain, which takes precedence over the top-level train_date CLI arg.
+            _td="${DATE}_sweep_demos${n_demos}"
             demos_override="baseline.max_train_episodes=${n_demos}"
-            date_override="train_date=${DATE}_sweep_demos${n_demos}"
+            date_override="train_date=${_td} evaluation.train_date=${_td} evaluation.eval_date=${_td} attribution.train_date=${_td} attribution.eval_date=${_td}"
         fi
         ALL_SEEDS+=("${seed}")
         ALL_NDEMOS+=("${n_demos}")
@@ -207,7 +212,7 @@ for idx in $(seq 0 $((TOTAL_COMBOS - 1))); do
                 seeds="[${seed}]" \
                 device="${device}" \
                 skip_if_done=true \
-                ${date_override:+"${date_override}"} \
+                ${date_override} \
                 ${demos_override:+"${demos_override}"} \
                 steps="${UPSTREAM_STEPS}"
     ) &

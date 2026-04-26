@@ -54,9 +54,13 @@ baseline:
 # Evaluation
 # ---------------------------------------------------------------------------
 evaluation:
-  # train_date / eval_date intentionally omitted — fall through to top-level
-  # train_date so per-n_demos CLI overrides (train_date=apr26_sweep_demos60)
-  # automatically propagate to eval and attribution as well.
+  # train_date / eval_date are set here for the no-n_demos-sweep case.
+  # When sweeping n_demos the shell script passes explicit CLI overrides
+  # (evaluation.train_date=apr26_sweep_demos<N>) that take precedence,
+  # because the data_source YAML injects evaluation.train_date=jan18 via its
+  # defaults chain — top-level train_date= alone is not enough to override it.
+  train_date: apr26_sweep
+  eval_date: apr26_sweep
   overwrite: false
   num_episodes: 500             # episodes per checkpoint
 
@@ -64,7 +68,8 @@ evaluation:
 # Attribution
 # ---------------------------------------------------------------------------
 attribution:
-  # train_date / eval_date intentionally omitted — inherits top-level train_date
+  train_date: apr26_sweep
+  eval_date: apr26_sweep
 
 # ---------------------------------------------------------------------------
 # Clustering
