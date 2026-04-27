@@ -188,7 +188,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             robomimic_env = create_env(
                     env_meta=env_meta,
                     obs_keys=obs_keys,
-                    render_offscreen=save_episodes,
+                    render_offscreen=save_episodes or n_test_vis > 0 or n_train_vis > 0,
                 )
             # hard reset doesn't influence lowdim env
             # robomimic_env.env.hard_reset = False
