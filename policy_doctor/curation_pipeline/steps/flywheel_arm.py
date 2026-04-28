@@ -21,14 +21,17 @@ Directory layout::
             generate_mimicgen_demos/
             train_on_combined_data/         # base + gen_iter_0
             eval_mimicgen_combined/
-            eval_flywheel_policy/           # full rollout save
+            eval_flywheel_policy/           # full rollout save for infembed
             compute_infembed/
-            run_clustering/                 # feeds iter_1 seed selection
-          iter_1/                           # heuristic = diversity (last → no re-cluster)
+            run_clustering/                 # behavior graph + feeds iter_1 seed selection
+          iter_1/                           # heuristic = diversity
             select_mimicgen_seed/
             generate_mimicgen_demos/
             train_on_combined_data/         # base + gen_iter_0 + gen_iter_1
             eval_mimicgen_combined/
+            eval_flywheel_policy/           # full rollout save for infembed
+            compute_infembed/
+            run_clustering/                 # behavior graph of final policy
         div_bg/                             # arm: [diversity, behavior_graph]
           ...
 """
@@ -61,24 +64,25 @@ def _arm_name(strategy_sequence: list[str]) -> str:
 class FlyWheelIterationStep(PipelineStep[dict]):
     """One iteration of the data flywheel.
 
-    Runs in order:
+    Runs in order for every iteration:
       1. select_mimicgen_seed      — picks seed trajectory from behavior graph
       2. generate_mimicgen_demos   — generates N demos via MimicGen
       3. train_on_combined_data    — trains on base + all accumulated generated data
       4. eval_mimicgen_combined    — checkpoint-sweep success rate eval
-      If not the last iteration, also runs:
       5. eval_flywheel_policy      — full eval_save_episodes for infembed
       6. compute_infembed          — infembed embeddings on retrained policy
-      7. run_clustering            — re-clusters to produce the next iter's behavior graph
+      7. run_clustering            — behavior graph for this policy (and seeds next iter)
+
+    Steps 5-7 run for every iteration (including the last) so that every retrained
+    policy has its own behavior graph available for analysis.
 
     Not registered in the pipeline registry; created programmatically by FlyWheelArmStep.
 
     Args:
-        iteration_idx:       0-based index of this iteration.
-        is_last_iteration:   Skip re-clustering when True (no next iteration to feed).
-        heuristic:           Seed-selection heuristic for this iteration.
-        all_iter_dirs:       Paths for ALL iterations in this arm (iter_0, iter_1, …),
-                             used by TrainFlywheelIterStep to collect accumulated data.
+        iteration_idx:  0-based index of this iteration.
+        heuristic:      Seed-selection heuristic for this iteration.
+        all_iter_dirs:  Paths for ALL iterations in this arm (iter_0, iter_1, …),
+                        used by TrainFlywheelIterStep to collect accumulated data.
     """
 
     def __init__(
@@ -88,14 +92,12 @@ class FlyWheelIterationStep(PipelineStep[dict]):
         parent_run_dir: pathlib.Path | None = None,
         *,
         iteration_idx: int,
-        is_last_iteration: bool,
         heuristic: str,
         all_iter_dirs: list[pathlib.Path],
     ) -> None:
         self.name = f"iter_{iteration_idx}"  # set before super so step_dir is correct
         super().__init__(cfg, run_dir, parent_run_dir)
         self.iteration_idx = iteration_idx
-        self.is_last_iteration = is_last_iteration
         self.heuristic = heuristic
         self.all_iter_dirs = all_iter_dirs
 
@@ -159,18 +161,17 @@ class FlyWheelIterationStep(PipelineStep[dict]):
         eval_combined = EvalMimicgenCombinedStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
         results["eval_mimicgen_combined"] = eval_combined.run(skip_if_done=skip)
 
-        if not self.is_last_iteration:
-            # 5. Full rollout save for infembed
-            eval_policy = EvalFlywheelPolicyStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
-            results["eval_flywheel_policy"] = eval_policy.run(skip_if_done=skip)
+        # 5. Full rollout save for infembed (every iteration — final policy also needs its graph)
+        eval_policy = EvalFlywheelPolicyStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
+        results["eval_flywheel_policy"] = eval_policy.run(skip_if_done=skip)
 
-            # 6. Compute infembed embeddings on retrained policy
-            infembed = ComputeInfembedFlywheelStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
-            results["compute_infembed"] = infembed.run(skip_if_done=skip)
+        # 6. Compute infembed embeddings on retrained policy
+        infembed = ComputeInfembedFlywheelStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
+        results["compute_infembed"] = infembed.run(skip_if_done=skip)
 
-            # 7. Re-cluster for next iteration's seed selection
-            cluster = RunClusteringFlywheelStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
-            results["run_clustering"] = cluster.run(skip_if_done=skip)
+        # 7. Cluster: produces behavior graph for this policy (and feeds next iter's seed selection)
+        cluster = RunClusteringFlywheelStep(sub_cfg, iter_dir, parent_run_dir=self.parent_run_dir)
+        results["run_clustering"] = cluster.run(skip_if_done=skip)
 
         return results
 
@@ -225,19 +226,17 @@ class FlyWheelArmStep(PipelineStep[dict]):
 
         arm_results: dict[str, Any] = {}
         for i, heuristic in enumerate(self.strategy_sequence[:num_iterations]):
-            is_last = (i == num_iterations - 1)
             # Seed selection parent_run_dir:
             #   iter_0 → top-level run_dir (contains initial run_clustering/)
             #   iter_N → iter_{N-1} dir   (contains run_clustering/ from flywheel iter N-1)
             iter_parent = self.parent_run_dir if i == 0 else iter_dirs[i - 1]
 
-            print(f"\n  [flywheel] arm={self.arm_name}  iter={i}  heuristic={heuristic!r}  last={is_last}")
+            print(f"\n  [flywheel] arm={self.arm_name}  iter={i}  heuristic={heuristic!r}")
             iter_step = FlyWheelIterationStep(
                 self.cfg,
                 arm_dir,
                 parent_run_dir=iter_parent,
                 iteration_idx=i,
-                is_last_iteration=is_last,
                 heuristic=heuristic,
                 all_iter_dirs=iter_dirs,
             )
