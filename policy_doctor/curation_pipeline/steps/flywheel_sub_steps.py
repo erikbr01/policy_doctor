@@ -199,6 +199,9 @@ class ComputeInfembedFlywheelStep(PipelineStep[None]):
             )
         eval_result = eval_step.load()
         eval_dir = eval_result["eval_dir"]
+        # Use the same checkpoint that generated the rollouts so the Hessian is
+        # fit on the identical model weights.
+        best_checkpoint = eval_result.get("best_checkpoint", "latest")
 
         # InfEmbed config — mirrors ComputeInfembedStep
         modelout_fn = OmegaConf.select(attribution, "modelout_fn") or "DiffusionLowdimFunctionalModelOutput"
@@ -218,13 +221,12 @@ class ComputeInfembedFlywheelStep(PipelineStep[None]):
         arnoldi_dim = OmegaConf.select(attribution, "arnoldi_dim") or 200
         overwrite = bool(OmegaConf.select(attribution, "overwrite") or False)
         model_keys = OmegaConf.select(attribution, "model_keys") or "model."
-        train_ckpt = OmegaConf.select(attribution, "train_ckpt") or "latest"
 
         cmd_args = [
             "--exp_name=auto",
             f"--eval_dir={eval_dir}",
             f"--train_dir={train_dir}",
-            f"--train_ckpt={train_ckpt}",
+            f"--train_ckpt={best_checkpoint}",
             f"--modelout_fn={modelout_fn}",
             f"--loss_fn={loss_fn}",
             f"--num_timesteps={num_timesteps}",
@@ -333,7 +335,9 @@ class RunClusteringFlywheelStep(PipelineStep[dict]):
         n_actual = len(set(labels) - {-1})
         print(f"  [run_clustering_flywheel] clusters={n_actual}  noise={(labels == -1).sum()}")
 
-        clustering_name = f"{experiment_name}_flywheel_seed{seed}_kmeans_k{n_clusters}"
+        run_tag = OmegaConf.select(cfg, "run_tag") or ""
+        tag = f"_{run_tag}" if run_tag else "_flywheel"
+        clustering_name = f"{experiment_name}{tag}_seed{seed}_kmeans_k{n_clusters}"
         result_dir = save_clustering_result(
             task_config=task_config,
             name=clustering_name,
@@ -516,9 +520,12 @@ class TrainFlywheelIterStep(PipelineStep[dict]):
         train_dirs: list[str] = []
         for seed in seeds:
             base_name = get_train_name(train_date, task, policy, seed)
-            train_name = f"{base_name}-flywheel_iter{self.iteration_idx}-{heuristic_name}"
+            # run_tag is injected by FlyWheelIterationStep as "{arm_name}_iter{i}" so that
+            # the training run dir is directly traceable to the flywheel arm and iteration.
             if run_tag:
-                train_name = f"{train_name}-{run_tag}"
+                train_name = f"{base_name}-flywheel-{run_tag}"
+            else:
+                train_name = f"{base_name}-flywheel_iter{self.iteration_idx}-{heuristic_name}"
             run_output_dir = str(self.repo_root / output_dir / train_date / train_name)
             train_dirs.append(run_output_dir)
 

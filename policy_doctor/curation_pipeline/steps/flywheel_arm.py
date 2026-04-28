@@ -79,6 +79,8 @@ class FlyWheelIterationStep(PipelineStep[dict]):
     Not registered in the pipeline registry; created programmatically by FlyWheelArmStep.
 
     Args:
+        arm_name:       Short arm identifier (e.g. ``"bg_div"``), injected as ``run_tag``
+                        so that training runs and clustering dirs encode the arm + iteration.
         iteration_idx:  0-based index of this iteration.
         heuristic:      Seed-selection heuristic for this iteration.
         all_iter_dirs:  Paths for ALL iterations in this arm (iter_0, iter_1, …),
@@ -91,12 +93,14 @@ class FlyWheelIterationStep(PipelineStep[dict]):
         run_dir: pathlib.Path,
         parent_run_dir: pathlib.Path | None = None,
         *,
+        arm_name: str,
         iteration_idx: int,
         heuristic: str,
         all_iter_dirs: list[pathlib.Path],
     ) -> None:
         self.name = f"iter_{iteration_idx}"  # set before super so step_dir is correct
         super().__init__(cfg, run_dir, parent_run_dir)
+        self.arm_name = arm_name
         self.iteration_idx = iteration_idx
         self.heuristic = heuristic
         self.all_iter_dirs = all_iter_dirs
@@ -118,12 +122,15 @@ class FlyWheelIterationStep(PipelineStep[dict]):
             TrainFlywheelIterStep,
         )
 
-        # Build iteration-specific config: fix heuristic and generation budget
+        # Build iteration-specific config: fix heuristic, generation budget, and run_tag.
+        # run_tag encodes arm + iteration so that training runs and clustering dirs are
+        # traceable without having to parse result.json chains.
         sub_cfg = copy.deepcopy(self.cfg)
         OmegaConf.update(sub_cfg, "mimicgen_datagen.seed_selection_heuristic", self.heuristic, merge=True)
         generation_budget = OmegaConf.select(self.cfg, "flywheel.generation_budget")
         if generation_budget is not None:
             OmegaConf.update(sub_cfg, "mimicgen_datagen.success_budget", int(generation_budget), merge=True)
+        OmegaConf.update(sub_cfg, "run_tag", f"{self.arm_name}_iter{self.iteration_idx}", merge=True)
 
         # For N>0: inject rollouts_hdf5_path so SelectMimicgenSeedStep skips task-YAML lookup
         if self.iteration_idx > 0:
@@ -236,6 +243,7 @@ class FlyWheelArmStep(PipelineStep[dict]):
                 self.cfg,
                 arm_dir,
                 parent_run_dir=iter_parent,
+                arm_name=self.arm_name,
                 iteration_idx=i,
                 heuristic=heuristic,
                 all_iter_dirs=iter_dirs,
