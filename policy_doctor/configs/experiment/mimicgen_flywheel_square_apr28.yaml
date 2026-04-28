@@ -1,0 +1,150 @@
+# @package _global_
+# Multi-iteration MimicGen data flywheel — Square D1, Apr 28 2026.
+#
+# Runs the full upstream pipeline (baseline → clustering) then executes the
+# flywheel for a configurable number of iterations.  Each flywheel arm uses a
+# different strategy sequence (heuristic per iteration).  All arms share the
+# initial run_clustering result.
+#
+# Base policy:   100 source demos (mimicgen_datagen.original_dataset_path)
+# Per-iteration: 100 generated demos (flywheel.generation_budget)
+# Dataset grows: iter_0 → 200 demos, iter_1 → 300 demos, …
+#
+# Usage (full run — upstream + flywheel):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_flywheel_square_apr28
+#
+# Usage (upstream only, then flywheel separately):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_flywheel_square_apr28 \
+#     steps=[train_baseline,eval_policies,train_attribution,finalize_attribution,\
+#            compute_infembed,run_clustering]
+#
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_flywheel_square_apr28 \
+#     run_dir=data/pipeline_runs/mimicgen_flywheel_square_apr28 \
+#     steps=[mimicgen_flywheel]
+#
+# Dry run to validate config resolution:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_flywheel_square_apr28 \
+#     dry_run=true steps=[mimicgen_flywheel]
+#
+# Override strategy sequences from CLI:
+#   flywheel.strategy_sequence=[behavior_graph,behavior_graph]
+#   flywheel.strategy_mode=all_permutations flywheel.strategies=[behavior_graph,diversity,random]
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_flywheel_square_apr28
+seeds: [0]
+reference_seed: 0
+
+train_date: apr28_flywheel
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, flywheel, apr28]
+
+# ---------------------------------------------------------------------------
+# Baseline training (100 demos)
+# ---------------------------------------------------------------------------
+baseline:
+  max_train_episodes: 100
+  checkpoint_topk: 3
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+evaluation:
+  train_date: apr28_flywheel
+  eval_date: apr28_flywheel
+  overwrite: false
+  num_episodes: 200     # used by EvalFlywheelPolicyStep for re-eval of retrained policies
+
+# ---------------------------------------------------------------------------
+# Attribution (feeds compute_infembed and initial run_clustering)
+# ---------------------------------------------------------------------------
+attribution:
+  train_date: apr28_flywheel
+  eval_date: apr28_flywheel
+  dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
+
+# ---------------------------------------------------------------------------
+# Clustering (initial, from base policy; reused by all flywheel iter_0 seed selections)
+# ---------------------------------------------------------------------------
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen generation — shared knobs (generation_budget overridden by flywheel block)
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  # Path to the 100-demo base dataset combined with generated data each iteration.
+  # Create via: python scripts/gen_rollouts_hdf5.py --n_demos 100 ... (or subset D1)
+  original_dataset_path: data/mimicgen/square_d1_100.hdf5
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+  policy_seed: 0
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  random_seed: null
+
+  # Square D1 generation parameters
+  action_noise: 0.05
+  subtask_term_offset_range: [10, 20]
+  nn_k: 3
+  interpolate_from_last_target_pose: true
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+  fix_initial_object_poses: false
+  object_pose_ranges: null
+
+# ---------------------------------------------------------------------------
+# Flywheel configuration
+# ---------------------------------------------------------------------------
+flywheel:
+  num_iterations: 2
+  generation_budget: 100          # success_budget passed to GenerateMimicgenDemosStep each iter
+  base_dataset_episodes: 100      # informational; matches baseline.max_train_episodes
+
+  # Explicit strategy sequences to test.
+  # Each list is one arm; the i-th element is the heuristic for iteration i.
+  #
+  # To test a single arm:      strategy_sequence: [behavior_graph, diversity]
+  # To test all permutations:  strategy_mode: all_permutations
+  #                            strategies: [behavior_graph, diversity, random]
+  #                            permutation_type: with_replacement  # K^N arms
+  strategy_sequences:
+    - [behavior_graph, behavior_graph]   # bg_bg: baseline-informed both iterations
+    - [behavior_graph, diversity]        # bg_div: informed first, then diversify
+    - [diversity, behavior_graph]        # div_bg: diversify first, then informed
+    - [random, behavior_graph]           # rand_bg: random seed, then informed
+    - [random, random]                   # rand_rand: pure baseline reference
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps: [
+  train_baseline,
+  eval_policies,
+  train_attribution,
+  finalize_attribution,
+  compute_infembed,
+  run_clustering,
+  mimicgen_flywheel,
+]

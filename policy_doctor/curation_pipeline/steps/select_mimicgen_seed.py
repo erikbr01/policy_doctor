@@ -127,8 +127,15 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         level: str = manifest.get("level") or "rollout"
 
         # --- Resolve rollout HDF5 ---
-        rollouts_hdf5 = _resolve_rollouts_hdf5(self.cfg, self.repo_root, seed)
-        print(f"  [select_mimicgen_seed] rollouts_hdf5={rollouts_hdf5}")
+        # flywheel_arm.py injects mimicgen_datagen.rollouts_hdf5_path for iterations N>0
+        # to point at the retrained policy's eval rollouts; otherwise fall back to task YAML.
+        rollouts_hdf5_override = OmegaConf.select(cfg_mg, "rollouts_hdf5_path")
+        if rollouts_hdf5_override:
+            rollouts_hdf5 = Path(rollouts_hdf5_override)
+            print(f"  [select_mimicgen_seed] rollouts_hdf5={rollouts_hdf5} (config override)")
+        else:
+            rollouts_hdf5 = _resolve_rollouts_hdf5(self.cfg, self.repo_root, seed)
+            print(f"  [select_mimicgen_seed] rollouts_hdf5={rollouts_hdf5}")
 
         # --- Build and run heuristic ---
         heuristic = build_heuristic(
