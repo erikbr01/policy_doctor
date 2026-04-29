@@ -2,7 +2,6 @@ from typing import Union
 import logging
 import torch
 import torch.nn as nn
-import einops
 from einops.layers.torch import Rearrange
 
 from diffusion_policy.model.diffusion.conv1d_components import (
@@ -181,7 +180,7 @@ class ConditionalUnet1D(nn.Module):
         global_cond: (B,global_cond_dim)
         output: (B,T,input_dim)
         """
-        sample = einops.rearrange(sample, 'b h t -> b t h')
+        sample = sample.permute(0, 2, 1)  # (B, input_dim, T) -> (B, T, input_dim)
 
         # 1. time
         timesteps = timestep
@@ -203,7 +202,7 @@ class ConditionalUnet1D(nn.Module):
         # encode local features
         h_local = list()
         if local_cond is not None:
-            local_cond = einops.rearrange(local_cond, 'b h t -> b t h')
+            local_cond = local_cond.permute(0, 2, 1)  # (B, local_cond_dim, T) -> (B, T, local_cond_dim)
             resnet, resnet2 = self.local_cond_encoder
             x = resnet(local_cond, global_feature)
             h_local.append(x)
@@ -237,6 +236,6 @@ class ConditionalUnet1D(nn.Module):
 
         x = self.final_conv(x)
 
-        x = einops.rearrange(x, 'b t h -> b h t')
+        x = x.permute(0, 2, 1)  # (B, T, input_dim) -> (B, input_dim, T)
         return x
 

@@ -95,7 +95,10 @@ class DiffusionLowdimFunctionalModelOutput(AbstractModelOutput):
         loss_mask = ~condition_mask
 
         # Apply conditioning.
-        noisy_trajectory[condition_mask] = trajectory[condition_mask]
+        # torch.where instead of in-place masked assignment: both are equivalent but
+        # torch.where is torch.compile-compatible with dynamic shapes (in-place boolean
+        # indexing produces a data-dependent output size that inductor cannot analyze).
+        noisy_trajectory = torch.where(condition_mask, trajectory, noisy_trajectory)
         
         # Predict the noise residual.
         pred: torch.Tensor = torch.func.functional_call(
@@ -245,8 +248,8 @@ class DiffusionHybridImageFunctionalModelOutput(AbstractModelOutput):
         # compute loss mask
         loss_mask = ~condition_mask
 
-        # apply conditioning
-        noisy_trajectory[condition_mask] = cond_data[condition_mask]
+        # apply conditioning (torch.where for torch.compile dynamic-shape compatibility)
+        noisy_trajectory = torch.where(condition_mask, cond_data, noisy_trajectory)
         
         # Predict the noise residual.
         pred: torch.Tensor = torch.func.functional_call(

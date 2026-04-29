@@ -15,6 +15,7 @@ import yaml
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
+from policy_doctor.curation_pipeline.paths import get_eval_dir
 from policy_doctor.data.clustering_embeddings import (
     extract_infembed_slice_windows,
     extract_trak_slice_windows,
@@ -53,8 +54,26 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         with open(task_yaml) as f:
             task_cfg = yaml.safe_load(f)
 
-        eval_dir_base = task_cfg["eval_dir"]
-        train_dir_base = task_cfg.get("train_dir")
+        # Resolve eval_dir_base: prefer explicit override, then evaluation config, then task YAML.
+        clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
+        if clustering_eval_dir_override:
+            eval_dir_base = clustering_eval_dir_override
+        else:
+            evaluation = OmegaConf.select(cfg, "evaluation") or {}
+            eval_date = (
+                OmegaConf.select(evaluation, "train_date")
+                or OmegaConf.select(cfg, "evaluation.eval_date")
+                or OmegaConf.select(cfg, "train_date")
+            )
+            eval_task = OmegaConf.select(evaluation, "task")
+            eval_policy = OmegaConf.select(evaluation, "policy")
+            eval_output_dir = OmegaConf.select(evaluation, "eval_output_dir") or "data/outputs/eval_save_episodes"
+            if eval_date and eval_task and eval_policy:
+                eval_dir_base = get_eval_dir(eval_output_dir, eval_date, eval_task, eval_policy, 0)
+            else:
+                eval_dir_base = task_cfg["eval_dir"]
+        print(f"  eval_dir_base: {eval_dir_base}")
+        train_dir_base = OmegaConf.select(cfg, "clustering_train_dir") or task_cfg.get("train_dir")
         reference_seed = str(OmegaConf.select(cfg, "reference_seed") or 0)
         seeds = OmegaConf.select(cfg, "seeds") or OmegaConf.select(cfg, "policy_seeds") or [0, 1, 2]
         seeds = [str(s) for s in seeds]
