@@ -32,7 +32,7 @@
 #     baseline.max_train_episodes=60 \
 #     steps=[mimicgen_budget_sweep]
 
-task_config: square_mh_apr23_mimicgen_pipeline
+task_config: square_mh_feb15
 experiment_name: mimicgen_square_sweep_apr26
 
 seeds: [0]          # overridden per-run from the shell script
