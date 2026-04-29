@@ -175,8 +175,12 @@ class BehaviorGraphPathHeuristic(TrajectorySelectionHeuristic):
                 for _k in _f["data"].keys():
                     _idx = int(_k.split("_")[1])
                     hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
-        except Exception:
-            pass
+        except Exception as _hdf5_err:
+            raise RuntimeError(
+                f"Failed to read HDF5 success flags from {rollout_hdf5_path}: {_hdf5_err}\n"
+                f"This likely means rollouts_hdf5 points to the wrong file or is corrupted.\n"
+                f"Verify that the rollout HDF5 path matches the experiment's eval data."
+            ) from _hdf5_err
 
         results: list[SeedSelectionResult] = []
         seen: set[int] = set()
@@ -305,8 +309,12 @@ class DiversitySelectionHeuristic(TrajectorySelectionHeuristic):
                 for _k in _f["data"].keys():
                     _idx = int(_k.split("_")[1])
                     hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
-        except Exception:
-            pass
+        except Exception as _hdf5_err:
+            raise RuntimeError(
+                f"Failed to read HDF5 success flags from {rollout_hdf5_path}: {_hdf5_err}\n"
+                f"This likely means rollouts_hdf5 points to the wrong file or is corrupted.\n"
+                f"Verify that the rollout HDF5 path matches the experiment's eval data."
+            ) from _hdf5_err
 
         top_paths_info = [
             {
@@ -414,16 +422,20 @@ class RandomSelectionHeuristic(TrajectorySelectionHeuristic):
                 for _k in _f["data"].keys():
                     _idx = int(_k.split("_")[1])
                     hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
-        except Exception:
-            pass
+        except Exception as _hdf5_err:
+            raise RuntimeError(
+                f"Failed to read HDF5 success flags from {rollout_hdf5_path}: {_hdf5_err}\n"
+                f"This likely means rollouts_hdf5 points to the wrong file or is corrupted.\n"
+                f"Verify that the rollout HDF5 path matches the experiment's eval data."
+            ) from _hdf5_err
 
+        success_map = episode_success_map(metadata, level=level)
         if hdf5_success:
             if self.success_only:
                 eligible = [idx for idx, success in hdf5_success.items() if success]
             else:
                 eligible = list(hdf5_success.keys())
         else:
-            success_map = episode_success_map(metadata, level=level)
             if self.success_only:
                 eligible = [idx for idx, success in success_map.items() if success]
             else:

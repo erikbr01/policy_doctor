@@ -211,6 +211,15 @@ def _read_mean_score(output_dir: pathlib.Path) -> float:
 
     log_path = output_dir / "eval_log.json"
     if not log_path.exists():
-        return 0.0
+        raise FileNotFoundError(
+            f"eval_log.json not found at {output_dir}. "
+            f"eval_save_episodes may have failed, crashed, or not run yet."
+        )
     data = json.loads(log_path.read_text())
-    return float(data.get("test/mean_score", 0.0))
+    if "test/mean_score" not in data:
+        raise KeyError(
+            f"'test/mean_score' key missing from {log_path}. "
+            f"Keys present: {sorted(data.keys())}. "
+            f"eval_save_episodes output format may have changed."
+        )
+    return float(data["test/mean_score"])

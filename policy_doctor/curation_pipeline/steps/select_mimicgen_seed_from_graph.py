@@ -75,11 +75,20 @@ def _resolve_rollouts_hdf5(
 ) -> Path:
     """Locate the ``rollouts.hdf5`` for a given policy *seed*.
 
-    Mirrors the eval-dir resolution logic in ``RunClusteringStep``::
+    Eval-dir resolution mirrors ``RunClusteringStep`` — three-level override chain:
 
-        task_cfg["eval_dir"] → get_eval_dir_for_seed → repo_root / ... / episodes/rollouts.hdf5
+    1. ``clustering_eval_dir`` explicit override (highest priority)
+    2. ``evaluation.train_date`` + ``evaluation.task`` + ``evaluation.policy``
+       → constructs path via :func:`~policy_doctor.curation_pipeline.paths.get_eval_dir`
+    3. ``task_cfg["eval_dir"]`` from the static ``task_config`` YAML (lowest priority)
+
+    The third fallback is a last resort only — it does not respect runtime
+    ``evaluation.train_date`` overrides and can silently point to a different
+    experiment's rollouts when task_config was written for a different date.
+    A loud warning is printed when the fallback is used.
     """
     from influence_visualizer.data_loader import get_eval_dir_for_seed
+    from policy_doctor.curation_pipeline.paths import get_eval_dir
 
     config_root = OmegaConf.select(cfg, "config_root") or "iv"
     task_config = OmegaConf.select(cfg, "task_config")
@@ -95,7 +104,35 @@ def _resolve_rollouts_hdf5(
     with open(task_yaml) as f:
         task_cfg = yaml.safe_load(f)
 
-    eval_dir_base: str = task_cfg["eval_dir"]
+    # --- Three-level eval_dir_base resolution (mirrors RunClusteringStep) ---
+    clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
+    evaluation = OmegaConf.select(cfg, "evaluation") or {}
+    eval_date = (
+        OmegaConf.select(evaluation, "train_date")
+        or OmegaConf.select(cfg, "evaluation.eval_date")
+        or OmegaConf.select(cfg, "train_date")
+    )
+    eval_task = OmegaConf.select(evaluation, "task")
+    eval_policy = OmegaConf.select(evaluation, "policy")
+    eval_output_dir = OmegaConf.select(evaluation, "eval_output_dir") or "data/outputs/eval_save_episodes"
+
+    if clustering_eval_dir_override:
+        eval_dir_base: str = clustering_eval_dir_override
+        print(f"  [_resolve_rollouts_hdf5] using clustering_eval_dir override: {eval_dir_base!r}")
+    elif eval_date and eval_task and eval_policy:
+        eval_dir_base = get_eval_dir(eval_output_dir, eval_date, eval_task, eval_policy, 0)
+        print(f"  [_resolve_rollouts_hdf5] using evaluation.train_date={eval_date!r}: {eval_dir_base!r}")
+    else:
+        raise ValueError(
+            f"Cannot resolve rollouts.hdf5 path: evaluation.train_date, evaluation.task, and "
+            f"evaluation.policy must all be set to locate the correct experiment's rollouts.\n"
+            f"  Got: eval_date={eval_date!r}, eval_task={eval_task!r}, eval_policy={eval_policy!r}\n"
+            f"  task_config YAML ({task_config!r}) eval_dir={task_cfg.get('eval_dir')!r} is NOT "
+            f"used as a fallback — it may point to a different experiment and cause silent data "
+            f"contamination.\n"
+            f"  Fix: set evaluation.train_date in your experiment YAML or pass it as a CLI override."
+        )
+
     reference_seed = str(OmegaConf.select(cfg, "reference_seed") or 0)
     eval_dir_seed = get_eval_dir_for_seed(eval_dir_base, seed, reference_seed)
     eval_dir_abs: Path = repo_root / eval_dir_seed
@@ -169,6 +206,11 @@ class SelectMimicgenSeedFromGraphStep(PipelineStep[dict]):
                 )
         else:
             seed = sorted(clustering_dirs.keys())[0]
+            print(
+                f"  [select_mimicgen_seed_from_graph] WARNING: mimicgen_datagen.policy_seed not set; "
+                f"defaulting to first available seed: {seed!r}  "
+                f"(available: {sorted(clustering_dirs.keys())})"
+            )
 
         cdir = Path(clustering_dirs[seed])
         if not cdir.is_absolute():

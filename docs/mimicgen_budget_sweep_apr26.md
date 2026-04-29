@@ -4221,3 +4221,264 @@ All 12 arms complete for seed=0, n_demos=100.
 - epoch=1500 → score=0.680 (340/500)
 
 **S1 progress**: 11/12 arms complete
+
+---
+
+## Data Quality Issue: Seed 0 Used Apr23 Rollouts for MimicGen Generation
+
+**Discovered**: 2026-04-29  
+**Severity**: Moderate confound for all seed 0 results (d60 and d100); d300 not yet run.
+
+### What happened
+
+The experiment YAML `mimicgen_square_sweep_apr26.yaml` has:
+```yaml
+task_config: square_mh_apr23_mimicgen_pipeline
+```
+
+`_resolve_rollouts_hdf5` (in `select_mimicgen_seed_from_graph.py`) reads `eval_dir` directly from this task config YAML rather than using the `evaluation.train_date` override that `run_clustering` uses. The apr23 task config points to an older policy's rollouts:
+
+```
+data/outputs/eval_save_episodes/apr23_mimicgen_pipeline_v2/
+  apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0/latest/rollouts.hdf5
+```
+
+That file happens to **exist** for seed 0 only (the apr23 run only covers seed 0). So seed 0 ran silently with the wrong rollouts; seeds 1 and 2 either crashed (seed 2: path missing → error caught and fixed with explicit override) or hit a fallback (seed 1: resolved to correct apr26 path).
+
+### Affected runs
+
+| Run | Rollout source | Correct? | Notes |
+|-----|---------------|----------|-------|
+| S0 d60 — all 12 arms | apr23 policy (success rate 0.21) | **No** | Silent — ran without error |
+| S0 d100 — all 12 arms | apr23 policy (success rate 0.21) | **No** | Silent — ran without error |
+| S0 d300 | Not yet run | — | Will be affected if not fixed first |
+| S1 d60 — all 12 arms | apr26 d60 policy (correct) | Yes | Resolved correctly |
+| S2 d60 — all 12 arms | apr26 d60 policy (correct) | Yes | Fixed with explicit `task_config` override |
+
+### What "wrong rollouts" means in practice
+
+The behavior graph and clustering for seed 0 were computed correctly — `run_clustering` has its own `evaluation.train_date` override that found the right apr26 eval data. So the **graph structure** reflects the apr26/d60 policy.
+
+However, `select_mimicgen_seed` drew the actual **seed trajectories** from the apr23 policy's rollouts. The apr23 policy:
+- Was trained on a different (larger, unspecified) dataset
+- Achieved only **0.21** success rate (vs. **0.27** for apr26/d60, **0.40** for apr26/d100)
+- Used different environmental conditions (MuJoCo/robosuite version, nut initialization)
+
+Concretely: the `behavior_graph` heuristic selected a rollout index from the apr26 clustering, then loaded that index from the **apr23** HDF5. The trajectory at that index in the apr23 file belongs to a different episode than what the clustering identified. For the `random` heuristic the mismatch is even simpler: it drew a random successful rollout from the apr23 episodes, not the apr26 ones.
+
+### Impact on results
+
+- The seed trajectories fed to MimicGen for seed 0 are from a **lower-quality, different-distribution** policy
+- Generated MimicGen demos are likely lower quality → downstream eval results for seed 0 may be suppressed relative to what they would be with correct rollouts
+- Cross-heuristic comparisons **within** seed 0 are still valid (all three heuristics used the same wrong rollout pool consistently), but the absolute numbers and cross-seed comparisons are unreliable
+- The within-heuristic cross-seed variance you observe already partially reflects this noise
+
+### Fix (applied for seed 2, needed for future reruns)
+
+Pass `task_config=square_mh_apr26_sweep_demos60` (or the per-demo-count equivalent) explicitly. A correct iv config was created at:
+```
+third_party/influence_visualizer/configs/square_mh_apr26_sweep_demos60.yaml
+```
+
+Long-term fix: update `mimicgen_square_sweep_apr26.yaml` to set `task_config` per demo count, or add fallback logic in `_resolve_rollouts_hdf5` to use `evaluation.train_date` when the `task_config` path doesn't exist on disk.
+
+### Recommended action
+
+Rerun seed 0 arms (d60 and d100) after seed 2 completes, with the corrected `task_config` override. Mark existing seed 0 results as `[apr23-rollouts]` in any summary tables until then.
+
+---
+
+## Pipeline Bug Audit — Silent Failures and Data Mismatches
+
+**Audit date**: 2026-04-29  
+**Triggered by**: Discovery that seed 0 d60/d100 used apr23 rollouts for MimicGen generation (see section above).
+
+The following issues were found by code review. They are listed by severity. All affect the current codebase unless marked as already fixed.
+
+---
+
+### BUG-1 (HIGH, SILENT): `_resolve_rollouts_hdf5` ignores `evaluation.train_date` override
+
+**File**: `policy_doctor/curation_pipeline/steps/select_mimicgen_seed_from_graph.py:71–116`  
+**Also affects**: `select_mimicgen_seed.py:130` (imports and calls this function)
+
+`_resolve_rollouts_hdf5` reads `eval_dir` directly from the static `task_config` YAML — it does not check `evaluation.train_date` (nor `clustering_eval_dir`, nor `train_date`) from the runtime config. By contrast, `run_clustering.py:57–74` has a correct multi-level override chain (`clustering_eval_dir` → `evaluation.train_date` → fallback to task YAML) that resolves the right path. `_resolve_rollouts_hdf5` has no equivalent.
+
+**Effect**: Any seed whose correct rollout path differs from what the task YAML encodes will silently use the wrong rollouts. This caused the seed 0 data contamination.
+
+**Fix**:
+```python
+# After loading task_cfg, before calling get_eval_dir_for_seed:
+clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
+evaluation = OmegaConf.select(cfg, "evaluation") or {}
+eval_date = (OmegaConf.select(evaluation, "train_date")
+             or OmegaConf.select(cfg, "train_date"))
+eval_task = OmegaConf.select(evaluation, "task")
+eval_policy = OmegaConf.select(evaluation, "policy")
+eval_output_dir = OmegaConf.select(evaluation, "eval_output_dir") or "data/outputs/eval_save_episodes"
+
+if clustering_eval_dir_override:
+    eval_dir_base = clustering_eval_dir_override
+elif eval_date and eval_task and eval_policy:
+    eval_dir_base = get_eval_dir(eval_output_dir, eval_date, eval_task, eval_policy, 0)
+else:
+    eval_dir_base = task_cfg["eval_dir"]
+    print(f"  [WARNING] _resolve_rollouts_hdf5: using task_config eval_dir ({eval_dir_base!r}). "
+          f"Set evaluation.train_date + task + policy for a date-specific override.")
+```
+The existing `run_clustering.py` override logic is the template.
+
+---
+
+### BUG-2 (HIGH, SILENT): `_merge_hdf5s` writes empty shell when all generation jobs fail
+
+**File**: `policy_doctor/curation_pipeline/steps/generate_mimicgen_demos.py:148–165`
+
+When all per-seed MimicGen subprocesses fail (no `demo.hdf5` files written), `_merge_hdf5s` creates an empty HDF5 shell with a `data` group but zero demos and returns 0. The step writes a `done` sentinel and records `generated_hdf5_path` pointing to this empty file. Downstream, `train_on_combined_data` logs "generated demos=0" and trains on original data only — indistinguishable in the result.json from a real run where generation happened to produce zero successes.
+
+**Cascades with**: BUG-3 (per-seed subprocess failures)
+
+**Fix**:
+```python
+if not existing:
+    raise RuntimeError(
+        f"[_merge_hdf5s] All {len(hdf5_paths)} per-seed generation jobs produced no output. "
+        f"Expected files: {hdf5_paths}. Check subprocess logs above for failure details."
+    )
+```
+
+---
+
+### BUG-3 (MEDIUM-HIGH, SEMI-SILENT): Per-seed generation subprocess failures logged but not raised
+
+**File**: `policy_doctor/curation_pipeline/steps/generate_mimicgen_demos.py:607–617`
+
+In the multi-seed generation loop, a failed subprocess prints a `WARNING` and `continue`s. The seed is silently omitted from the merge. If most seeds fail, `_merge_hdf5s` gets few or no files and hits BUG-2. The final `generated_hdf5_path` contains fewer demos than requested with no error.
+
+The single-seed path (line 682) correctly raises. Only the multi-seed loop is affected.
+
+**Fix**:
+```python
+if res.returncode != 0:
+    failed_seeds.append(seed_i)
+    print(f"  [generate_mimicgen_demos] ERROR: seed {seed_i} pass {pass_num} failed (exit={res.returncode})")
+    continue
+# ... after loop:
+if len(failed_seeds) == n_seeds_in_hdf5:
+    raise RuntimeError(f"All {n_seeds_in_hdf5} per-seed generation jobs failed: {failed_seeds}")
+elif failed_seeds:
+    print(f"  [generate_mimicgen_demos] WARNING: {len(failed_seeds)}/{n_seeds_in_hdf5} seeds failed: {failed_seeds}")
+```
+
+---
+
+### BUG-4 (MEDIUM-HIGH, SILENT): `except Exception: pass` in heuristics swallows HDF5 errors
+
+**File**: `policy_doctor/mimicgen/heuristics.py:178–179, 308–309, 417–418`  
+(All three heuristics: `BehaviorGraphPathHeuristic`, `DiversitySelectionHeuristic`, `RandomSelectionHeuristic`)
+
+Each heuristic reads per-episode `success` flags from `rollouts.hdf5` to filter for successful rollouts:
+```python
+try:
+    with _h5py.File(rollout_hdf5_path, "r") as _f:
+        for _k in _f["data"].keys():
+            _idx = int(_k.split("_")[1])
+            hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
+except Exception:
+    pass  # Silent fallback
+```
+
+On exception (wrong path, corrupt file, wrong HDF5 schema, missing `data` group), `hdf5_success` stays empty and the code falls back to `episode_success_map(metadata)`. This is a different data source with potentially different success counts — but no warning is printed. This means passing the wrong `rollouts.hdf5` (as in BUG-1) could propagate silently further: the path resolves, the file exists, but its content is incompatible.
+
+**Fix**:
+```python
+except Exception as e:
+    print(
+        f"  [WARNING] Could not read HDF5 success flags from {rollout_hdf5_path}: {e}\n"
+        f"  [WARNING] Falling back to metadata success flags — verify rollouts_hdf5 is correct."
+    )
+```
+
+---
+
+### BUG-5 (MEDIUM, SILENT): `_read_mean_score` returns `0.0` on missing eval_log.json
+
+**File**: `policy_doctor/curation_pipeline/steps/eval_mimicgen_combined.py:208–216`
+
+```python
+def _read_mean_score(output_dir):
+    log_path = output_dir / "eval_log.json"
+    if not log_path.exists():
+        return 0.0  # indistinguishable from a real 0% result
+    data = json.loads(log_path.read_text())
+    return float(data.get("test/mean_score", 0.0))  # same if key missing
+```
+
+Also: `data.get("test/mean_score", 0.0)` silently returns 0 if the key is absent from the JSON (e.g., after a format change in `eval_save_episodes`).
+
+In practice the `return 0.0` branch is not reached from the cached-result path (the caller already checked `existing_log.exists()`), but the key-missing branch is reachable in all code paths.
+
+**Fix**:
+```python
+def _read_mean_score(output_dir: pathlib.Path) -> float:
+    log_path = output_dir / "eval_log.json"
+    if not log_path.exists():
+        raise FileNotFoundError(f"eval_log.json missing at {output_dir}; eval may have crashed.")
+    data = json.loads(log_path.read_text())
+    if "test/mean_score" not in data:
+        raise KeyError(f"'test/mean_score' not in {log_path}. Keys: {list(data.keys())}")
+    return float(data["test/mean_score"])
+```
+
+---
+
+### BUG-6 (MEDIUM, SILENT): dry_run results cached with `done` sentinel
+
+**File**: `policy_doctor/curation_pipeline/base_step.py:83–88`
+
+`save()` (which writes `result.json` + touches `done`) is called unconditionally after `compute()` returns — including when `compute()` returned a dry_run placeholder with non-existent file paths. On the next real run, `skip_if_done=True` skips the step and returns the fake cached result. Downstream steps then fail with confusing "file not found" errors or silently proceed with empty data.
+
+Steps confirmed to return fake paths on dry_run: `generate_mimicgen_demos`, `eval_mimicgen_combined`.
+
+**Fix**: Either skip writing the `done` sentinel on dry_run, or check `result.get("dry_run")` in `save()`:
+```python
+def save(self, result: T) -> None:
+    self.step_dir.mkdir(parents=True, exist_ok=True)
+    if result is not None:
+        with open(self.step_dir / "result.json", "w") as f:
+            json.dump(result, f, indent=2, default=str)
+    if not self.dry_run:  # Don't write done sentinel for dry runs
+        (self.step_dir / "done").touch()
+```
+
+---
+
+### BUG-7 (LOW-MEDIUM, SILENT): `policy_seed` defaults silently to first available clustering seed
+
+**File**: `select_mimicgen_seed.py:108–118`, `select_mimicgen_seed_from_graph.py:162–171`
+
+When `mimicgen_datagen.policy_seed` is `null`, the code silently picks `sorted(clustering_dirs.keys())[0]` (e.g., seed `"0"`). No warning is printed. In a multi-seed experiment, this could pick the wrong seed's clustering without any audit trail.
+
+**Fix**: Print which seed was chosen and why:
+```python
+else:
+    seed = sorted(clustering_dirs.keys())[0]
+    print(f"  [{self.name}] policy_seed not set; defaulting to first available seed: {seed!r} "
+          f"(available: {sorted(clustering_dirs.keys())})")
+```
+
+---
+
+### Summary
+
+| ID | Severity | Silent? | File | Description |
+|----|----------|---------|------|-------------|
+| BUG-1 | HIGH | Yes | `select_mimicgen_seed_from_graph.py` | Wrong rollout HDF5 path (missing train_date override) — **caused seed 0 contamination** |
+| BUG-2 | HIGH | Yes | `generate_mimicgen_demos.py` | Empty HDF5 shell on total generation failure |
+| BUG-3 | MED-HIGH | Partial | `generate_mimicgen_demos.py` | Per-seed subprocess failures logged but not raised |
+| BUG-4 | MED-HIGH | Yes | `heuristics.py` | `except Exception: pass` swallows HDF5 read errors |
+| BUG-5 | MEDIUM | Yes | `eval_mimicgen_combined.py` | `_read_mean_score` returns 0.0 on missing/malformed file |
+| BUG-6 | MEDIUM | Yes | `base_step.py` | dry_run result cached as `done`, blocks future real runs |
+| BUG-7 | LOW-MED | Yes | `select_mimicgen_seed.py` | `policy_seed` defaults to first seed silently |
+
+**Not a bug (A2)**: `run_clustering.py` correctly respects `evaluation.train_date` for all seeds — this was the one place the override was already implemented.

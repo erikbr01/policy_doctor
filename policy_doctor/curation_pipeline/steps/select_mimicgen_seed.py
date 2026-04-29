@@ -116,6 +116,11 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                 )
         else:
             seed = sorted(clustering_dirs.keys())[0]
+            print(
+                f"  [select_mimicgen_seed] WARNING: mimicgen_datagen.policy_seed not set; "
+                f"defaulting to first available seed: {seed!r}  "
+                f"(available: {sorted(clustering_dirs.keys())})"
+            )
 
         cdir = Path(clustering_dirs[seed])
         if not cdir.is_absolute():

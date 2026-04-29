@@ -80,12 +80,17 @@ class PipelineStep(ABC, Generic[T]):
         """Run the computation and return the result."""
 
     def save(self, result: T) -> None:
-        """Persist *result* to ``step_dir`` and write a ``done`` sentinel."""
+        """Persist *result* to ``step_dir`` and write a ``done`` sentinel.
+
+        The ``done`` sentinel is intentionally **not** written for dry runs so
+        that re-running with real data does not skip the step.
+        """
         self.step_dir.mkdir(parents=True, exist_ok=True)
         if result is not None:
             with open(self.step_dir / "result.json", "w") as f:
                 json.dump(result, f, indent=2, default=str)
-        (self.step_dir / "done").touch()
+        if not self.dry_run:
+            (self.step_dir / "done").touch()
 
     def load(self) -> Optional[T]:
         """Load a previously persisted result, or ``None`` if not found."""
