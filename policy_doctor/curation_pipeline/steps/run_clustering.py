@@ -11,7 +11,6 @@ import pathlib
 from typing import Dict
 
 import numpy as np
-import yaml
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
@@ -20,7 +19,6 @@ from policy_doctor.data.clustering_embeddings import (
     extract_infembed_slice_windows,
     extract_trak_slice_windows,
 )
-from policy_doctor.paths import PACKAGE_ROOT, iv_task_configs_base
 
 
 class RunClusteringStep(PipelineStep[Dict[str, str]]):
@@ -42,19 +40,8 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         from influence_visualizer.data_loader import get_eval_dir_for_seed
 
         cfg = self.cfg
-        task_config = OmegaConf.select(cfg, "task_config")
-        config_root = OmegaConf.select(cfg, "config_root") or "iv"
 
-        if config_root == "iv":
-            base = iv_task_configs_base(self.repo_root)
-        else:
-            base = PACKAGE_ROOT / "configs"
-
-        task_yaml = base / f"{task_config}.yaml"
-        with open(task_yaml) as f:
-            task_cfg = yaml.safe_load(f)
-
-        # Resolve eval_dir_base: prefer explicit override, then evaluation config, then task YAML.
+        # Resolve eval_dir_base: prefer explicit override, then evaluation config.
         clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
         if clustering_eval_dir_override:
             eval_dir_base = clustering_eval_dir_override
@@ -71,9 +58,17 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
             if eval_date and eval_task and eval_policy:
                 eval_dir_base = get_eval_dir(eval_output_dir, eval_date, eval_task, eval_policy, 0)
             else:
-                eval_dir_base = task_cfg["eval_dir"]
+                raise ValueError(
+                    "Cannot resolve eval_dir for clustering: set evaluation.train_date, "
+                    "evaluation.task, and evaluation.policy in the Hydra config. "
+                    "The task_config YAML fallback has been removed."
+                )
         print(f"  eval_dir_base: {eval_dir_base}")
-        train_dir_base = OmegaConf.select(cfg, "clustering_train_dir") or task_cfg.get("train_dir")
+
+        train_dir_base = OmegaConf.select(cfg, "clustering_train_dir")
+        train_ckpt = OmegaConf.select(cfg, "evaluation.train_ckpt") or "latest"
+        exp_date = OmegaConf.select(cfg, "evaluation.exp_date") or "default"
+
         reference_seed = str(OmegaConf.select(cfg, "reference_seed") or 0)
         seeds = OmegaConf.select(cfg, "seeds") or OmegaConf.select(cfg, "policy_seeds") or [0, 1, 2]
         seeds = [str(s) for s in seeds]
@@ -108,9 +103,10 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
             if influence_source == "trak":
                 embeddings_arr, all_metadata = extract_trak_slice_windows(
-                    eval_dir_abs, train_dir_base, task_cfg, self.repo_root,
+                    eval_dir_abs, train_dir_base, self.repo_root,
                     seed, reference_seed,
                     window_width, stride, aggregation, demo_split, level,
+                    train_ckpt=train_ckpt, exp_date=exp_date,
                 )
             else:
                 if level == "demo":
@@ -142,7 +138,6 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
             clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{n_clusters}"
             result_dir = save_clustering_result(
-                task_config=task_config,
                 name=clustering_name,
                 cluster_labels=labels,
                 metadata=all_metadata,
@@ -153,6 +148,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                 level=level,
                 n_clusters=n_actual,
                 n_samples=len(labels),
+                output_dir=self.step_dir / "clustering",
             )
             models_path = save_clustering_models(
                 result_dir=result_dir,
@@ -168,4 +164,3 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
             result_dirs[seed] = str(result_dir)
 
         return {"clustering_dirs": result_dirs}
-

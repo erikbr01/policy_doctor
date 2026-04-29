@@ -26,8 +26,9 @@ Config keys (under ``mimicgen_datagen``):
     random_seed                RNG seed for ``random`` heuristic (default None).
     policy_seed                Which policy seed's clustering to use (default: first available).
 
-Also reads standard pipeline config keys used by ``RunClusteringStep``:
-    task_config, config_root, reference_seed  (to resolve eval dir and rollout HDF5).
+Also reads standard pipeline config keys:
+    reference_seed  (to resolve eval dir via evaluation.train_date / evaluation.task /
+    evaluation.policy or the clustering_eval_dir override).
 
 Result JSON:
     seed_hdf5_path       Absolute path to the materialised ``seed.hdf5``.
@@ -116,11 +117,6 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                 )
         else:
             seed = sorted(clustering_dirs.keys())[0]
-            print(
-                f"  [select_mimicgen_seed] WARNING: mimicgen_datagen.policy_seed not set; "
-                f"defaulting to first available seed: {seed!r}  "
-                f"(available: {sorted(clustering_dirs.keys())})"
-            )
 
         cdir = Path(clustering_dirs[seed])
         if not cdir.is_absolute():
