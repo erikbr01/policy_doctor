@@ -1,0 +1,33 @@
+# Config for scripts/run_dagger.py
+# Run from third_party/cupid/ with the cupid conda env active.
+#
+# Keyboard-only (no checkpoint):
+#   python ../../scripts/run_dagger.py task=square_mh no_monitor=true viz_url=http://localhost:5002 output_dir=/tmp/dagger_test
+#
+# Bare policy (checkpoint, no InfEmbed):
+#   python ../../scripts/run_dagger.py task=square_mh no_monitor=true train_dir=/path/to/train_dir output_dir=/tmp/dagger_test
+#
+# Full monitored DAgger:
+#   python ../../scripts/run_dagger.py task=square_mh train_dir=... infembed_fit=... infembed_npz=... clustering_dir=... output_dir=/tmp/dagger
+
+task: square_mh          # square_mh | lift_mh | transport_mh | robocasa_layout_lowdim
+
+train_dir: null           # path to training output dir; null = keyboard-only (NullPolicy)
+train_ckpt: best          # best | latest | epoch number
+
+infembed_fit: null        # path to infembed_fit.pt       (required without --no_monitor)
+infembed_npz: null        # path to infembed_embeddings.npz (required without --no_monitor)
+clustering_dir: null      # path to clustering result dir   (required without --no_monitor)
+
+dataset_path: null        # HDF5 path (inferred from task if null)
+output_dir: /tmp/dagger_out
+num_episodes: 5
+intervention_threshold: 0.0
+device: auto              # auto | cuda:0 | mps | cpu
+
+no_monitor: false         # skip InfEmbed monitoring (also enables keyboard-only when train_dir is null)
+no_visualization: false
+viz_url: null             # http://localhost:5002 — start run_viz_server.sh first
+dagger_config: keyboard_default   # keyboard_default | spacemouse_default | xbox_default
+episodes_dir: null        # metadata.yaml dir for window-level NearestCentroidAssigner
+server_url: null          # http://localhost:5001 — delegate inference to policy server
