@@ -83,14 +83,22 @@ class EvalMimicgenCombinedStep(PipelineStep[dict]):
                 raise FileNotFoundError(f"Train dir not found: {train_dir}")
 
             ckpt_dir = train_dir / "checkpoints"
+            if not ckpt_dir.exists():
+                raise FileNotFoundError(
+                    f"[eval_mimicgen_combined] Checkpoints directory not found: {ckpt_dir}. "
+                    "Training may have crashed before saving any checkpoint."
+                )
             # All saved checkpoints except latest
             ckpt_files = sorted(
                 p for p in ckpt_dir.iterdir()
                 if p.suffix == ".ckpt" and p.stem != "latest"
             )
             if not ckpt_files:
-                print(f"  [eval_mimicgen_combined] WARNING: no checkpoints in {ckpt_dir}")
-                continue
+                raise RuntimeError(
+                    f"[eval_mimicgen_combined] No checkpoints found in {ckpt_dir}. "
+                    "Training completed but saved no checkpoints — check checkpoint_topk and "
+                    "checkpoint_every config."
+                )
 
             print(
                 f"  [eval_mimicgen_combined] heuristic={heuristic!r}  "
