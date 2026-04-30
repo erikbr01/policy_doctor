@@ -12,7 +12,10 @@ import numpy as np
 
 from policy_doctor.mimicgen.heuristics import (
     BehaviorGraphPathHeuristic,
+    NearFailurePathHeuristic,
+    PathLikelihoodHeuristic,
     RandomSelectionHeuristic,
+    ReversePathLikelihoodHeuristic,
     SeedSelectionResult,
     build_heuristic,
 )
@@ -33,8 +36,14 @@ def _write_rollout_hdf5(
     n_timesteps: int = 5,
     state_dim: int = 4,
     action_dim: int = 3,
+    success_map: dict[int, bool] | None = None,
 ) -> Path:
-    """Write a minimal rollout HDF5 with *n_demos* demo groups."""
+    """Write a minimal rollout HDF5 with *n_demos* demo groups.
+
+    If *success_map* is provided, each demo's ``success`` attribute is set
+    accordingly.  Without it the attribute is absent, which causes graph-based
+    heuristics to treat all episodes as failed (pre-existing fixture limitation).
+    """
     env_meta = _minimal_env_meta()
     with h5py.File(path, "w") as f:
         data = f.create_group("data")
@@ -54,6 +63,8 @@ def _write_rollout_hdf5(
             )
             ep.attrs["num_samples"] = np.int64(n_timesteps)
             ep.attrs["model_file"] = "<mujoco/>"
+            if success_map is not None and i in success_map:
+                ep.attrs["success"] = bool(success_map[i])
     return path
 
 
@@ -106,6 +117,26 @@ class TestBuildHeuristic(unittest.TestCase):
     def test_unknown_raises(self):
         with self.assertRaises(ValueError):
             build_heuristic("nonexistent")
+
+    def test_near_failure_type(self):
+        h = build_heuristic("near_failure")
+        self.assertIsInstance(h, NearFailurePathHeuristic)
+
+    def test_near_failure_failure_weight_forwarded(self):
+        h = build_heuristic("near_failure", failure_weight="sum")
+        self.assertEqual(h.failure_weight, "sum")
+
+    def test_path_likelihood_type(self):
+        h = build_heuristic("path_likelihood", random_seed=0)
+        self.assertIsInstance(h, PathLikelihoodHeuristic)
+
+    def test_path_likelihood_requires_seed_via_factory(self):
+        with self.assertRaises(ValueError):
+            build_heuristic("path_likelihood", random_seed=None)
+
+    def test_reverse_path_likelihood_type(self):
+        h = build_heuristic("reverse_path_likelihood")
+        self.assertIsInstance(h, ReversePathLikelihoodHeuristic)
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +318,249 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
             h = BehaviorGraphPathHeuristic(top_k_paths=1)
             result = h.select(labels, metadata, str(hdf5))
         self.assertIsNotNone(result)
+
+
+# ---------------------------------------------------------------------------
+# NearFailurePathHeuristic
+# ---------------------------------------------------------------------------
+
+class TestNearFailurePathHeuristic(unittest.TestCase):
+    def _make_data(self) -> tuple[np.ndarray, list[dict]]:
+        # ep 0: [1,2] → SUCCESS — node 2 only ever leads to SUCCESS, so low failure risk
+        # ep 1: [1,3] → SUCCESS — node 3 leads to both SUCCESS and FAILURE, high failure risk
+        # ep 2: [1,3] → FAILURE
+        ep_seqs = {0: [1, 2], 1: [1, 3], 2: [1, 3]}
+        success_map = {0: True, 1: True, 2: False}
+        return _make_flat_data(ep_seqs, success_map)
+
+    def _hdf5_success_map(self) -> dict[int, bool]:
+        return {0: True, 1: True, 2: False}
+
+    def test_returns_seed_selection_result(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map=self._hdf5_success_map(),
+            )
+            result = NearFailurePathHeuristic(top_k_paths=10).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertIsInstance(result, SeedSelectionResult)
+
+    def test_prefers_high_failure_risk_path(self):
+        # Path [1,3]→SUCCESS has higher failure risk (node 3: P(FAIL)=0.5)
+        # than path [1,2]→SUCCESS (node 2: P(FAIL)=0).
+        # So ep 1 (the only success on path [1,3]) should be selected first.
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map=self._hdf5_success_map(),
+            )
+            result = NearFailurePathHeuristic(top_k_paths=10).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertEqual(result.rollout_idx, 1)
+
+    def test_info_dict_contains_failure_score(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map=self._hdf5_success_map(),
+            )
+            result = NearFailurePathHeuristic(top_k_paths=10).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertEqual(result.info["heuristic"], "near_failure")
+        self.assertIn("selected_failure_score", result.info)
+        self.assertGreater(result.info["selected_failure_score"], 0.0)
+
+    def test_sum_weight_selects_first_result(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map=self._hdf5_success_map(),
+            )
+            result = NearFailurePathHeuristic(top_k_paths=10, failure_weight="sum").select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertIsInstance(result, SeedSelectionResult)
+        self.assertEqual(result.info["failure_weight"], "sum")
+
+    def test_invalid_failure_weight_raises(self):
+        with self.assertRaises(ValueError):
+            NearFailurePathHeuristic(failure_weight="invalid")
+
+    def test_raises_when_no_success_node(self):
+        ep_seqs = {0: [1, 2], 1: [1, 3]}
+        success_map = {0: False, 1: False}
+        labels, metadata = _make_flat_data(ep_seqs, success_map)
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=2, success_map={0: False, 1: False}
+            )
+            with self.assertRaises(RuntimeError):
+                NearFailurePathHeuristic().select(labels, metadata, str(hdf5))
+
+
+# ---------------------------------------------------------------------------
+# PathLikelihoodHeuristic
+# ---------------------------------------------------------------------------
+
+class TestPathLikelihoodHeuristic(unittest.TestCase):
+    def _make_data(self) -> tuple[np.ndarray, list[dict]]:
+        ep_seqs = {0: [1, 2], 1: [1, 3]}
+        success_map = {0: True, 1: True}
+        return _make_flat_data(ep_seqs, success_map)
+
+    def test_returns_seed_selection_result(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=2, success_map={0: True, 1: True}
+            )
+            result = PathLikelihoodHeuristic(random_seed=0).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertIsInstance(result, SeedSelectionResult)
+
+    def test_requires_random_seed(self):
+        with self.assertRaises(ValueError):
+            PathLikelihoodHeuristic(random_seed=None)
+
+    def test_reproducible_with_same_seed(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=2, success_map={0: True, 1: True}
+            )
+            r1 = PathLikelihoodHeuristic(random_seed=42).select(labels, metadata, str(hdf5))
+            r2 = PathLikelihoodHeuristic(random_seed=42).select(labels, metadata, str(hdf5))
+        self.assertEqual(r1.rollout_idx, r2.rollout_idx)
+
+    def test_different_seeds_can_yield_different_results(self):
+        # With two equally likely paths (both prob=0.5), different seeds should
+        # occasionally pick different rollouts.  Run enough trials to confirm.
+        labels, metadata = self._make_data()
+        chosen: set[int] = set()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=2, success_map={0: True, 1: True}
+            )
+            for seed in range(50):
+                r = PathLikelihoodHeuristic(random_seed=seed).select(
+                    labels, metadata, str(hdf5)
+                )
+                chosen.add(r.rollout_idx)
+        self.assertEqual(len(chosen), 2, "expected both rollouts to be chosen across seeds")
+
+    def test_info_dict_keys(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=2, success_map={0: True, 1: True}
+            )
+            result = PathLikelihoodHeuristic(random_seed=0).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertEqual(result.info["heuristic"], "path_likelihood")
+        self.assertIn("selected_path_prob", result.info)
+        self.assertIn("sampling_weight", result.info)
+        self.assertGreater(result.info["selected_path_prob"], 0.0)
+
+    def test_raises_when_no_success_node(self):
+        ep_seqs = {0: [1, 2]}
+        success_map = {0: False}
+        labels, metadata = _make_flat_data(ep_seqs, success_map)
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=1, success_map={0: False}
+            )
+            with self.assertRaises(RuntimeError):
+                PathLikelihoodHeuristic(random_seed=0).select(labels, metadata, str(hdf5))
+
+
+# ---------------------------------------------------------------------------
+# ReversePathLikelihoodHeuristic
+# ---------------------------------------------------------------------------
+
+class TestReversePathLikelihoodHeuristic(unittest.TestCase):
+    def _make_data(self) -> tuple[np.ndarray, list[dict]]:
+        # ep 0,1: [1,2] → SUCCESS — most common path (P(1→2) = 2/3)
+        # ep 2:   [1,3] → SUCCESS — rarer path      (P(1→3) = 1/3)
+        ep_seqs = {0: [1, 2], 1: [1, 2], 2: [1, 3]}
+        success_map = {0: True, 1: True, 2: True}
+        return _make_flat_data(ep_seqs, success_map)
+
+    def test_returns_seed_selection_result(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map={0: True, 1: True, 2: True},
+            )
+            result = ReversePathLikelihoodHeuristic(top_k_paths=10).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertIsInstance(result, SeedSelectionResult)
+
+    def test_prefers_rarest_path(self):
+        # Path [1,3] has lower probability (1/3) than [1,2] (2/3), so ep 2 should
+        # be selected first by the reverse heuristic.
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map={0: True, 1: True, 2: True},
+            )
+            result = ReversePathLikelihoodHeuristic(top_k_paths=10).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertEqual(result.rollout_idx, 2)
+
+    def test_info_dict_keys(self):
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map={0: True, 1: True, 2: True},
+            )
+            result = ReversePathLikelihoodHeuristic(top_k_paths=10).select(
+                labels, metadata, str(hdf5)
+            )
+        self.assertEqual(result.info["heuristic"], "reverse_path_likelihood")
+        self.assertIn("selected_path_prob", result.info)
+        self.assertIn("top_paths", result.info)
+
+    def test_select_multiple_fills_from_rarest(self):
+        # Requesting 3 seeds: ep2 first (rarest path), then ep0 and ep1 (common path).
+        labels, metadata = self._make_data()
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=3,
+                success_map={0: True, 1: True, 2: True},
+            )
+            results = ReversePathLikelihoodHeuristic(top_k_paths=10).select_multiple(
+                3, labels, metadata, str(hdf5)
+            )
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0].rollout_idx, 2, "rarest path should be first")
+        self.assertIn(results[1].rollout_idx, [0, 1])
+        self.assertIn(results[2].rollout_idx, [0, 1])
+
+    def test_raises_when_no_success_node(self):
+        ep_seqs = {0: [1, 2]}
+        success_map = {0: False}
+        labels, metadata = _make_flat_data(ep_seqs, success_map)
+        with tempfile.TemporaryDirectory() as td:
+            hdf5 = _write_rollout_hdf5(
+                Path(td) / "rollouts.hdf5", n_demos=1, success_map={0: False}
+            )
+            with self.assertRaises(RuntimeError):
+                ReversePathLikelihoodHeuristic().select(labels, metadata, str(hdf5))
 
 
 # ---------------------------------------------------------------------------
