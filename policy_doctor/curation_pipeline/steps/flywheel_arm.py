@@ -48,17 +48,34 @@ from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 
-# Mapping from full heuristic name to a compact directory-safe short code
+# Mapping from full heuristic name to a compact directory-safe short code.
+# All heuristics registered in build_heuristic must appear here.
 _HEURISTIC_SHORT: dict[str, str] = {
     "behavior_graph": "bg",
     "diversity": "div",
     "random": "rand",
+    "near_failure": "nf",
+    "path_likelihood": "pl",
+    "reverse_path_likelihood": "rpl",
 }
 
 
 def _arm_name(strategy_sequence: list[str]) -> str:
-    """Derive a short, filesystem-safe arm name from a strategy sequence."""
-    return "_".join(_HEURISTIC_SHORT.get(s, s[:4]) for s in strategy_sequence)
+    """Derive a short, filesystem-safe arm name from a strategy sequence.
+
+    Raises ValueError for any heuristic not registered in _HEURISTIC_SHORT,
+    preventing silent truncation that could produce colliding arm names.
+    """
+    parts = []
+    for s in strategy_sequence:
+        if s not in _HEURISTIC_SHORT:
+            raise ValueError(
+                f"Unknown heuristic {s!r} in strategy sequence — add it to "
+                f"_HEURISTIC_SHORT in flywheel_arm.py.  "
+                f"Known: {sorted(_HEURISTIC_SHORT)}"
+            )
+        parts.append(_HEURISTIC_SHORT[s])
+    return "_".join(parts)
 
 
 class FlyWheelIterationStep(PipelineStep[dict]):
@@ -132,19 +149,29 @@ class FlyWheelIterationStep(PipelineStep[dict]):
             OmegaConf.update(sub_cfg, "mimicgen_datagen.success_budget", int(generation_budget), merge=True)
         OmegaConf.update(sub_cfg, "run_tag", f"{self.arm_name}_iter{self.iteration_idx}", merge=True)
 
-        # For N>0: inject rollouts_hdf5_path so SelectMimicgenSeedStep skips task-YAML lookup
+        # For N>0: inject rollouts_hdf5_path so SelectMimicgenSeedStep uses the
+        # retrained policy's rollouts rather than the baseline task-YAML eval.
         if self.iteration_idx > 0:
             prev_iter_dir = self.all_iter_dirs[self.iteration_idx - 1]
             prev_eval_result_path = prev_iter_dir / "eval_flywheel_policy" / "result.json"
-            if prev_eval_result_path.exists():
-                with open(prev_eval_result_path) as f:
-                    prev_eval = json.load(f)
-                rh = prev_eval.get("rollouts_hdf5_path", "")
-                if rh:
-                    OmegaConf.update(sub_cfg, "mimicgen_datagen.rollouts_hdf5_path", rh, merge=True)
+            if not prev_eval_result_path.exists():
+                raise RuntimeError(
+                    f"[flywheel] iter={self.iteration_idx}: expected prior eval result at "
+                    f"{prev_eval_result_path} but it does not exist. "
+                    "EvalFlywheelPolicyStep for the previous iteration did not complete."
+                )
+            with open(prev_eval_result_path) as f:
+                prev_eval = json.load(f)
+            rh = prev_eval.get("rollouts_hdf5_path")
+            if not rh:
+                raise RuntimeError(
+                    f"[flywheel] iter={self.iteration_idx}: rollouts_hdf5_path missing from "
+                    f"{prev_eval_result_path}. EvalFlywheelPolicyStep may have failed."
+                )
+            OmegaConf.update(sub_cfg, "mimicgen_datagen.rollouts_hdf5_path", rh, merge=True)
 
         iter_dir = self.step_dir  # arm_dir/iter_i/
-        skip = bool(OmegaConf.select(self.cfg, "skip_if_done") if OmegaConf.select(self.cfg, "skip_if_done") is not None else True)
+        skip: bool = OmegaConf.select(self.cfg, "skip_if_done", default=True)
         results: dict[str, Any] = {}
 
         # 1. Seed selection
@@ -213,9 +240,9 @@ class FlyWheelArmStep(PipelineStep[dict]):
         self.strategy_sequence = strategy_sequence
 
     def compute(self) -> dict[str, Any]:
-        flywheel_cfg = OmegaConf.select(self.cfg, "flywheel") or {}
+        flywheel_cfg = OmegaConf.select(self.cfg, "flywheel") or OmegaConf.create({})
         num_iterations = int(
-            OmegaConf.select(flywheel_cfg, "num_iterations") or len(self.strategy_sequence)
+            OmegaConf.select(flywheel_cfg, "num_iterations", default=len(self.strategy_sequence))
         )
         if len(self.strategy_sequence) < num_iterations:
             raise ValueError(
@@ -225,11 +252,7 @@ class FlyWheelArmStep(PipelineStep[dict]):
 
         arm_dir = self.step_dir  # mimicgen_flywheel/<arm_name>/
         iter_dirs = [arm_dir / f"iter_{i}" for i in range(num_iterations)]
-        skip = bool(
-            OmegaConf.select(self.cfg, "skip_if_done")
-            if OmegaConf.select(self.cfg, "skip_if_done") is not None
-            else True
-        )
+        skip: bool = OmegaConf.select(self.cfg, "skip_if_done", default=True)
 
         arm_results: dict[str, Any] = {}
         for i, heuristic in enumerate(self.strategy_sequence[:num_iterations]):
@@ -277,15 +300,23 @@ class FlyWheelMultiArmStep(PipelineStep[dict]):
     name = "mimicgen_flywheel"
 
     def compute(self) -> dict[str, Any]:
-        flywheel_cfg = OmegaConf.select(self.cfg, "flywheel") or {}
-        num_iterations = int(OmegaConf.select(flywheel_cfg, "num_iterations") or 2)
+        flywheel_cfg = OmegaConf.select(self.cfg, "flywheel") or OmegaConf.create({})
+        num_iterations = int(OmegaConf.select(flywheel_cfg, "num_iterations", default=2))
         sequences = self._enumerate_sequences(flywheel_cfg, num_iterations)
 
-        skip = bool(
-            OmegaConf.select(self.cfg, "skip_if_done")
-            if OmegaConf.select(self.cfg, "skip_if_done") is not None
-            else True
-        )
+        # Detect duplicate arm names before starting any work.
+        seen_arm_names: set[str] = set()
+        for seq in sequences:
+            arm_name = _arm_name(seq)  # raises ValueError for unknown heuristics
+            if arm_name in seen_arm_names:
+                raise ValueError(
+                    f"Duplicate flywheel arm name {arm_name!r} produced by sequences. "
+                    "Two strategy sequences map to the same directory name — check "
+                    "strategy_sequences for repeated patterns."
+                )
+            seen_arm_names.add(arm_name)
+
+        skip: bool = OmegaConf.select(self.cfg, "skip_if_done", default=True)
 
         multi_results: dict[str, Any] = {}
         for seq in sequences:

@@ -145,6 +145,12 @@ class EvalFlywheelPolicyStep(PipelineStep[dict]):
             alt = pathlib.Path(output_dir) / "rollouts.hdf5"
             if alt.exists():
                 rollouts_hdf5 = alt
+            else:
+                raise RuntimeError(
+                    f"[eval_flywheel_policy] rollouts.hdf5 not found in {output_dir}. "
+                    "eval_save_episodes reported success but produced no rollout file — "
+                    "check eval_save_episodes output and --save_episodes flag."
+                )
 
         return {
             "eval_dir": output_dir,
@@ -154,7 +160,14 @@ class EvalFlywheelPolicyStep(PipelineStep[dict]):
         }
 
 
-class ComputeInfembedFlywheelStep(PipelineStep[None]):
+# Fixed experiment name used for all flywheel InfEmbed runs.
+# compute_infembed_embeddings.py writes to eval_dir/<exp_name>/infembed_embeddings.npz.
+# Using a constant avoids the --exp_name=auto glob which looks for TRAK dirs that
+# flywheel eval dirs never contain.
+_FLYWHEEL_INFEMBED_EXP_NAME = "flywheel_infembed"
+
+
+class ComputeInfembedFlywheelStep(PipelineStep[dict]):
     """Compute InfEmbed embeddings for a flywheel-trained policy.
 
     Reads train_dir and eval_dir from prior sub-steps' result.json files instead
@@ -164,11 +177,14 @@ class ComputeInfembedFlywheelStep(PipelineStep[None]):
         train_on_combined_data/result.json["train_dirs"][0]
         eval_flywheel_policy/result.json["eval_dir"]
         train_on_combined_data/result.json["combined_hdf5_path"]  (--dataset_path override)
+
+    Result JSON:
+        infembed_dir   Absolute path to the directory containing infembed_embeddings.npz.
     """
 
     name = "compute_infembed"
 
-    def compute(self) -> None:
+    def compute(self) -> dict:
         from policy_doctor.curation_pipeline.steps.train_on_combined_data import (
             TrainOnCombinedDataStep,
         )
@@ -221,9 +237,19 @@ class ComputeInfembedFlywheelStep(PipelineStep[None]):
         arnoldi_dim = OmegaConf.select(attribution, "arnoldi_dim") or 200
         overwrite = bool(OmegaConf.select(attribution, "overwrite") or False)
         model_keys = OmegaConf.select(attribution, "model_keys") or "model."
+        conda_env: str = (
+            OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+            or "cupid_torch2"
+        )
+
+        # Use a fixed exp_name instead of "auto" — the flywheel eval dir has no TRAK
+        # results directory, so --exp_name=auto would fail trying to glob for one.
+        # Output lands at eval_dir/_FLYWHEEL_INFEMBED_EXP_NAME/infembed_embeddings.npz.
+        infembed_dir = pathlib.Path(eval_dir) / _FLYWHEEL_INFEMBED_EXP_NAME
 
         cmd_args = [
-            "--exp_name=auto",
+            f"--exp_name={_FLYWHEEL_INFEMBED_EXP_NAME}",
             f"--eval_dir={eval_dir}",
             f"--train_dir={train_dir}",
             f"--train_ckpt={best_checkpoint}",
@@ -247,12 +273,24 @@ class ComputeInfembedFlywheelStep(PipelineStep[None]):
             cmd_args.append(f"--dataset_path={combined_hdf5_path}")
 
         if self.dry_run:
-            print(f"[dry_run] ComputeInfembedFlywheelStep")
+            print(f"[dry_run] ComputeInfembedFlywheelStep  conda_env={conda_env}")
             print(f"[dry_run]   {' '.join(cmd_args)}")
-            return
+            return {"infembed_dir": str(infembed_dir)}
 
-        print(f"  [compute_infembed_flywheel] train={pathlib.Path(train_dir).name}")
-        _call_compute_infembed_embeddings(cmd_args=cmd_args)
+        print(
+            f"  [compute_infembed_flywheel] train={pathlib.Path(train_dir).name}  "
+            f"conda_env={conda_env}"
+        )
+        _call_compute_infembed_embeddings(cmd_args=cmd_args, conda_env=conda_env)
+
+        emb_path = infembed_dir / "infembed_embeddings.npz"
+        if not emb_path.exists():
+            raise RuntimeError(
+                f"[compute_infembed_flywheel] Expected output not found after subprocess: {emb_path}. "
+                "compute_infembed_embeddings.py may have failed silently."
+            )
+
+        return {"infembed_dir": str(infembed_dir)}
 
 
 class RunClusteringFlywheelStep(PipelineStep[dict]):
@@ -290,6 +328,17 @@ class RunClusteringFlywheelStep(PipelineStep[dict]):
         eval_result = eval_step.load()
         eval_dir_abs = pathlib.Path(eval_result["eval_dir"])
 
+        # Resolve infembed_dir from ComputeInfembedFlywheelStep result so we can
+        # pass it explicitly to extract_infembed_slice_windows — the flywheel eval dir
+        # has no TRAK results directory and the default glob would fail.
+        infembed_step = ComputeInfembedFlywheelStep(cfg, self.run_dir)
+        if not infembed_step.is_done():
+            raise RuntimeError(
+                "RunClusteringFlywheelStep requires ComputeInfembedFlywheelStep."
+            )
+        infembed_result = infembed_step.load()
+        infembed_dir = pathlib.Path(infembed_result["infembed_dir"])
+
         seed = str(OmegaConf.select(cfg, "mimicgen_datagen.policy_seed") or 0)
 
         window_width = OmegaConf.select(cfg, "clustering_window_width") or 5
@@ -315,9 +364,10 @@ class RunClusteringFlywheelStep(PipelineStep[dict]):
             )
             return {"clustering_dirs": {}}
 
-        print(f"  [run_clustering_flywheel] eval_dir={eval_dir_abs.name}")
+        print(f"  [run_clustering_flywheel] eval_dir={eval_dir_abs.name}  infembed_dir={infembed_dir.name}")
         embeddings_arr, all_metadata = extract_infembed_slice_windows(
             eval_dir_abs, window_width, stride, aggregation,
+            infembed_dir=infembed_dir,
         )
 
         print(f"  [run_clustering_flywheel] embeddings: {embeddings_arr.shape}")
@@ -335,8 +385,13 @@ class RunClusteringFlywheelStep(PipelineStep[dict]):
         n_actual = len(set(labels) - {-1})
         print(f"  [run_clustering_flywheel] clusters={n_actual}  noise={(labels == -1).sum()}")
 
-        run_tag = OmegaConf.select(cfg, "run_tag") or ""
-        tag = f"_{run_tag}" if run_tag else "_flywheel"
+        run_tag = OmegaConf.select(cfg, "run_tag")
+        if not run_tag:
+            raise RuntimeError(
+                "RunClusteringFlywheelStep requires run_tag to be set in config. "
+                "FlyWheelIterationStep should inject it as '{arm_name}_iter{i}'."
+            )
+        tag = f"_{run_tag}"
         clustering_name = f"{experiment_name}{tag}_seed{seed}_kmeans_k{n_clusters}"
         result_dir = save_clustering_result(
             task_config=task_config,
@@ -413,23 +468,82 @@ class TrainFlywheelIterStep(PipelineStep[dict]):
         generated_hdf5_paths: list[pathlib.Path] = []
         for iter_dir in self.all_prior_iter_dirs:
             gen_result_path = iter_dir / "generate_mimicgen_demos" / "result.json"
-            if gen_result_path.exists():
-                with open(gen_result_path) as f:
-                    gen_result = json.load(f)
-                gen_path = pathlib.Path(gen_result["generated_hdf5_path"])
-                if gen_path.exists():
-                    generated_hdf5_paths.append(gen_path)
+            if not gen_result_path.exists():
+                raise RuntimeError(
+                    f"[train_flywheel_iter] iter={self.iteration_idx}: generation result "
+                    f"missing for prior iteration {iter_dir.name}: {gen_result_path}. "
+                    "GenerateMimicgenDemosStep may not have completed for that iteration."
+                )
+            with open(gen_result_path) as f:
+                gen_result = json.load(f)
+            gen_path = pathlib.Path(gen_result["generated_hdf5_path"])
+            if not gen_path.exists():
+                raise RuntimeError(
+                    f"[train_flywheel_iter] iter={self.iteration_idx}: generated HDF5 from "
+                    f"prior iteration {iter_dir.name} not found: {gen_path}. "
+                    "MimicGen generation may have failed or the file was moved."
+                )
+            generated_hdf5_paths.append(gen_path)
 
         current_gen_step = GenerateMimicgenDemosStep(cfg, self.run_dir)
         if not current_gen_step.is_done():
             raise RuntimeError("TrainFlywheelIterStep requires GenerateMimicgenDemosStep.")
         current_gen_result = current_gen_step.load()
         current_gen_path = pathlib.Path(current_gen_result["generated_hdf5_path"])
-        if current_gen_path.exists():
-            generated_hdf5_paths.append(current_gen_path)
+        if not current_gen_path.exists():
+            raise RuntimeError(
+                f"[train_flywheel_iter] iter={self.iteration_idx}: current generated HDF5 "
+                f"not found: {current_gen_path}. MimicGen generation may have failed."
+            )
+        generated_hdf5_paths.append(current_gen_path)
 
         # Resolve original (base) dataset
         original_hdf5_path = self._resolve_original_dataset_path(baseline)
+
+        if self.dry_run:
+            print(
+                f"[dry_run] TrainFlywheelIterStep  iter={self.iteration_idx}  "
+                f"heuristic={heuristic_name!r}  "
+                f"original={original_hdf5_path.name}  "
+                f"num_generated_sources={len(generated_hdf5_paths)}"
+            )
+            combined_hdf5_path = self.step_dir / "combined.hdf5"
+            train_dirs_dry: list[str] = []
+            for seed in expand_seeds(
+                OmegaConf.select(self.cfg, "seeds")
+                or OmegaConf.select(OmegaConf.select(self.cfg, "baseline") or {}, "seeds")
+                or [0]
+            ):
+                base_name = get_train_name(
+                    OmegaConf.select(self.cfg, "train_date")
+                    or OmegaConf.select(OmegaConf.select(self.cfg, "baseline") or {}, "train_date")
+                    or "default",
+                    OmegaConf.select(OmegaConf.select(self.cfg, "baseline") or {}, "task")
+                    or OmegaConf.select(self.cfg, "task"),
+                    OmegaConf.select(OmegaConf.select(self.cfg, "baseline") or {}, "policy") or "diffusion_unet_lowdim",
+                    seed,
+                )
+                run_tag_dry = OmegaConf.select(self.cfg, "run_tag")
+                train_name = f"{base_name}-flywheel-{run_tag_dry}" if run_tag_dry else f"{base_name}-flywheel_iter{self.iteration_idx}-{heuristic_name}"
+                output_dir = OmegaConf.select(self.cfg, "output_dir") or "data/outputs/train"
+                train_date_dry = (
+                    OmegaConf.select(self.cfg, "train_date")
+                    or OmegaConf.select(OmegaConf.select(self.cfg, "baseline") or {}, "train_date")
+                    or "default"
+                )
+                run_output_dir = str(self.repo_root / output_dir / train_date_dry / train_name)
+                train_dirs_dry.append(run_output_dir)
+                print(f"[dry_run]   seed={seed}  output={run_output_dir}")
+            return {
+                "combined_hdf5_path": str(combined_hdf5_path.resolve()),
+                "original_hdf5_path": str(original_hdf5_path),
+                "generated_hdf5_paths": [str(p) for p in generated_hdf5_paths],
+                "num_combined_demos": 0,
+                "num_generated_demos": 0,
+                "heuristic": heuristic_name,
+                "iteration_idx": self.iteration_idx,
+                "train_dirs": train_dirs_dry,
+            }
 
         with h5py.File(original_hdf5_path, "r") as f:
             num_base = sum(1 for k in f["data"].keys() if k.startswith("demo_"))
@@ -459,8 +573,10 @@ class TrainFlywheelIterStep(PipelineStep[dict]):
                 if i > 0 and current_src != original_hdf5_path:
                     try:
                         current_src.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"[train_flywheel_iter] Failed to clean up temp file {current_src}: {exc}"
+                        ) from exc
                 current_src = dst
 
         with h5py.File(combined_hdf5_path, "r") as f:
@@ -555,13 +671,6 @@ class TrainFlywheelIterStep(PipelineStep[dict]):
                 tags_str = "[" + ",".join(str(t) for t in wandb_tags) + "]"
                 overrides.append(f"logging.tags={tags_str}")
             overrides.extend(baseline_diffusion_extra_overrides(baseline))
-
-            if self.dry_run:
-                print(
-                    f"[dry_run] TrainFlywheelIterStep iter={self.iteration_idx}  "
-                    f"seed={seed}  output={run_output_dir}"
-                )
-                continue
 
             pathlib.Path(run_output_dir).mkdir(parents=True, exist_ok=True)
             if num_gpus > 1:

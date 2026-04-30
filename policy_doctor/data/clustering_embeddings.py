@@ -104,11 +104,30 @@ def extract_infembed_slice_windows(
     window_width: int,
     stride: int,
     aggregation: str,
+    infembed_dir: pathlib.Path | None = None,
 ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
-    trak_dirs = sorted(eval_dir_abs.glob("default_trak_results-*"))
-    if not trak_dirs:
-        raise FileNotFoundError(f"No TRAK results in {eval_dir_abs}")
-    trak_dir = trak_dirs[-1]
+    """Extract sliding-window embeddings from InfEmbed output.
+
+    Args:
+        eval_dir_abs:  Absolute path to the eval output directory.
+        window_width:  Sliding-window width in timesteps.
+        stride:        Sliding-window stride.
+        aggregation:   How to aggregate within each window (sum/mean/…).
+        infembed_dir:  Explicit path to the directory containing
+                       ``infembed_embeddings.npz``.  When provided, the
+                       legacy ``default_trak_results-*`` glob is skipped.
+                       Required for flywheel runs that have no TRAK dir.
+    """
+    if infembed_dir is not None:
+        trak_dir = pathlib.Path(infembed_dir)
+    else:
+        trak_dirs = sorted(eval_dir_abs.glob("default_trak_results-*"))
+        if not trak_dirs:
+            raise FileNotFoundError(
+                f"No InfEmbed/TRAK results found in {eval_dir_abs}. "
+                "Pass infembed_dir explicitly for flywheel eval dirs."
+            )
+        trak_dir = trak_dirs[-1]
 
     emb_path = trak_dir / "infembed_embeddings.npz"
     if not emb_path.exists():

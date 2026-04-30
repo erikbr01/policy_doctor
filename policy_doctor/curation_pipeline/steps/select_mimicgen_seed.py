@@ -88,6 +88,22 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             f"success_only={success_only}  top_k_paths={top_k_paths}"
         )
 
+        if self.dry_run:
+            print(
+                f"[dry_run] SelectMimicgenSeedStep  heuristic={heuristic_name!r}  "
+                f"num_seeds={num_seeds}"
+            )
+            return {
+                "seed_hdf5_path": str((self.step_dir / "seed.hdf5").resolve()),
+                "num_seeds": num_seeds,
+                "rollout_idxs": [],
+                "heuristic": heuristic_name,
+                "selection_info": [],
+                "policy_seed": "0",
+                "clustering_dir": "",
+                "rollouts_hdf5": "",
+            }
+
         # --- Load clustering result ---
         # Use parent_run_dir so this step finds RunClusteringStep when running
         # inside a CompositeStep (where run_dir is the composite's sub-directory).
@@ -137,6 +153,12 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         else:
             rollouts_hdf5 = _resolve_rollouts_hdf5(self.cfg, self.repo_root, seed)
             print(f"  [select_mimicgen_seed] rollouts_hdf5={rollouts_hdf5}")
+
+        if not rollouts_hdf5.exists():
+            raise FileNotFoundError(
+                f"[select_mimicgen_seed] rollouts HDF5 not found: {rollouts_hdf5}. "
+                "EvalFlywheelPolicyStep (or the task eval) may not have completed successfully."
+            )
 
         # --- Build and run heuristic ---
         heuristic = build_heuristic(
