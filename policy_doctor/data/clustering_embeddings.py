@@ -140,7 +140,6 @@ def extract_infembed_slice_windows(
 def extract_trak_slice_windows(
     eval_dir_abs: pathlib.Path,
     train_dir_base: str | None,
-    task_cfg: dict,
     repo_root: pathlib.Path,
     seed: str,
     reference_seed: str,
@@ -149,6 +148,8 @@ def extract_trak_slice_windows(
     aggregation: str,
     demo_split: str = "both",
     level: str = "rollout",
+    train_ckpt: str = "latest",
+    exp_date: str = "default",
 ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
     from policy_doctor.data.influence_loader import load_influence_data
     from influence_visualizer.data_loader import get_train_dir_for_seed
@@ -164,8 +165,8 @@ def extract_trak_slice_windows(
     data = load_influence_data(
         eval_dir=eval_dir_str,
         train_dir=train_dir_str,
-        train_ckpt=task_cfg.get("train_ckpt", "latest"),
-        exp_date=task_cfg.get("exp_date", "default"),
+        train_ckpt=train_ckpt,
+        exp_date=exp_date,
         include_holdout=True,
         image_dataset_path=None,
         lazy_load_images=True,

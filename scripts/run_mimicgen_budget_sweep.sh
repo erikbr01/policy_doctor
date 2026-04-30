@@ -255,7 +255,7 @@ for idx in $(seq 0 $((TOTAL_COMBOS - 1))); do
             experiment="${EXPERIMENT}" \
             run_dir="${run_dir}" \
             seeds="[${seed}]" \
-            ${date_override:+"${date_override}"} \
+            ${date_override} \
             ${demos_override:+"${demos_override}"} \
             steps="${BUDGET_STEPS}"
 

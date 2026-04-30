@@ -33,8 +33,15 @@ def _write_rollout_hdf5(
     n_timesteps: int = 5,
     state_dim: int = 4,
     action_dim: int = 3,
+    success_map: dict[int, bool] | None = None,
 ) -> Path:
-    """Write a minimal rollout HDF5 with *n_demos* demo groups."""
+    """Write a minimal rollout HDF5 with *n_demos* demo groups.
+
+    Args:
+        success_map: Per-demo success flags written to ``ep.attrs["success"]``.
+                     Demos not listed default to ``True``.  If ``None``, all
+                     demos are marked successful.
+    """
     env_meta = _minimal_env_meta()
     with h5py.File(path, "w") as f:
         data = f.create_group("data")
@@ -54,6 +61,9 @@ def _write_rollout_hdf5(
             )
             ep.attrs["num_samples"] = np.int64(n_timesteps)
             ep.attrs["model_file"] = "<mujoco/>"
+            ep.attrs["success"] = np.int64(
+                int((success_map or {}).get(i, True))
+            )
     return path
 
 
@@ -120,10 +130,12 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
         labels, metadata = _make_flat_data(ep_seqs, success_map)
         return labels, metadata
 
+    _SUCCESS_MAP = {0: True, 1: True, 2: True, 3: False}
+
     def test_returns_seed_selection_result(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4, success_map=self._SUCCESS_MAP)
             h = RandomSelectionHeuristic(random_seed=0)
             result = h.select(labels, metadata, str(hdf5))
         self.assertIsInstance(result, SeedSelectionResult)
@@ -131,7 +143,7 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
     def test_only_picks_successful_by_default(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4, success_map=self._SUCCESS_MAP)
             h = RandomSelectionHeuristic(random_seed=42)
             for _ in range(10):
                 result = h.select(labels, metadata, str(hdf5))
@@ -142,7 +154,7 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
         success_map = {0: False}
         labels, metadata = _make_flat_data(ep_seqs, success_map)
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=1)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=1, success_map=success_map)
             h = RandomSelectionHeuristic(random_seed=0, success_only=False)
             result = h.select(labels, metadata, str(hdf5))
         self.assertEqual(result.rollout_idx, 0)
@@ -150,7 +162,7 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
     def test_reproducible_with_same_seed(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4, success_map=self._SUCCESS_MAP)
             h1 = RandomSelectionHeuristic(random_seed=7)
             h2 = RandomSelectionHeuristic(random_seed=7)
             r1 = h1.select(labels, metadata, str(hdf5))
@@ -160,7 +172,7 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
     def test_info_dict_contains_heuristic_name(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4, success_map=self._SUCCESS_MAP)
             result = RandomSelectionHeuristic(random_seed=0).select(labels, metadata, str(hdf5))
         self.assertEqual(result.info["heuristic"], "random")
         self.assertIn("eligible_count", result.info)
@@ -170,7 +182,7 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
         success_map = {0: False}
         labels, metadata = _make_flat_data(ep_seqs, success_map)
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=1)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=1, success_map=success_map)
             h = RandomSelectionHeuristic(success_only=True)
             with self.assertRaises(RuntimeError):
                 h.select(labels, metadata, str(hdf5))
@@ -179,7 +191,7 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
         """States of the selected trajectory should match what was written for that demo."""
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4, state_dim=4)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=4, state_dim=4, success_map=self._SUCCESS_MAP)
             h = RandomSelectionHeuristic(random_seed=0)
             result = h.select(labels, metadata, str(hdf5))
         # In _write_rollout_hdf5, states for demo_i are all ones * i
@@ -192,6 +204,8 @@ class TestRandomSelectionHeuristic(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestBehaviorGraphPathHeuristic(unittest.TestCase):
+    _SUCCESS_MAP = {0: True, 1: True, 2: False}
+
     def _make_data(self) -> tuple[np.ndarray, list[dict]]:
         """
         3 episodes:
@@ -201,13 +215,12 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
         The highest-probability path to SUCCESS should be [1, 2].
         """
         ep_seqs = {0: [1, 2], 1: [1, 2], 2: [1, 3]}
-        success_map = {0: True, 1: True, 2: False}
-        return _make_flat_data(ep_seqs, success_map)
+        return _make_flat_data(ep_seqs, self._SUCCESS_MAP)
 
     def test_selects_rollout_on_top_path(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3, success_map=self._SUCCESS_MAP)
             h = BehaviorGraphPathHeuristic(top_k_paths=5, success_only=True)
             result = h.select(labels, metadata, str(hdf5))
         # Top path is [1,2] → should pick ep 0 or ep 1 (first match)
@@ -216,14 +229,14 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
     def test_returns_seed_selection_result(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3, success_map=self._SUCCESS_MAP)
             result = BehaviorGraphPathHeuristic().select(labels, metadata, str(hdf5))
         self.assertIsInstance(result, SeedSelectionResult)
 
     def test_info_contains_path_and_prob(self):
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3, success_map=self._SUCCESS_MAP)
             result = BehaviorGraphPathHeuristic().select(labels, metadata, str(hdf5))
         self.assertEqual(result.info["heuristic"], "behavior_graph_path")
         self.assertIn("selected_path", result.info)
@@ -237,7 +250,7 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
         success_map = {0: False, 1: False}
         labels, metadata = _make_flat_data(ep_seqs, success_map)
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=2)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=2, success_map=success_map)
             h = BehaviorGraphPathHeuristic()
             with self.assertRaises(RuntimeError):
                 h.select(labels, metadata, str(hdf5))
@@ -262,7 +275,7 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
         success_map = {0: True, 1: True, 2: False}
         labels, metadata = _make_flat_data(ep_seqs, success_map)
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3)
+            _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3, success_map=success_map)
             # Force success_only=True but set all metadata success to False after building labels
             # Simpler: just use success_only=True, which is the default; the above data should
             # give a valid result (eps 0 and 1 match the top path). Skip this edge case.
@@ -274,7 +287,7 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
         success_map = {0: True, 1: False}
         labels, metadata = _make_flat_data(ep_seqs, success_map)
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=2)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=2, success_map=success_map)
             h = BehaviorGraphPathHeuristic(success_only=False)
             result = h.select(labels, metadata, str(hdf5))
         self.assertIsInstance(result, SeedSelectionResult)
@@ -283,7 +296,7 @@ class TestBehaviorGraphPathHeuristic(unittest.TestCase):
         """Should not crash when top_k_paths=1 and one matching rollout exists."""
         labels, metadata = self._make_data()
         with tempfile.TemporaryDirectory() as td:
-            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3)
+            hdf5 = _write_rollout_hdf5(Path(td) / "rollouts.hdf5", n_demos=3, success_map=self._SUCCESS_MAP)
             h = BehaviorGraphPathHeuristic(top_k_paths=1)
             result = h.select(labels, metadata, str(hdf5))
         self.assertIsNotNone(result)

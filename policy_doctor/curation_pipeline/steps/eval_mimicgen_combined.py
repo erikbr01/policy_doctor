@@ -119,6 +119,34 @@ class EvalMimicgenCombinedStep(PipelineStep[dict]):
                     })
                     continue
 
+                # Skip if already evaluated (output dir + eval_log.json exist).
+                # If dir exists but eval_log.json is absent (partial/crashed run),
+                # delete the partial dir so eval_save_episodes can start fresh.
+                existing_log = pathlib.Path(output_dir) / "eval_log.json"
+                if pathlib.Path(output_dir).exists() and not overwrite:
+                    if existing_log.exists():
+                        rate = _read_mean_score(pathlib.Path(output_dir))
+                        num_success = round(rate * num_episodes)
+                        print(
+                            f"    ckpt={ckpt_stem}  [cached]  "
+                            f"successes~{num_success}/{num_episodes}  rate={rate:.3f}"
+                        )
+                        all_checkpoint_results.append({
+                            "checkpoint": ckpt_stem,
+                            "output_dir": output_dir,
+                            "num_episodes": num_episodes,
+                            "num_success": num_success,
+                            "success_rate": round(rate, 4),
+                        })
+                        continue
+                    else:
+                        # Partial run — clean up so subprocess can re-run cleanly.
+                        import shutil
+                        print(
+                            f"    ckpt={ckpt_stem}  [removing partial output dir, will re-run]"
+                        )
+                        shutil.rmtree(output_dir)
+
                 print(f"    ckpt={ckpt_stem}")
                 cmd = [
                     "conda", "run", "-n", conda_env, "--no-capture-output",
@@ -183,6 +211,15 @@ def _read_mean_score(output_dir: pathlib.Path) -> float:
 
     log_path = output_dir / "eval_log.json"
     if not log_path.exists():
-        return 0.0
+        raise FileNotFoundError(
+            f"eval_log.json not found at {output_dir}. "
+            f"eval_save_episodes may have failed, crashed, or not run yet."
+        )
     data = json.loads(log_path.read_text())
-    return float(data.get("test/mean_score", 0.0))
+    if "test/mean_score" not in data:
+        raise KeyError(
+            f"'test/mean_score' key missing from {log_path}. "
+            f"Keys present: {sorted(data.keys())}. "
+            f"eval_save_episodes output format may have changed."
+        )
+    return float(data["test/mean_score"])

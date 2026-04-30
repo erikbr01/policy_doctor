@@ -154,10 +154,11 @@ def _merge_hdf5s(hdf5_paths: list[pathlib.Path], output_path: pathlib.Path) -> i
     output_path.parent.mkdir(parents=True, exist_ok=True)
     existing = [p for p in hdf5_paths if p.exists()]
     if not existing:
-        # Write an empty shell so downstream code can detect the path
-        with h5py.File(output_path, "w") as out_f:
-            out_f.require_group("data")
-        return 0
+        raise RuntimeError(
+            f"[_merge_hdf5s] All {len(hdf5_paths)} per-seed generation jobs produced no output. "
+            f"Expected files: {[str(p) for p in hdf5_paths]}. "
+            f"Check subprocess logs above for failure details."
+        )
 
     counter = 0
     with h5py.File(output_path, "w") as out_f:
@@ -567,6 +568,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             total_successes = 0
             total_trials = 0
             pass_num = 0
+            failed_seed_passes: list[tuple[int, int]] = []  # (seed_i, pass_num) pairs
 
             while total_successes < success_budget and total_trials < max_total_trials:
                 pass_num += 1
@@ -609,10 +611,11 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                     )
                     if res.returncode != 0:
                         print(
-                            f"  [generate_mimicgen_demos] WARNING: seed {seed_i} "
+                            f"  [generate_mimicgen_demos] ERROR: seed {seed_i} "
                             f"pass {pass_num} subprocess failed "
-                            f"(exit={res.returncode}), skipping."
+                            f"(exit={res.returncode}), skipping this seed/pass."
                         )
+                        failed_seed_passes.append((seed_i, pass_num))
                         total_trials += trials_per_seed  # count as used
                         continue
 
@@ -649,6 +652,14 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                     f"  [generate_mimicgen_demos] WARNING: hit trial limit "
                     f"({total_trials}/{max_total_trials}) with only "
                     f"{total_successes}/{success_budget} successes."
+                )
+
+            if failed_seed_passes:
+                n_failed = len(failed_seed_passes)
+                n_total_passes = pass_num * n_seeds_in_hdf5
+                print(
+                    f"  [generate_mimicgen_demos] WARNING: {n_failed}/{n_total_passes} "
+                    f"seed/pass jobs failed: {failed_seed_passes}"
                 )
 
             # Merge all per-seed/per-pass outputs, then subsample to success_budget
