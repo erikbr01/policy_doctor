@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from PIL import Image
 
@@ -56,6 +56,27 @@ class MockVLMBackend(VLMBackend):
             '{"coherent": true, "score": 0.85, "rationale": "mock backend cluster '
             f"{cluster_id} n_slices={n}"
             '"}'
+        )
+
+
+    def classify_slice(
+        self,
+        *,
+        query_images: Sequence[Image.Image],
+        example_sets: Sequence[Tuple[str, Sequence[Image.Image]]],
+        system_prompt: Optional[str],
+        user_preamble: str,
+        user_prompt: str,
+    ) -> str:
+        # Always predicts the first group label — deterministic for tests.
+        if example_sets:
+            label = example_sets[0][0]
+        else:
+            label = "unclear"
+        n_groups = len(example_sets)
+        return (
+            f"{self.prefix} classify: n_groups={n_groups} "
+            f"n_query_frames={len(query_images)} predicted={label!r}"
         )
 
 

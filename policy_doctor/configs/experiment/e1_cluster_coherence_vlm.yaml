@@ -1,0 +1,41 @@
+# Experiment E1: VLM-based cluster coherence classification
+#
+# Tests whether a VLM can classify held-out slices into their correct
+# influence-derived cluster — validating that clusters are behaviorally meaningful.
+#
+# Requires:
+#   - Completed run_clustering step (or explicit vlm_cluster_classification.clustering_dir)
+#   - Eval episode pickles with 'img' column
+#   - API key env var:  GOOGLE_API_KEY (gemini) or ANTHROPIC_API_KEY (claude)
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     +experiment=e1_cluster_coherence_vlm \
+#     steps=[validate_cluster_coherence_vlm]
+
+vlm_cluster_classification:
+  backend: gemini
+  backend_params:
+    model_name: gemini-2.0-flash
+    # api_key: set GOOGLE_API_KEY env var instead of hardcoding
+    max_output_tokens: 256
+    temperature: 0.3
+
+  # Sampling
+  n_example: 5                   # prototype slices per cluster (centroid-proximal)
+  n_query: 5                     # held-out slices per cluster
+  n_repetitions: 3               # VLM calls per query (majority vote)
+  max_frames_per_storyboard: 4   # frames in each composite storyboard image
+  random_seed: 42                # fixed before any VLM call
+
+  # Optionally cap number of clusters (null = all)
+  max_clusters: null
+
+  # Optional prompt overrides (null = use defaults)
+  system_prompt: null
+  user_preamble_template: null
+  user_prompt_question: null
+
+  # Optional: point to a specific clustering dir instead of run_clustering result
+  # clustering_dir: /path/to/clustering/dir

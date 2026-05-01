@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image
 
@@ -117,6 +117,34 @@ class GeminiVLMBackend(VLMBackend):
         if system_prompt:
             parts.append(system_prompt + "\n\n")
         parts.append(user_prompt)
+        response = self._model.generate_content(parts, generation_config=self._gen_config)
+        return response.text or ""
+
+
+    def classify_slice(
+        self,
+        *,
+        query_images: Sequence[Image.Image],
+        example_sets: Sequence[Tuple[str, Sequence[Image.Image]]],
+        system_prompt: Optional[str],
+        user_preamble: str,
+        user_prompt: str,
+    ) -> str:
+        """Classify query_images into one of the example groups."""
+        parts: list = []
+        if system_prompt:
+            parts.append(system_prompt + "\n\n")
+        if user_preamble:
+            parts.append(user_preamble + "\n\n")
+        for label, imgs in example_sets:
+            parts.append(f"{label}:\n")
+            for img in imgs:
+                parts.append({"mime_type": "image/jpeg", "data": _pil_to_bytes(img)})
+            parts.append("\n")
+        parts.append("Query:\n")
+        for img in query_images:
+            parts.append({"mime_type": "image/jpeg", "data": _pil_to_bytes(img)})
+        parts.append("\n" + user_prompt)
         response = self._model.generate_content(parts, generation_config=self._gen_config)
         return response.text or ""
 

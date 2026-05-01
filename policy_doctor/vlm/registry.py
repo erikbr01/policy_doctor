@@ -76,6 +76,15 @@ _REGISTRY["gemini"] = _build_gemini
 _REGISTRY["gemini_flash"] = _build_gemini
 
 
+def _build_claude(params: Optional[Dict[str, Any]]) -> VLMBackend:
+    from policy_doctor.vlm.backends.claude import build_claude_backend
+
+    return build_claude_backend(params)
+
+
+_REGISTRY["claude"] = _build_claude
+
+
 def register_vlm_backend(name: str, factory: BackendFactory) -> None:
     """Register a custom backend (e.g. from another package)."""
     _REGISTRY[name] = factory
