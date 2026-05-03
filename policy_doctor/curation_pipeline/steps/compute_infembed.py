@@ -71,10 +71,24 @@ class ComputeInfembedStep(PipelineStep[None]):
                 raise FileNotFoundError(f"Eval dir not found: {eval_dir}")
 
             tf32 = bool(OmegaConf.select(attribution, "tf32") or False)
-            # InfEmbed's Arnoldi iteration does many small backward passes — compiling
-            # the wrapper offers little benefit and causes dynamo tracing failures in
-            # einops / nn.ParameterDict ops inside the policy forward.  Always run eager.
-            use_compile = False
+            # InfEmbed acceleration knobs (defaults match the speed-tuned attribution
+            # configs in configs/robomimic/attribution/).  Both are safe for the lowdim
+            # diffusion U-Net (1.1M params); for image policies with a large obs_encoder,
+            # set ``attribution.projection_on_gpu=false`` if you OOM during predict.
+            #
+            # ``compile`` + ``compile_target='inner_unet'`` wraps only the U-Net
+            # (policy.model) with torch.compile.  Embeddings stay bit-equivalent to
+            # eager up to fp32 reductions (cosine 1.0 across the apr26 sweep). The
+            # ``wrapper`` target is kept for completeness but doesn't speed up predict
+            # and trips dynamo on einops + nn.ParameterDict — leave at ``inner_unet``.
+            use_compile = bool(OmegaConf.select(attribution, "compile"))
+            compile_target = str(
+                OmegaConf.select(attribution, "compile_target") or "inner_unet"
+            )
+            projection_on_gpu_cfg = OmegaConf.select(attribution, "projection_on_gpu")
+            projection_on_gpu = (
+                True if projection_on_gpu_cfg is None else bool(projection_on_gpu_cfg)
+            )
 
             cmd_args = [
                 "--exp_name=auto",
@@ -100,6 +114,10 @@ class ComputeInfembedStep(PipelineStep[None]):
                 cmd_args.append("--tf32")
             if use_compile:
                 cmd_args.append("--compile")
+                cmd_args.append(f"--compile_target={compile_target}")
+            cmd_args.append(
+                "--projection_on_gpu" if projection_on_gpu else "--projection_on_cpu"
+            )
             # Optional: override dataset path for MimicGen / RoboCasa when the checkpoint's
             # stored path is stale (machine migration, renamed directory, fresh generation run).
             attribution_dataset_path = OmegaConf.select(attribution, "dataset_path")

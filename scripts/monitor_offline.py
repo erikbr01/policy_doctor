@@ -52,6 +52,9 @@ def _build_classifier(args, mode: str, episodes_dir=None):
         mode=mode,
         device=args.device,
         episodes_dir=episodes_dir,
+        projection_on_gpu=args.projection_on_gpu,
+        compile=args.compile,
+        compile_target=args.compile_target,
     )
 
 
@@ -127,6 +130,26 @@ def main():
     parser.add_argument("--episode_idx", type=int, default=0, metavar="N",
                         help="Episode index written to the 'episode' column in the output CSV "
                              "(default: 0). Useful when appending results from multiple episodes.")
+
+    # InfEmbed predict acceleration knobs (forwarded to InfEmbedStreamScorer).
+    # Defaults match the fastest-known config for the lowdim diffusion U-Net.
+    # For image policies that OOM, pass --projection_on_cpu.  For one-off scoring
+    # where the ~20s torch.compile warmup isn't worth it, pass --no-compile.
+    g = parser.add_argument_group("infembed acceleration")
+    g.add_argument("--projection_on_gpu", dest="projection_on_gpu",
+                   action="store_true", default=True,
+                   help="Keep Arnoldi projection vectors on GPU (default; ~2-3x faster predict).")
+    g.add_argument("--projection_on_cpu", dest="projection_on_gpu",
+                   action="store_false",
+                   help="Keep Arnoldi projection vectors on CPU (use if R+policy OOMs the GPU).")
+    g.add_argument("--compile", dest="compile",
+                   action="store_true", default=True,
+                   help="torch.compile the inner U-Net (default; ~1.1x extra, ~20s warmup).")
+    g.add_argument("--no-compile", dest="compile", action="store_false",
+                   help="Skip torch.compile (avoids the warmup cost).")
+    g.add_argument("--compile_target", choices=["inner_unet", "wrapper"],
+                   default="inner_unet",
+                   help="What to compile when --compile is set (default: inner_unet).")
 
     args = parser.parse_args()
 

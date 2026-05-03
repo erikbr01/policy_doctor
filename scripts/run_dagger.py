@@ -197,6 +197,21 @@ def resolve_checkpoint(train_dir: str, train_ckpt: str) -> Path:
          "instead of running locally. Start the server with "
          "run_policy_server_square_feb5.sh first.",
 )
+# InfEmbed predict acceleration knobs (see InfEmbedStreamScorer docstring).
+@click.option(
+    "--projection_on_gpu/--projection_on_cpu", "projection_on_gpu",
+    default=True,
+    help="Where the Arnoldi projection vectors live (default: GPU; ~2-3x faster predict).",
+)
+@click.option(
+    "--compile/--no-compile", "use_compile", default=True,
+    help="torch.compile the inner U-Net (default: on; ~1.1x extra, ~20s warmup).",
+)
+@click.option(
+    "--compile_target", type=click.Choice(["inner_unet", "wrapper"]),
+    default="inner_unet",
+    help="Compile target when --compile is set (default: inner_unet).",
+)
 def main(
     task: str,
     train_dir: str,
@@ -215,6 +230,9 @@ def main(
     episodes_dir: str,
     no_monitor: bool,
     server_url: str,
+    projection_on_gpu: bool,
+    use_compile: bool,
+    compile_target: str,
 ) -> None:
     """Run DAgger episodes on any robomimic-compatible environment with behavior graph intervention timing."""
 
@@ -342,6 +360,9 @@ def main(
             mode="rollout",
             device=device,
             episodes_dir=episodes_dir,
+            projection_on_gpu=projection_on_gpu,
+            compile=use_compile,
+            compile_target=compile_target,
         )
 
         from policy_doctor.data.clustering_loader import load_clustering_result_from_path

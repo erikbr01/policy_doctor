@@ -123,6 +123,23 @@ class InfEmbedStreamScorer(StreamScorer):
         Loss function name (must match ``--loss_fn``).
     device:
         Torch device string (e.g. ``"cuda:0"``).
+    projection_on_gpu:
+        If ``True``, keep the Arnoldi projection vectors (``fit_results.R``) on GPU.
+        Default ``True`` because it eliminates ~projection_dim small CPU->GPU copies
+        per ``embed()`` call (~2-3x speedup on the lowdim U-Net path).  GPU memory
+        cost ~ ``projection_dim * sum(param_size)``; ~440 MB for the 1.1M-param
+        diffusion U-Net.  Set ``False`` for image policies if R doesn't fit
+        alongside the policy on the device.
+    compile:
+        If ``True``, wrap the inner U-Net with ``torch.compile`` before predict.
+        Default ``True`` — adds ~1.1x on top of GPU R, with a one-time warmup
+        cost (~20s on the first ``embed()`` call).  For long monitoring sessions
+        the warmup amortises; for one-off scoring you may want to leave it off.
+    compile_target:
+        ``'inner_unet'`` (default) compiles only ``policy.model``; embeddings stay
+        bit-equivalent to eager.  ``'wrapper'`` compiles the whole ``DiffusionLossWrapper``;
+        offers no measured speedup on this codebase and trips dynamo on
+        ``einops.rearrange`` + ``nn.ParameterDict`` — leave at ``'inner_unet'``.
     """
 
     def __init__(
@@ -134,6 +151,9 @@ class InfEmbedStreamScorer(StreamScorer):
         num_diffusion_timesteps: int = 8,
         loss_fn: str = "square",
         device: str = "auto",
+        projection_on_gpu: bool = True,
+        compile: bool = True,
+        compile_target: str = "inner_unet",
     ) -> None:
         from diffusion_policy.common.trak_util import (
             get_parameter_names,
@@ -194,7 +214,25 @@ class InfEmbedStreamScorer(StreamScorer):
         else:
             task = DiffusionLowdimFunctionalModelOutput(loss_fn=loss_fn)
 
-        wrapper = DiffusionLossWrapper(self.policy, task)
+        # Optionally compile the inner U-Net.  See class docstring for the
+        # tradeoffs (warmup cost vs. ~1.1x speedup on top of projection_on_gpu).
+        if compile:
+            from diffusion_policy.common.ddp_util import compile_model
+            if compile_target == "wrapper":
+                wrapper_unwrapped = DiffusionLossWrapper(self.policy, task)
+                wrapper = compile_model(
+                    wrapper_unwrapped, fullgraph=False, dynamic=True
+                )
+            elif compile_target == "inner_unet":
+                inner = self.policy.model
+                self.policy.model = compile_model(
+                    inner, fullgraph=False, dynamic=False
+                )
+                wrapper = DiffusionLossWrapper(self.policy, task)
+            else:
+                raise ValueError(f"Unknown compile_target {compile_target!r}")
+        else:
+            wrapper = DiffusionLossWrapper(self.policy, task)
         loss_fn_none = IdentityLossNone()
 
         # --- Load ArnoldiEmbedder from saved fit ---
@@ -205,11 +243,13 @@ class InfEmbedStreamScorer(StreamScorer):
             sample_wise_grads_per_batch=False,
             projection_dim=None,   # overridden by the loaded fit
             arnoldi_dim=None,
-            projection_on_cpu=True,
+            projection_on_cpu=not projection_on_gpu,
             show_progress=False,   # no progress bars for single-sample streaming
             layers=infembed_layers,
         )
-        self._embedder.load(str(Path(infembed_fit_path)), projection_on_cpu=True)
+        self._embedder.load(
+            str(Path(infembed_fit_path)), projection_on_cpu=not projection_on_gpu
+        )
 
         # --- Load pre-computed embeddings ---
         emb_path = Path(infembed_embeddings_path)
