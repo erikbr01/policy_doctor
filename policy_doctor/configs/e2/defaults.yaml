@@ -1,0 +1,112 @@
+# Defaults for Experiment E2 (VLM-proposed demonstrations).
+#
+# Loaded by:
+#   - the proposal_server (via --config)
+#   - pipeline steps build_rollout_pool / score_adherence_e2 (under "e2_proposals" in the
+#     curation pipeline cfg, with explicit `+experiment=e2_smoke_tier{0,1,2}` overrides)
+
+# ---- Run identity ----------------------------------------------------------
+run_id: e2_${now:%Y%m%d_%H%M%S}
+run_dir: /tmp/e2_runs/${e2_proposals.run_id}
+
+# ---- Inputs (must point at existing artifacts) -----------------------------
+pool_episodes_dir: null            # path to eval_save_episodes output
+clustering_dir: null               # path to clustering result dir (see CLAUDE.md)
+storyboard_dir: null               # optional sidecar produced by build_rollout_pool step
+video_dir: null                    # optional
+
+# ---- Task ------------------------------------------------------------------
+task: square_mh                    # square_mh | lift_mh | transport_mh | robocasa_layout_lowdim
+task_hint: ""                      # filled per-task by configs/e2/tasks/<task>.yaml
+
+# ---- Conditions ------------------------------------------------------------
+# Legacy one-shot mode names: "graph", "outcome_only".
+# Agentic mode names:        "A_G", "A_NG", "H_NG", "H_G".
+# The mode flag below selects which proposal pathway runs.
+mode: agentic                      # agentic | one_shot
+conditions: ["A_G", "A_NG"]        # add "H_NG" / "H_G" for human conditions
+include_random_target: false       # third "random target" condition; off for v1
+
+# ---- Request distribution (per-condition, identical across conditions) ----
+n_requests_per_type:
+  full_trajectory: 4
+  recovery: 2
+  alternative_strategy: 2
+
+# ---- Modular plugins (Hydra-string registry) -------------------------------
+graph_representation: combined     # image_only | text_table | combined
+graph_representation_params: {}
+
+# vlm_input_builder is selected per-condition (graph_condition / outcome_condition);
+# override here only to force a non-default builder.
+vlm_input_builder: null
+vlm_input_builder_params: {}
+
+# ---- VLM proposal generation ----------------------------------------------
+vlm_backend: qwen3_vl              # use 'mock' for Tier 0 plumbing tests
+vlm_backend_params:
+  model_id: Qwen/Qwen3-VL-8B-Instruct
+  device: cuda:0
+  torch_dtype: bfloat16
+  max_new_tokens: 1536
+  qwen_frame_input: images
+  high_detail_pixels: true
+vlm_lifecycle: unload              # persistent | unload (single-GPU sharing with sim)
+n_repetitions: 2
+max_retries: 3
+temperature: 0.3
+base_seed: 42
+aggregation: best_consistency_run  # best_consistency_run | union
+
+# ---- Adherence -------------------------------------------------------------
+adherence:
+  weights:
+    initial_condition: 0.25
+    cluster: 0.50
+    success: 0.25
+  filter_threshold: 0.6
+
+# ---- Operator queue --------------------------------------------------------
+queue_shuffle_seed: null           # null = secrets.SystemRandom; set int for reproducibility
+
+# ---- HTTP / GUI ------------------------------------------------------------
+proposal_server:
+  host: 127.0.0.1
+  port: 5003
+chat_enabled: false                # protocol mode; set true for development chat
+
+# ---- Agentic mode (mode == "agentic") -------------------------------------
+agentic:
+  # Per-session call/visual/video budget (Section 5.1 of the spec).
+  budget:
+    max_tool_calls: 80
+    max_visual_calls: 30
+    max_video_calls: 5
+    max_session_duration_s: 1200      # 20 min
+    warning_remaining_threshold: 5
+  # Backend used for chat_with_tools(). 'mock' is the Tier 0 default.
+  agent_backend: claude
+  agent_backend_params:
+    model_name: claude-sonnet-4-6
+    max_tokens: 4096
+  # Loop bounds.
+  max_turns: 100
+  temperature: 0.3
+  # 3 sessions per condition by default; aggregation picks best by consistency.
+  n_sessions_per_condition: 3
+  # Where to compute textual node summaries from.
+  kinematic_summary_strategy: raw_states   # raw_states | cluster_stats
+  # Cache visual results so re-fetches don't charge.
+  cache_enabled: true
+
+# ---- Pre-registration freeze ----------------------------------------------
+# All values above (plus the prompt files and tool schemas) are dumped to
+#   <run_dir>/pre_registration.yaml
+# at the start of a run. Changing them mid-run is a protocol violation.
+pre_register: true
+
+# ---- Bring in task-specific defaults --------------------------------------
+defaults:
+  - tasks: square_mh
+  - prompts: graph_outcome
+  - _self_

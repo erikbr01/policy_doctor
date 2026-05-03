@@ -3,9 +3,63 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Literal, Optional, Sequence, TYPE_CHECKING, Tuple
 
 from PIL import Image
+
+if TYPE_CHECKING:
+    from policy_doctor.vlm.proposals.vlm_input.base import Message
+
+
+# ---------------------------------------------------------------------------
+# Tool-use primitives (used by the agentic proposal loop)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """Provider-neutral tool invocation requested by the model.
+
+    Attributes
+    ----------
+    id:
+        Provider-assigned tool_use id; the loop attaches the corresponding
+        ``tool_result`` content block referencing this id on the next turn.
+    name:
+        Tool name (matches the registered :class:`ToolSpec.name`).
+    arguments:
+        Parsed argument dict; backends are responsible for JSON parsing.
+    """
+
+    id: str
+    name: str
+    arguments: Dict[str, Any]
+
+
+@dataclass
+class TokenUsage:
+    """Token accounting for one assistant turn. Kept loose to match providers."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+
+@dataclass
+class AssistantTurn:
+    """One model turn: optional text, optional tool calls, stop reason, usage."""
+
+    text: Optional[str] = None
+    tool_calls: List[ToolCall] = field(default_factory=list)
+    stop_reason: str = "end_turn"  # end_turn | tool_use | max_tokens | stop_sequence
+    usage: TokenUsage = field(default_factory=TokenUsage)
+    raw: Any = None  # opaque provider response, kept for debugging / traces
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
 
 
 class VLMBackend(ABC):
@@ -82,4 +136,55 @@ class VLMBackend(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement slice classification."
+        )
+
+    def generate_structured(
+        self,
+        *,
+        messages: Sequence["Message"],
+        json_schema: Dict[str, Any],
+        max_retries: int = 3,
+        temperature: float = 0.3,
+        seed: Optional[int] = None,
+    ) -> Tuple[str, Any, int]:
+        """Generate JSON matching ``json_schema`` from a multi-turn ``messages`` list.
+
+        Returns ``(raw_response_text, parsed_json, n_retries_used)``.
+
+        Default implementation raises NotImplementedError; backends used for the
+        Experiment-E2 proposal generator override this. The propose pipeline also
+        provides a generic shim that wraps any backend exposing a plain
+        ``generate(messages, *, temperature, seed) -> str`` method, so most local
+        backends only need to implement ``generate``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement generate_structured."
+        )
+
+    # ------------------------------------------------------------------
+    # Tool-use primitive (used by the agentic proposal loop)
+    # ------------------------------------------------------------------
+
+    def chat_with_tools(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        system: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.3,
+        seed: Optional[int] = None,
+    ) -> AssistantTurn:
+        """One model turn over a multi-turn message list with tool declarations.
+
+        Provider-neutral message format follows Anthropic's content-block schema
+        (text / image / tool_use / tool_result blocks); backends translate to
+        their native API. ``tools`` are
+        ``{"name", "description", "input_schema"}`` dicts (Anthropic shape).
+
+        Returns an :class:`AssistantTurn`. The session loop is responsible for
+        running the tools and constructing the next message.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement chat_with_tools."
         )

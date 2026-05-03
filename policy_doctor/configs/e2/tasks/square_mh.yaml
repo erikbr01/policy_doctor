@@ -1,0 +1,31 @@
+# Task-specific E2 settings for Robosuite Square Multi-Hand.
+#
+# Loaded as a default group from configs/e2/defaults.yaml (defaults: - tasks: square_mh).
+
+# @package _global_
+task_hint: |
+  Robosuite Square Multi-Hand: a Franka Panda must pick up a square nut from
+  the table and place it on a vertical post. The nut has a hole through its
+  center; the post is roughly cylindrical. Successful demonstrations end with
+  the nut threaded onto the post.
+
+# Object layout in the flat ``object`` obs vector — used by detectors / debug.
+object_layout:
+  square_nut:
+    pos_start: 0
+    quat_start: 3
+  peg:
+    pos_start: 7
+    quat_start: 10
+
+# Operator-facing wording the VLM is told to follow. Plain behaviorally-observable terms.
+example_target_behaviors:
+  - "approach the nut from above and grasp it firmly"
+  - "lift the nut clear of the table before moving toward the post"
+  - "align the nut hole with the post tip before lowering"
+  - "release the nut once it is seated on the post"
+
+# Storyboards: 4 frames per rollout (2x2 grid)
+storyboard:
+  n_frames: 4
+  size: [256, 256]

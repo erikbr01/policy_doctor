@@ -1,0 +1,18 @@
+# Hydra config for scripts/run_e2_sim.py — sim-side script that pulls requests
+# from the proposal server and executes them.
+#
+# Run from third_party/cupid/ with the cupid env active.
+
+task: square_mh                # square_mh | lift_mh | transport_mh | robocasa_layout_lowdim
+train_dir: null                # path to training output dir; null = keyboard-only teleop
+train_ckpt: best
+dataset_path: null             # auto-resolved from task if null
+device: auto                   # auto | cuda:0 | mps | cpu
+output_dir: /tmp/e2_demos
+
+proposal_server: http://127.0.0.1:5003
+viz_url: http://127.0.0.1:5002
+dagger_config: keyboard_default
+
+max_demos: null                # null = drain queue
+poll_interval_s: 2.0

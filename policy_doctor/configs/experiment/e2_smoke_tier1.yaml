@@ -1,0 +1,39 @@
+# @package _global_
+# E2 Tier 1 smoke: real Claude tool use, real sim, no retraining or eval suite.
+# Use to verify Claude image-in-tool-result, GUI flow, init_state replay,
+# classifier round-trip, agent rationale + trace.
+
+defaults:
+  - /e2: defaults
+  - _self_
+
+e2_proposals:
+  mode: agentic
+  conditions: ["A_G", "A_NG"]
+  chat_enabled: false
+  agentic:
+    agent_backend: claude
+    agent_backend_params:
+      model_name: claude-sonnet-4-6
+      max_tokens: 2048
+    n_sessions_per_condition: 1
+    max_turns: 25
+    budget:
+      max_tool_calls: 15
+      max_visual_calls: 3
+      max_video_calls: 0
+      max_session_duration_s: 600
+      warning_remaining_threshold: 3
+    kinematic_summary_strategy: raw_states
+    cache_enabled: true
+
+  # Legacy one-shot path — unused in tier 1 but kept loadable.
+  vlm_backend: mock
+  vlm_backend_params: {}
+  vlm_lifecycle: persistent
+  n_repetitions: 1
+  max_retries: 1
+  n_requests_per_type:
+    full_trajectory: 2
+    recovery: 1
+    alternative_strategy: 1
