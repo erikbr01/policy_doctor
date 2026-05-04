@@ -481,6 +481,68 @@ def _make_app():
 
         return jsonify(request_id=req.request_id, n_in_queue=len(_STATE.queue))
 
+    @app.post("/requests/import_session")
+    def import_session():
+        """Bulk-enqueue the submitted requests from an offline session dir.
+
+        Body: ``{"session_dir": "/path/to/agent/session"}``. Reads
+        ``submitted_requests.json`` (the artefact written by
+        ``run_one_session``) and pushes each entry onto the operator queue.
+        Same denylist + rollout-id validation as ``/human_request`` and the
+        in-server agentic path. Idempotent on ``request_id``.
+
+        Workflow this serves: the agent ran outside the server (e.g. via
+        ``scripts/run_e2_agent_transport_mh.py``), and now the operator
+        wants to drain that session's requests through the sim runner.
+        """
+        from policy_doctor.vlm.proposals.request import (
+            DemonstrationRequest,
+            RequestValidationError,
+            validate_request,
+        )
+
+        body = request.get_json(force=True, silent=True) or {}
+        sd = body.get("session_dir")
+        if not sd:
+            return jsonify(error="session_dir is required"), 400
+        sub_path = Path(sd) / "submitted_requests.json"
+        if not sub_path.exists():
+            return jsonify(error=f"no submitted_requests.json in {sd}"), 404
+
+        try:
+            entries = json.loads(sub_path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            return jsonify(error=f"could not parse {sub_path}: {e}"), 400
+
+        added: List[str] = []
+        skipped: List[Dict[str, str]] = []
+        with _STATE.lock:
+            allowed_rids = set(_STATE.pool.rollout_ids)
+            for i, sr in enumerate(entries):
+                req_dict = sr["request"] if isinstance(sr, dict) and "request" in sr else sr
+                try:
+                    req = DemonstrationRequest.from_dict(req_dict)
+                    validate_request(req, allowed_rollout_ids=allowed_rids)
+                except (KeyError, TypeError, RequestValidationError) as e:
+                    skipped.append({"index": str(i), "reason": f"invalid: {e}"})
+                    continue
+                if req.request_id in _STATE.requests:
+                    skipped.append({"index": str(i), "reason": "duplicate request_id"})
+                    continue
+                _STATE.requests[req.request_id] = _RequestRecord(request=req)
+                _STATE.queue.append(req.request_id)
+                added.append(req.request_id)
+            _shuffle_queue(_STATE, seed=_CFG.get("queue_shuffle_seed"))
+
+        return jsonify(
+            session_dir=str(sub_path.parent),
+            n_added=len(added),
+            n_skipped=len(skipped),
+            added=added,
+            skipped=skipped,
+            n_in_queue=len(_STATE.queue),
+        )
+
     # ---- agentic proposal session ---------------------------------------
 
     @app.post("/agent_session")
@@ -525,6 +587,7 @@ def _make_app():
             task_hint=_CFG.get("task_hint", ""),
             kinematic_summary_strategy=_CFG.get("agentic_kin_strategy", "raw_states"),
             cache_enabled=bool(_CFG.get("agentic_cache_enabled", True)),
+            storyboard=_CFG.get("agentic_storyboard"),
         )
 
         # Enqueue the agent's submitted requests on the existing operator queue.
@@ -709,6 +772,7 @@ def boot(
         "agentic_max_tokens": agentic_cfg.get("max_tokens", 4096),
         "agentic_kin_strategy": agentic_cfg.get("kinematic_summary_strategy", "raw_states"),
         "agentic_cache_enabled": agentic_cfg.get("cache_enabled", True),
+        "agentic_storyboard": agentic_cfg.get("storyboard"),
     }
 
 

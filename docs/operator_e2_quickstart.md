@@ -118,12 +118,23 @@ practice. A passing run does not mean a useful run.
 ## 3. Enqueue requests onto the server
 
 The agent run writes to `--out_dir`; the server doesn't auto-pick it up.
-Push the submitted requests onto the server's queue with the human-mode
-endpoint, or restart the server with `requests_dir` pointed at your
-session dir. (Working detail: the server has POST `/human_request` for
-single-request enqueue; an automation around the bulk case is left to the
-user — the simplest is to script a loop that POSTs each entry of
-`submitted_requests.json`.)
+Bulk-import the whole session in one call:
+
+```bash
+curl -s -X POST http://127.0.0.1:5003/requests/import_session \
+    -H "Content-Type: application/json" \
+    -d '{"session_dir": "/tmp/e2_session_seed0"}'
+```
+
+The endpoint reads `submitted_requests.json` from that dir, validates
+every entry against the same denylist + rollout-id checks the server
+applies elsewhere, and pushes all of them onto the operator queue.
+Returns the list of added request_ids and any skipped entries with
+reasons. Idempotent on `request_id`, so re-running is safe.
+
+Single requests still work via `POST /human_request` (rationale required;
+limited to `H_NG` / `H_G` conditions). For bulk import, prefer the
+endpoint above.
 
 ---
 
@@ -269,8 +280,5 @@ Inspect the storyboards in the report. For each submission, ask yourself:
    even with backoff. The pragmatic answer is a paid Gemini key or
    Anthropic. The retry handles transient burst limits; not quota
    exhaustion.
-4. **Bulk enqueue**: no `POST /requests/batch` endpoint yet. Use a
-   one-line Python loop over `submitted_requests.json` to push to
-   `/human_request` per entry.
-5. **Operator authentication**: the proposal server has no auth. Run on
+4. **Operator authentication**: the proposal server has no auth. Run on
    `127.0.0.1` only; do not expose to a network without a reverse proxy.
