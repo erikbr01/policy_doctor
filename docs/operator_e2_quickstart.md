@@ -12,6 +12,35 @@ all four for every test — see "Minimal smoke test" below.
 
 ---
 
+## ⚠ Before you start: agent-backend reality check
+
+The agent loop needs an LLM that implements `chat_with_tools`. As of
+this commit, that means **Anthropic Claude or hosted Gemini only**:
+
+- `Qwen2VLBackend` does **not** implement `chat_with_tools` (one-shot
+  `classify_slice` only). Local-VLM-as-agent is a known gap, listed
+  under "Open gaps" below.
+- The free-tier Gemini quota for this project shows `limit: 0` for
+  `gemini-2.0-flash` and `gemini-3.1-pro`; `gemini-flash-latest` works
+  for ~8 turns before hitting per-minute caps. **An A_G session needs
+  on the order of 25–40 turns**, so free-tier Gemini will NOT finalize.
+  Either upgrade Gemini billing or use Anthropic.
+
+Recommended setup before running anything:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...      # the path that actually works
+# OR upgrade your Gemini key to a billable tier; flash-latest is fine.
+```
+
+The mock backend (`--backend mock`) is the cheapest plumbing check —
+runs the full agent loop without any API calls, but its scripted
+submissions are rejected by the evidence gate (that's the gate
+working as designed; it confirms plumbing without exercising real
+proposals).
+
+---
+
 ## 0. Prerequisites
 
 Three on-disk artefacts and three conda envs.

@@ -185,7 +185,12 @@ def _make_get_rollout_video(ctx: SessionContext) -> ToolSpec:
         if fmt == "storyboard":
             img = _load_storyboard(entry.storyboard_path)
             if img is None:
-                img = _render_slice_storyboard(entry.episode_pkl, 0, max(entry.length - 1, 0))
+                from policy_doctor.vlm.proposals.agents.tools.access import _storyboard_kwargs
+
+                img = _render_slice_storyboard(
+                    entry.episode_pkl, 0, max(entry.length - 1, 0),
+                    **_storyboard_kwargs(ctx),
+                )
             if img is None:
                 return ToolResult.error(
                     "get_rollout_video",

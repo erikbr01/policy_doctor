@@ -137,7 +137,11 @@ class BuildRolloutPoolStep(PipelineStep[Dict[str, Any]]):
             frames = self._load_episode_frames(entry.episode_pkl, n_frames=n_frames)
             if not frames:
                 continue
-            composite = make_storyboard(frames, max_frames=n_frames)
+            # Cap to n_frames here; make_storyboard does not subsample for us.
+            if len(frames) > n_frames:
+                step = (len(frames) - 1) / max(1, n_frames - 1)
+                frames = [frames[int(round(i * step))] for i in range(n_frames)]
+            composite = make_storyboard(frames, target_size=size)
             composite = composite.resize(size, Image.LANCZOS) if composite.size != size else composite
             composite.save(entry.storyboard_path)
             n_done += 1
