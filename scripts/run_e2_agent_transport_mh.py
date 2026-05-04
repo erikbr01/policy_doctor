@@ -82,15 +82,24 @@ def _make_backend(backend: str, model_id: str, max_new_tokens: int):
 
         return ClaudeVLMBackend(model_name=model_id, max_tokens=max_new_tokens)
 
+    if backend == "qwen":
+        from policy_doctor.vlm.backends.qwen3_vl_agent import Qwen3VLAgentBackend
+
+        return Qwen3VLAgentBackend(
+            model_id=model_id,
+            load_in_4bit=True,
+            device_map="auto",
+            max_memory={0: "22GiB", 1: "22GiB"},
+            torch_dtype="bfloat16",
+            max_new_tokens=max_new_tokens,
+        )
+
     if backend == "mock":
         from policy_doctor.vlm.backends.mock import MockVLMBackend
 
         return MockVLMBackend()
 
-    raise ValueError(
-        f"unsupported backend {backend!r}. Use 'gemini', 'claude', or 'mock'. "
-        "Qwen-as-agent requires implementing chat_with_tools — currently unsupported."
-    )
+    raise ValueError(f"unsupported backend {backend!r}. Use 'gemini', 'claude', 'qwen', or 'mock'.")
 
 
 def main() -> int:
@@ -100,7 +109,7 @@ def main() -> int:
     ap.add_argument("--out_dir", type=Path, default=None)
     ap.add_argument("--condition", choices=["A_G", "A_NG"], default="A_G")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--backend", choices=["gemini", "claude", "mock"], default="gemini")
+    ap.add_argument("--backend", choices=["gemini", "claude", "qwen", "mock"], default="gemini")
     ap.add_argument("--model_id", default="gemini-2.5-flash")
     ap.add_argument("--max_new_tokens", type=int, default=4096)
     ap.add_argument("--max_tool_calls", type=int, default=25)
