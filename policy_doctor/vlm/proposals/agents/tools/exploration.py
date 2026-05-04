@@ -54,6 +54,60 @@ _FINALIZE_EXPLORATION_SCHEMA = {
 }
 
 
+def _render_failure_mode_summary(taxonomy: List[Dict[str, Any]], summary: str) -> str:
+    """Render a human-readable markdown summary of failure modes from the taxonomy."""
+    from collections import defaultdict
+
+    by_category: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for entry in taxonomy:
+        if not isinstance(entry, dict):
+            continue
+        cat = entry.get("failure_mode_category") or "unknown"
+        by_category[cat].append(entry)
+
+    recommended = [
+        e for e in taxonomy
+        if isinstance(e, dict) and e.get("recommended_for_submission")
+    ]
+
+    lines: List[str] = ["# Exploration: Failure Mode Summary", ""]
+    lines += [summary, ""]
+
+    lines += ["## Clusters by failure mode", ""]
+    # Sort categories: put unknown last
+    cats = sorted(by_category, key=lambda c: (c == "unknown", c))
+    for cat in cats:
+        entries = sorted(by_category[cat], key=lambda e: -e.get("failure_likelihood", 0.0))
+        cluster_names = ", ".join(f"c{e['cluster_id']}" for e in entries)
+        lines.append(f"### {cat}  ({cluster_names})")
+        for e in entries:
+            cid = e.get("cluster_id", "?")
+            fl = e.get("failure_likelihood", 0.0)
+            phase = e.get("trajectory_phase", "unknown")
+            engaged = e.get("shows_robot_object_engagement", False)
+            rec = "✓ recommended" if e.get("recommended_for_submission") else "✗ skip"
+            notes = e.get("notes", "")
+            lines.append(
+                f"- **c{cid}** — fl={fl:.2f}, phase={phase}, "
+                f"engaged={engaged}, {rec}"
+                + (f"\n  _{notes}_" if notes else "")
+            )
+        lines.append("")
+
+    lines += ["## Recommended for submission", ""]
+    if recommended:
+        for e in sorted(recommended, key=lambda e: -e.get("failure_likelihood", 0.0)):
+            lines.append(
+                f"- **c{e['cluster_id']}** ({e.get('failure_mode_category','?')}, "
+                f"fl={e.get('failure_likelihood',0.0):.2f}, "
+                f"phase={e.get('trajectory_phase','?')})"
+            )
+    else:
+        lines.append("_None flagged._")
+
+    return "\n".join(lines) + "\n"
+
+
 def _make_finalize_exploration(
     ctx: SessionContext,
     out_dir: Optional[Path] = None,
@@ -82,6 +136,9 @@ def _make_finalize_exploration(
             out_path.mkdir(parents=True, exist_ok=True)
             (out_path / "cluster_taxonomy.json").write_text(
                 json.dumps(payload, indent=2, default=str)
+            )
+            (out_path / "failure_mode_summary.md").write_text(
+                _render_failure_mode_summary(taxonomy, summary)
             )
 
         ctx.finalized = True
