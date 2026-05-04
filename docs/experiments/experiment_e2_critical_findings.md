@@ -212,6 +212,86 @@ grounding its prose. Whether it will use that capability correctly in
 finalized submissions depends on running long enough to submit, which
 needs a paid backend.
 
+## 7c. Update — Qwen3-VL-32B 4-bit ran the agent end-to-end
+
+After committing `Qwen3VLAgentBackend` (`policy_doctor/vlm/backends/
+qwen3_vl_agent.py`, commit 6f3f958), I ran the same A_G session driver
+(`scripts/run_e2_agent_transport_mh.py --backend qwen --model_id
+Qwen/Qwen3-VL-32B-Instruct`) on the rebuilt seed-0 r512 transport_mh
+clustering. The model loaded in 4-bit NF4 across two GPUs, ran the full
+agent loop for 28 turns, and **submitted 3 evidence-grounded requests
+before OOMing during the final-turn generation**. Headline win: the
+local-VLM-as-agent path now works without an API key.
+
+### What I read in the storyboards (verbatim notes)
+
+**Sub#1 (c5, recovery, target=head):** evidence
+`r0147_t64_t68 / r0120_t72_t76 / r0187_t72_t76`. The agentview shows the
+robot arm pick up the hammer, lift it, and drop it onto the floor across
+the padded window. The robot0 wrist cam shows the gripper holding the
+hammer by the **handle** at the moment of drop — the wooden stick is
+clearly visible inside the gripper. The agent's prescription ("reposition
+above the head") is therefore a coherent re-grasp suggestion grounded in
+the imagery: the failure was a handle grasp; the fix is a head grasp.
+**Verdict: defensible.**
+
+**Sub#2 (c11, recovery, target=handle):** evidence `r0166_t42_t46 /
+r0156_t22_t26 / r0194_t20_t24`. Same fabrication pattern as the prior
+Claude session. The agentview shows static bins with the hammer sitting
+inside; no active manipulation. The robot0 wrist cam shows empty wood
+texture / table edge — the gripper is not engaged with the hammer. The
+agent's claim "the gripper closes too early or misaligns" has **no visual
+support in any of the three cited storyboards**.
+
+**Sub#3 (c4, full_trajectory):** evidence `r0018_t6_t10 / r0151_t6_t10 /
+r0091_t0_t4`. The agentview shows what looks like the start of a rollout
+(robot in initial pose, hammer in bin); the wrist cam shows a generic bin
+wall. The agent's reasoning text ("the same failure: the hammer is
+dropped, the gripper closes too early or misaligns") **copy-pastes from
+the recovery sub#2 template** even though this submission is a
+`full_trajectory` request and the cited frames are early in the
+trajectory (not failure frames at all). The text reuse is sloppy.
+
+### What this changes about my prior conclusions
+
+The c11 fabrication is reproducible across two distinct LLMs (Claude in
+the original session, Qwen3-VL-32B here). Both models invent the same
+"gripper closes misaligned" story. This is **not an LLM hallucination
+issue per se** — it's a *data* issue: the slices the clustering chose to
+represent c11 do not show the failure mode that c11 supposedly
+characterises. Either:
+
+* the cluster's centroid window is offset from the actual failure event
+  in the rollout (and the failure happens 20+ frames before/after the
+  cited window — the new ±12 padding partially mitigates this but not
+  fully);
+* or c11 is a "transition" cluster whose entries are *near* the failure
+  but not *at* it, and the agent's prior about high failure_likelihood
+  is what's driving the prose (post-hoc rationalization);
+* or the eval pool genuinely contains slices in c11 where the gripper
+  never engages, and the cluster is heterogeneous.
+
+This is testable: pull all c11 slices, sort by `centroid_distance`, and
+look at the closest 10 instead of just 3. If they all look like the
+empty-floor wrist cams, the cluster is genuinely uninformative for grasp
+judgement; the experiment should down-weight c11 (or any cluster whose
+slices fail a "robot-object-engagement" heuristic) before the agent
+sees it.
+
+### Mechanical/operational notes from the Qwen run
+
+* `revise_request` duplicate-gate fix from commit 5f9bd43 fired in
+  production: the agent's first submission text for c5 was identical to
+  the upcoming c11 text; the gate rejected it; the agent rolled back and
+  revised to differentiate by "head" vs "handle". The revision_history
+  field on sub#1 records this verbatim. The fix worked.
+* OOM at turn 28 during the long final-turn generation. GPU 1 had 1 GiB
+  free of 23.5 GiB; bnb activation memory grew with context length.
+  Mitigation: lower `--max_new_tokens` (1024 → 512), or cap the
+  context window with a sliding-window prune in the session loop after
+  N turns. The 3 submissions had already persisted, so no work was lost.
+* Run took ~5–7 minutes for model load + 28-turn agent loop.
+
 ## 8. Recommended next experimental moves
 
 In rough priority order:
