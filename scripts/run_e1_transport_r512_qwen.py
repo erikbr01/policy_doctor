@@ -87,6 +87,29 @@ def main() -> int:
              "after each slice's storyboard. Adds tokens; complements the "
              "image with the same numeric state the policy receives.",
     )
+    ap.add_argument(
+        "--storyboard_mode",
+        default="composite",
+        choices=["composite", "frames"],
+        help="composite (default) packs frames into one image per slice. "
+             "frames sends each frame as its own image (more visual tokens, "
+             "preserves per-frame resolution).",
+    )
+    ap.add_argument(
+        "--composite_target_size",
+        type=int,
+        default=512,
+        help="Side length of the composite image when storyboard_mode=composite. "
+             "Per-cell resolution scales as ~target/sqrt(max_frames). Default 512.",
+    )
+    ap.add_argument(
+        "--query_storyboard_mode",
+        default=None,
+        choices=["composite", "frames"],
+        help="Override storyboard_mode for the query slice only — enables the "
+             "hybrid setup (composite examples + frames query). When unset, "
+             "uses --storyboard_mode for both.",
+    )
     args = ap.parse_args()
 
     import policy_doctor as _pd
@@ -156,6 +179,9 @@ def main() -> int:
         view_window_extension=args.view_window_extension,
         include_action_text=args.include_action_text,
         include_state_text=args.include_state_text,
+        storyboard_mode=args.storyboard_mode,
+        composite_target_size=args.composite_target_size,
+        query_storyboard_mode=args.query_storyboard_mode,
     )
 
     print("\n=== Summary ===")

@@ -437,7 +437,7 @@ def build_sample_plan(
 # Frame loading + storyboard creation
 # ---------------------------------------------------------------------------
 
-def _load_storyboard(
+def _load_slice_images(
     eval_dir: pathlib.Path,
     slice_idx: int,
     metadata: List[dict],
@@ -445,14 +445,23 @@ def _load_storyboard(
     rng: np.random.Generator,
     *,
     view_window_extension: int = 0,
-) -> "Image.Image":
-    """Render one slice as a storyboard composite.
+    storyboard_mode: str = "composite",
+    composite_target_size: int = 512,
+) -> "List[Image.Image]":
+    """Load a slice as a list of images.
+
+    ``storyboard_mode``:
+      - ``"composite"`` (default): returns a single-element list ``[storyboard]``
+        where the frames are tiled into one composite image of size
+        ``(composite_target_size, composite_target_size)``. Per-cell resolution
+        scales as ``composite_target_size / sqrt(max_frames)``.
+      - ``"frames"``: returns the full list of individual frame images at
+        their native resolution (no compositing). Costs more visual tokens
+        but preserves per-frame resolution.
 
     ``view_window_extension`` widens the visual frame window symmetrically by
-    ``view_window_extension`` timesteps on each side, **without changing the
-    cluster window itself** — so the same sample plan can probe whether longer
-    visual context (more motion across frames) recovers more accuracy. Defaults
-    to 0 (frames only from inside the cluster window).
+    that many timesteps on each side, **without changing the cluster window
+    itself**.
     """
     from PIL import Image
 
@@ -465,8 +474,39 @@ def _load_storyboard(
         eval_dir, r_idx, w0, w1, max_frames=max_frames, rng=rng
     )
     if not frames:
-        return Image.new("RGB", (64, 64))
-    return make_storyboard(frames)
+        return [Image.new("RGB", (64, 64))]
+    if storyboard_mode == "frames":
+        return list(frames)
+    if storyboard_mode == "composite":
+        return [make_storyboard(
+            frames,
+            target_size=(int(composite_target_size), int(composite_target_size)),
+        )]
+    raise ValueError(
+        f"Unknown storyboard_mode={storyboard_mode!r}; expected 'composite' or 'frames'."
+    )
+
+
+def _load_storyboard(
+    eval_dir: pathlib.Path,
+    slice_idx: int,
+    metadata: List[dict],
+    max_frames: int,
+    rng: np.random.Generator,
+    *,
+    view_window_extension: int = 0,
+) -> "Image.Image":
+    """Backward-compat shim — returns a single composite image.
+
+    Prefer :func:`_load_slice_images` for new code; this preserves the older
+    one-image-per-slice contract for callers that haven't been migrated.
+    """
+    imgs = _load_slice_images(
+        eval_dir, slice_idx, metadata, max_frames, rng,
+        view_window_extension=view_window_extension,
+        storyboard_mode="composite",
+    )
+    return imgs[0]
 
 
 # ---------------------------------------------------------------------------
@@ -607,13 +647,27 @@ def run_query_with_label_maps(
     view_window_extension: int = 0,
     include_action_text: bool = False,
     include_state_text: bool = False,
+    storyboard_mode: str = "composite",
+    composite_target_size: int = 512,
+    query_storyboard_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run one query with pre-determined per-rep label maps (for reproducibility)."""
+    """Run one query with pre-determined per-rep label maps (for reproducibility).
+
+    ``storyboard_mode`` controls visual rendering for *example* slices:
+    ``"composite"`` packs frames into one image per slice; ``"frames"`` sends
+    each frame as its own image. ``query_storyboard_mode`` overrides for the
+    query side (default falls back to ``storyboard_mode``); the hybrid setup
+    is ``storyboard_mode="composite", query_storyboard_mode="frames"``.
+    """
     from PIL import Image as PILImage
 
-    query_storyboard = _load_storyboard(
+    q_mode = query_storyboard_mode or storyboard_mode
+
+    query_visual = _load_slice_images(
         eval_dir, query_idx, metadata, max_frames, frame_rng,
         view_window_extension=view_window_extension,
+        storyboard_mode=q_mode,
+        composite_target_size=composite_target_size,
     )
     query_extra_text = _load_slice_extra_text(
         eval_dir, query_idx, metadata,
@@ -621,17 +675,20 @@ def run_query_with_label_maps(
         include_state_text=include_state_text,
     )
 
-    example_storyboards: Dict[int, List[PILImage.Image]] = {}
+    # Each example slice yields a list of images. In composite mode this is
+    # one image per slice; in frames mode it's max_frames per slice.
+    example_visuals: Dict[int, List[List[PILImage.Image]]] = {}
     example_extra_text_by_cid: Dict[int, List[Optional[str]]] = {}
     for cid in cluster_ids:
-        boards = [
-            _load_storyboard(
+        per_slice: List[List[PILImage.Image]] = []
+        for ex_idx in example_indices.get(cid, []):
+            per_slice.append(_load_slice_images(
                 eval_dir, ex_idx, metadata, max_frames, frame_rng,
                 view_window_extension=view_window_extension,
-            )
-            for ex_idx in example_indices.get(cid, [])
-        ]
-        example_storyboards[cid] = boards
+                storyboard_mode=storyboard_mode,
+                composite_target_size=composite_target_size,
+            ))
+        example_visuals[cid] = per_slice
         example_extra_text_by_cid[cid] = [
             _load_slice_extra_text(
                 eval_dir, ex_idx, metadata,
@@ -643,21 +700,40 @@ def run_query_with_label_maps(
 
     preamble = user_preamble_template.format(n_groups=len(cluster_ids))
 
+    def _flatten_with_text(
+        per_slice_imgs: List[List[PILImage.Image]],
+        per_slice_text: List[Optional[str]],
+    ) -> Tuple[List[PILImage.Image], List[Optional[str]]]:
+        """Flatten per-slice images, attaching slice-level text to that
+        slice's last image (so the text appears between adjacent slices)."""
+        flat_imgs: List[PILImage.Image] = []
+        flat_text: List[Optional[str]] = []
+        for slice_imgs, slice_text in zip(per_slice_imgs, per_slice_text):
+            for j, im in enumerate(slice_imgs):
+                flat_imgs.append(im)
+                flat_text.append(slice_text if j == len(slice_imgs) - 1 else None)
+        return flat_imgs, flat_text
+
     rep_records: List[Dict[str, Any]] = []
     for rep_i, label_map in enumerate(label_maps):
         inv_map = {v: k for k, v in label_map.items()}
         ordered_ids = sorted(label_map, key=lambda c: label_map[c])
-        example_sets = [
-            (label_map[cid], example_storyboards[cid])
-            for cid in ordered_ids
-        ]
-        example_extra_texts: List[Optional[List[Optional[str]]]] = [
-            example_extra_text_by_cid[cid] for cid in ordered_ids
-        ]
+
+        example_sets: List[Tuple[str, List[PILImage.Image]]] = []
+        example_extra_texts: List[Optional[List[Optional[str]]]] = []
+        for cid in ordered_ids:
+            flat_imgs, flat_texts = _flatten_with_text(
+                example_visuals[cid], example_extra_text_by_cid[cid]
+            )
+            example_sets.append((label_map[cid], flat_imgs))
+            example_extra_texts.append(
+                flat_texts if any(t is not None for t in flat_texts) else None
+            )
+
         valid_labels = [label_map[cid] for cid in ordered_ids] + ["unclear"]
 
         raw_text = backend.classify_slice(
-            query_images=[query_storyboard],
+            query_images=query_visual,
             example_sets=example_sets,
             system_prompt=system_prompt,
             user_preamble=preamble,
@@ -857,6 +933,9 @@ def run_cluster_coherence_classification(
     view_window_extension: int = 0,
     include_action_text: bool = False,
     include_state_text: bool = False,
+    storyboard_mode: str = "composite",
+    composite_target_size: int = 512,
+    query_storyboard_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run Experiment E1 for one clustering result.
 
@@ -914,6 +993,9 @@ def run_cluster_coherence_classification(
     plan["view_window_extension"] = int(view_window_extension)
     plan["include_action_text"] = bool(include_action_text)
     plan["include_state_text"] = bool(include_state_text)
+    plan["storyboard_mode"] = str(storyboard_mode)
+    plan["composite_target_size"] = int(composite_target_size)
+    plan["query_storyboard_mode"] = query_storyboard_mode
 
     # Pre-generate label maps for all queries
     plan["label_maps"] = generate_label_maps_for_plan(plan, rng)
@@ -979,6 +1061,9 @@ def run_cluster_coherence_classification(
                     view_window_extension=view_window_extension,
                     include_action_text=include_action_text,
                     include_state_text=include_state_text,
+                    storyboard_mode=storyboard_mode,
+                    composite_target_size=composite_target_size,
+                    query_storyboard_mode=query_storyboard_mode,
                 )
                 all_records.append(record)
                 pred_f.write(json.dumps(record, default=str) + "\n")
