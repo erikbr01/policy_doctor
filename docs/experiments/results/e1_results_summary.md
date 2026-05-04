@@ -145,10 +145,13 @@ The output directory layout (`cluster_labels.npy`, `metadata.json`, `manifest.ya
 
 ## How-to (no runs yet — GPUs reserved for E2)
 
-When ready, the canonical loop is:
+The pipeline has two stages: **build** clustering dirs (CPU only, no GPU) and **evaluate** them via E1 (GPU). They run independently — you can pre-build everything overnight on CPU, then evaluate any subset on GPU when time allows.
+
+### Stage 1 — Build clusterings (CPU only)
+
+#### One-off: a single configuration
 
 ```bash
-# 1) Build a non-InfEmbed clustering for transport_mh r512 seed0
 python scripts/build_alt_clustering.py \
   --representation state_action \
   --eval_dir /mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/mar27/mar27_train_diffusion_unet_lowdim_transport_mh_0_r512x512/latest \
@@ -157,32 +160,104 @@ python scripts/build_alt_clustering.py \
   --obs_strategy current --action_strategy executed \
   --seed 42 \
   --out_dir /tmp/clustering_sweeps/sa_k10_mean
+```
 
-# 2) Evaluate any clustering dir via E1 (with optional extended visual context)
+The output dir contains `manifest.yaml`, `cluster_labels.npy`, `metadata.json`, `embeddings_reduced.npy`, `clustering_models.pkl` — the same layout as the existing `RunClusteringStep` pipeline output.
+
+#### Sweep: a grid of configurations
+
+Edit (or duplicate) `sweep_specs/transport_r512_alt_clustering.yaml` to set the grid. Each list-valued entry under `grid:` is one axis of the cartesian product. Knobs that do not apply to a given representation are filtered out automatically (e.g. `obs_strategy` only varied for state/state_action).
+
+```bash
+# Dry-run first to see how many combos and what slugs they get
+python scripts/run_clustering_sweep.py \
+  --spec sweep_specs/transport_r512_alt_clustering.yaml \
+  --dry_run
+
+# Run for real (CPU only)
+python scripts/run_clustering_sweep.py \
+  --spec sweep_specs/transport_r512_alt_clustering.yaml
+```
+
+Output layout under `sweep_root` (defined in the spec):
+
+```
+/tmp/clustering_sweeps/transport_r512_seed0_alt/
+├── infembed__w=3__agg=sum__pre=standard__d=50__K=10/
+│   ├── manifest.yaml
+│   ├── cluster_labels.npy
+│   ├── embeddings_reduced.npy
+│   ├── metadata.json
+│   ├── clustering_models.pkl
+│   └── build.log
+├── infembed__w=3__agg=sum__pre=standard__d=50__K=15/
+│   └── ...
+├── state__w=5__agg=mean__pre=standard__d=100__K=10__obs=current/
+│   └── ...
+├── state_action__w=5__agg=mean__pre=standard__d=100__K=10__obs=current__act=executed/
+│   └── ...
+└── ...   (108 dirs for the default spec)
+```
+
+The pre-built spec produces 108 unique combos — roughly 60–90 min of CPU. Re-running the sweep skips combos whose `manifest.yaml` already exists; pass `--force` to redo.
+
+### Stage 2 — Evaluate one or many clusterings via E1 (GPU)
+
+#### Evaluate a single clustering dir
+
+```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/run_e1_transport_r512_qwen.py \
   --clustering_dir /tmp/clustering_sweeps/sa_k10_mean \
   --max_clusters 10 --n_example 3 --n_query 3 --n_repetitions 3 \
   --global_episode_disjoint \
   --view_window_extension 10 \
   --out_dir experiments/e1_state_action_k10_view10
-
-# 3) Or run a whole sweep at once
-python scripts/run_clustering_sweep.py \
-  --spec sweep_specs/transport_r512_alt_clustering.yaml \
-  --dry_run     # remove --dry_run to actually execute (CPU-only, slow)
 ```
 
-The sweep harness is CPU-only (UMAP + KMeans). It does not touch the GPU. The E1 evaluation step is GPU-bound; that's where coordination with E2 matters.
+#### Evaluate every clustering dir under a sweep root
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/run_e1_sweep_eval.py \
+  --sweep_root /tmp/clustering_sweeps/transport_r512_seed0_alt \
+  --results_root experiments/e1_sweep_transport_r512_seed0 \
+  --eval_dir /mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/mar27/mar27_train_diffusion_unet_lowdim_transport_mh_0_r512x512/latest \
+  --n_example 3 --n_query 3 --n_repetitions 3 \
+  --global_episode_disjoint
+```
+
+Reads `n_clusters` from each `manifest.yaml`, runs E1 with the right `--max_clusters` per combo. Writes per-combo logs and an aggregated `sweep_eval_summary.jsonl` (one line per combo with `top1_accuracy`, `binomial_test_pvalue`, `elapsed_s`, etc.) into `--results_root`.
+
+Useful filters:
+- `--include_pattern infembed` — only evaluate InfEmbed combos
+- `--include_pattern K=10` — only K=10 combos across all reps
+- `--max_clusters_override 10` — force max_clusters=10 regardless of manifest (useful when capping a higher-K clustering)
+- `--view_window_extension 0|5|10|15` — runs the same evaluation knob across the sweep
+- `--force` — re-run combos whose `metrics.json` already exists
+
+Single GPU → sequential evaluation. To split across GPUs, kick off two `run_e1_sweep_eval.py` processes pinned to different GPUs with **different `--include_pattern`** filters so they don't write the same out_dirs.
+
+#### Estimating GPU time
+
+Per-combo wall time scales with the prompt size:
+- K=10 with n_reps=3: ~16 min (≈30 calls × 30 s/call)
+- K=15 with n_reps=3: ~30 min
+- K=20 with n_reps=3: ~50 min
+
+For the default 108-combo spec at K∈{10,15,20} (36 combos × each K bucket), expect roughly: 36×16 + 36×30 + 36×50 ≈ 58 GPU-hours total on a single 8B model. Filter aggressively with `--include_pattern` for the most informative slices first.
+
+### Stage 3 — Compare across the sweep
+
+After eval, the per-combo `sweep_eval_summary.jsonl` is the easiest input to a comparison script. Each line has the clustering slug + headline accuracy + p-value. Use `scripts/analyze_e1_confusion_structure.py --metrics <results_dir>/metrics.json` for the per-cluster + per-query-origin breakdown of any individual combo.
+
+A script for cross-combo aggregation (e.g. accuracy vs window_width holding K and rep fixed) is **not** in this commit — the `sweep_eval_summary.jsonl` is structured enough to drive ad-hoc pandas analysis once the data lands.
 
 ### Suggested initial evaluation matrix (when GPUs free up)
 
-Most informative single-axis sweeps:
+Most informative single-axis slices to evaluate first:
 
-1. **Representation comparison at K=10** — `build_alt_clustering` for {infembed, state, state_action} with default hyperparams, then E1 on each. Tests whether influence captures behavioral structure beyond raw observations.
-2. **Extended visual context at K=10** — same InfEmbed clustering, vary `--view_window_extension ∈ {0, 5, 10, 15}`. Isolates the slice-length confound.
-3. **Window width sweep** — re-cluster InfEmbed at `window_width ∈ {3, 5, 10, 15}`, K=10, then E1. The clustering window and the visual window co-vary here, so this is a different question than (2).
-
-The pre-built sweep spec covers (3) plus the cross-product with state/state_action. That's 108 clusterings total — likely 60–90 min of CPU on this machine.
+1. **Representation comparison at K=10** — filter `--include_pattern K=10` plus the rep prefix. Three combos per rep when fixing aggregation/window_width/umap_dim. Tests whether influence captures behavioral structure beyond raw obs.
+2. **Extended visual context at K=10** — same K=10 InfEmbed clustering, four runs at `--view_window_extension ∈ {0, 5, 10, 15}`. Isolates the slice-length confound (changes only what the VLM sees, not the clustering).
+3. **Window-width sweep** — InfEmbed combos at `window_width ∈ {3, 5, 10}`, K=10. Different question than (2): clustering window and visual window co-vary here.
 
 ---
 
