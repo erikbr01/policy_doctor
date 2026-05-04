@@ -88,7 +88,7 @@ def _handle_key(key: int) -> None:
     with _key_lock:
         if key == ord(" "):
             _key_state["is_intervening"] = not _key_state["is_intervening"]
-        elif key in _KEY_ACTIONS and _key_state["is_intervening"]:
+        if key in _KEY_ACTIONS:
             _key_state["action"] = _KEY_ACTIONS[key]
         else:
             _key_state["action"] = None
@@ -264,6 +264,8 @@ def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
+    import logging
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
     # Optional SpaceMouse
     if device in ("spacemouse", "auto"):
         found = _start_spacemouse()
@@ -308,8 +310,7 @@ def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
         key = cv2.waitKey(delay_ms) & 0xFF
         if key == ord("q") or cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
             break
-        if key != 255:  # 255 = no key pressed
-            _handle_key(key)
+        _handle_key(key)  # 255 = no key pressed → clears action
 
     cv2.destroyAllWindows()
 
