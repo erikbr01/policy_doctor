@@ -104,6 +104,36 @@ class TestSubmissionTools(unittest.TestCase):
         self.assertEqual(self.ctx.submitted[0].reasoning, "softer placement avoids bouncing")
         self.assertEqual(len(self.ctx.submitted[0].revision_history), 1)
 
+    def test_revise_rejects_duplicate_target_behavior(self):
+        # Two submissions with distinct prose.
+        self._call("propose_collection_request", self._good_args())
+        first_rid = self.ctx.submitted[0].request.request_id
+        first_text = self.ctx.submitted[0].request.target_behavior
+        self._call(
+            "propose_collection_request",
+            self._good_args(
+                target_cluster=2,
+                target_behavior="approach the cube from the side and pinch grasp it",
+            ),
+        )
+        second_rid = self.ctx.submitted[1].request.request_id
+
+        # Try to revise the second one to match the first — must fail.
+        r = self._call(
+            "revise_request",
+            {"request_id": second_rid, "target_behavior": first_text,
+             "reasoning": "trying to dodge the dedup gate"},
+        )
+        self.assertFalse(r.ok, "revise should reject duplicate target_behavior")
+        self.assertEqual(r.metadata["error_code"], "duplicate_target_behavior")
+        # Rolled back — second request keeps its original prose.
+        self.assertNotEqual(
+            self.ctx.submitted[1].request.target_behavior, first_text,
+            "rollback should restore the original target_behavior",
+        )
+        # First request is also untouched.
+        self.assertEqual(self.ctx.submitted[0].request.target_behavior, first_text)
+
     def test_revise_rolls_back_on_validation_failure(self):
         self._call("propose_collection_request", self._good_args())
         rid = self.ctx.submitted[0].request.request_id
