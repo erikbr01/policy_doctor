@@ -185,6 +185,101 @@ def run_condition(
     return out
 
 
+def run_exploration_session(
+    *,
+    backend: VLMBackend,
+    graph,
+    pool,
+    out_dir: Path,
+    budget_config: Optional[BudgetConfig] = None,
+    max_turns: int = 60,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    cluster_labels=None,
+    cluster_metadata=None,
+    cluster_centroids=None,
+    classifier=None,
+    raw_states_dir: Optional[Path] = None,
+    storyboards_dir: Optional[Path] = None,
+    videos_dir: Optional[Path] = None,
+    task_hint: str = "",
+    kinematic_summary_strategy: str = "raw_states",
+    storyboard: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Run the pre-stage exploration session and return the cluster taxonomy dict.
+
+    Returns {} if the session ended without calling finalize_exploration.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    effective_budget = budget_config or BudgetConfig(
+        max_tool_calls=80,
+        max_visual_calls=10,
+        max_video_calls=0,
+    )
+
+    session_config: Dict[str, Any] = {
+        "kinematic_summary_strategy": kinematic_summary_strategy,
+    }
+    if storyboard:
+        session_config["storyboard"] = dict(storyboard)
+
+    ctx = SessionContext.build(
+        condition="exploration",
+        graph=graph,
+        pool=pool,
+        cluster_labels=cluster_labels,
+        cluster_metadata=cluster_metadata,
+        cluster_centroids=cluster_centroids,
+        classifier=classifier,
+        raw_states_dir=raw_states_dir,
+        storyboards_dir=storyboards_dir,
+        videos_dir=videos_dir,
+        budget_config=effective_budget,
+        task_hint=task_hint,
+        config=session_config,
+        backend=backend,
+    )
+
+    tools = build_exploration_tool_registry(ctx, out_dir=out_dir)
+
+    from importlib.resources import files as _pkg_files
+    import policy_doctor.vlm.proposals.agents.system_prompts as _sp_pkg
+    system_prompt = (_pkg_files(_sp_pkg) / "exploration.md").read_text(encoding="utf-8")
+
+    sample_ids = [e.rollout_id for e in pool.entries[:20]]
+    user_msg = (
+        f"Task: {task_hint or '(unspecified)'}\n\n"
+        f"Pool contains {len(pool)} rollouts; sample ids: {' '.join(sample_ids)}.\n\n"
+        "Survey all clusters and call finalize_exploration when done. "
+        "Do not submit demonstration requests."
+    )
+
+    trace_path = out_dir / "trace.jsonl"
+    with SessionTrace(out_path=trace_path) as trace:
+        session = AgentSession(
+            backend=backend,
+            ctx=ctx,
+            tools=tools,
+            system_prompt=system_prompt,
+            user_message=user_msg,
+            seed=0,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_turns=max_turns,
+            trace=trace,
+            out_dir=out_dir,
+            target_n_submissions=0,
+        )
+        session.run()
+
+    taxonomy_path = out_dir / "cluster_taxonomy.json"
+    if taxonomy_path.exists():
+        return json.loads(taxonomy_path.read_text(encoding="utf-8"))
+    return {}
+
+
 def _default_user_message(
     pool,
     task_hint: str,
