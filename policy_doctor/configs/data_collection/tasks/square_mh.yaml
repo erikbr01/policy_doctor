@@ -1,0 +1,10 @@
+# Task-specific config for DAgger / E2 data collection on RoboMimic square MH.
+task: square_mh
+dataset_path: data/robomimic/datasets/square/mh/low_dim_abs.hdf5
+
+recording:
+  obs_keys:
+    - object
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos

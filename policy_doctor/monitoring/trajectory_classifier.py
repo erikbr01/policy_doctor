@@ -295,22 +295,60 @@ class TrajectoryClassifier:
         self,
         episode_df,
     ) -> List[Tuple[int, MonitorResult]]:
-        """Classify each timestep from an eval_save_episodes pkl DataFrame.
+        """Classify each timestep from an eval_save_episodes or DAgger pkl.
 
-        The pkl stores the obs window ``(To, Do)`` and action window ``(Ta, Da)``
-        per row, already in policy format (rotation_6d, unnormalized). No rotation
-        transform is applied regardless of mode.
+        Eval pkls store pre-windowed ``obs`` and ``action`` arrays per row.
+        DAgger pkls store per-step observation dictionaries plus single-step
+        actions, so we reconstruct the policy windows before classification.
 
         Returns:
             List of ``(timestep_index, MonitorResult)`` tuples.
         """
         results = []
+        is_dagger_pkl = (
+            "stacked_obs" in episode_df.columns
+            and len(episode_df) > 0
+            and isinstance(episode_df.iloc[0].get("obs"), dict)
+        )
+
+        if is_dagger_pkl:
+            obs_seq = np.stack(
+                [np.asarray(v, dtype=np.float32) for v in episode_df["stacked_obs"]],
+                axis=0,
+            )
+            action_seq = np.stack(
+                [np.asarray(v, dtype=np.float32) for v in episode_df["action"]],
+                axis=0,
+            )
+            for t, _row in episode_df.iterrows():
+                obs = self._window_past(obs_seq, int(t), self.n_obs_steps)
+                action = self._window_future(action_seq, int(t), self.n_action_steps)
+                if self.mode == "demo":
+                    action = self._apply_action_transform(action)
+                result = self.monitor.process_sample(obs, action)
+                results.append((t, result))
+            return results
+
         for t, row in episode_df.iterrows():
             obs = np.asarray(row["obs"], dtype=np.float32)
             action = np.asarray(row["action"], dtype=np.float32)
+            if self.mode == "demo" and action.ndim == 1:
+                action = self._apply_action_transform(action)
             result = self.monitor.process_sample(obs, action)
             results.append((t, result))
         return results
+
+    @staticmethod
+    def _window_past(seq: np.ndarray, t: int, window: int) -> np.ndarray:
+        idxs = np.arange(t - window + 1, t + 1)
+        idxs = np.clip(idxs, 0, len(seq) - 1)
+        return seq[idxs]
+
+    @staticmethod
+    def _window_future(seq: np.ndarray, t: int, window: int) -> np.ndarray:
+        idxs = np.arange(t, t + window)
+        idxs = np.clip(idxs, 0, len(seq) - 1)
+        return seq[idxs]
 
     def classify_demo_from_hdf5(
         self,

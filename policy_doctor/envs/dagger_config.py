@@ -59,6 +59,7 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
     from policy_doctor.envs.intervention_device import (
         KeyboardInterventionDevice,
         PassthroughInterventionDevice,
+        RandomInterventionDevice,
         SpaceMouseInterventionDevice,
         XboxControllerInterventionDevice,
     )
@@ -92,6 +93,14 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
 
     elif device_type == "passthrough":
         return PassthroughInterventionDevice()
+
+    elif device_type == "random":
+        params = config.get("random", {})
+        return RandomInterventionDevice(
+            action_dim=params.get("action_dim", 10),
+            scale=params.get("scale", 1.0),
+            seed=params.get("seed"),
+        )
 
     else:
         raise ValueError(f"Unknown device type: {device_type}")

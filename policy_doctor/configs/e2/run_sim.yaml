@@ -15,4 +15,13 @@ viz_url: http://127.0.0.1:5002
 dagger_config: keyboard_default
 
 max_demos: null                # null = drain queue
+max_steps: 500                 # per-request rollout horizon
+
+# For non-interactive plumbing tests: generate env-shaped random actions instead
+# of requiring a checkpoint or human controller. These demos are intentionally
+# not meaningful, but exercise request drainage and pkl writing.
+random_actions: false
+random_action_scale: 1.0
+random_seed: null
+
 poll_interval_s: 2.0

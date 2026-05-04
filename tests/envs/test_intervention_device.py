@@ -9,6 +9,7 @@ import pytest
 from policy_doctor.envs.intervention_device import (
     KeyboardInterventionDevice,
     PassthroughInterventionDevice,
+    RandomInterventionDevice,
     XboxControllerInterventionDevice,
 )
 
@@ -47,6 +48,35 @@ def test_passthrough_device_never_intervenes():
 
     # Reset (should not raise)
     device.reset()
+
+
+def test_random_device_samples_configured_action_dim():
+    """Test RandomInterventionDevice emits bounded action-dim samples."""
+    device = RandomInterventionDevice(action_dim=4, scale=0.25, seed=123)
+
+    assert device.is_intervening is True
+    action = device.get_action()
+    assert action.shape == (4,)
+    assert action.dtype == np.float32
+    assert np.all(action >= -0.25)
+    assert np.all(action <= 0.25)
+
+
+def test_random_device_samples_action_space_shape_and_bounds():
+    """Test RandomInterventionDevice respects Box-like action spaces."""
+
+    class BoxLike:
+        shape = (3,)
+        low = np.array([-1.0, -0.5, 0.0], dtype=np.float32)
+        high = np.array([1.0, 0.5, 2.0], dtype=np.float32)
+
+    device = RandomInterventionDevice(action_space=BoxLike(), seed=123)
+
+    action = device.get_action()
+    assert action.shape == (3,)
+    assert action.dtype == np.float32
+    assert np.all(action >= BoxLike.low)
+    assert np.all(action <= BoxLike.high)
 
 
 def test_keyboard_device_init():

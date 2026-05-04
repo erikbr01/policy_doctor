@@ -139,6 +139,10 @@ def run_e2_session(
     viz_url: Optional[str] = None,
     dagger_config: str = "keyboard_default",
     max_demos: Optional[int] = None,
+    max_steps: int = 500,
+    random_actions: bool = False,
+    random_action_scale: float = 1.0,
+    random_seed: Optional[int] = None,
     poll_interval_s: float = 2.0,
 ) -> int:
     """Process the proposal server's queue until empty (or max_demos reached).
@@ -154,7 +158,10 @@ def run_e2_session(
         load_dagger_config,
     )
     from policy_doctor.envs.policy_wrappers import BarePolicy
-    from policy_doctor.envs.intervention_device import HTTPInterventionDevice
+    from policy_doctor.envs.intervention_device import (
+        HTTPInterventionDevice,
+        RandomInterventionDevice,
+    )
     from policy_doctor.envs.visualization import DAggerVisualizer
 
     output_dir = Path(output_dir)
@@ -164,15 +171,22 @@ def run_e2_session(
     health = client.health()
     print(f"[e2_runner] connected: pending={health['n_pending']} pool={health['pool_size']}")
 
-    # Resolve dataset for env construction. Same task table as run_dagger.py.
-    from scripts.run_dagger import TASK_CONFIG, auto_device, resolve_checkpoint  # type: ignore
+    # Resolve dataset and recording keys from task-specific collection config.
+    from policy_doctor.envs.data_collection_config import (
+        available_data_collection_tasks,
+        load_data_collection_task_config,
+    )
+    from scripts.run_dagger import auto_device, resolve_checkpoint  # type: ignore
 
-    task_cfg = TASK_CONFIG.get(task)
-    if task_cfg is None:
-        raise ValueError(f"Unknown task {task!r}; choices: {list(TASK_CONFIG)}")
+    try:
+        task_cfg = load_data_collection_task_config(task)
+    except FileNotFoundError as e:
+        raise ValueError(
+            f"Unknown task {task!r}; choices: {available_data_collection_tasks()}"
+        ) from e
     if dataset_path is None:
         dataset_path = task_cfg["dataset_path"]
-    obs_keys = task_cfg["obs_keys"]
+    obs_keys = list(task_cfg["recording"]["obs_keys"])
     if device == "auto":
         device = auto_device()
     print(f"[e2_runner] device={device}")
@@ -183,7 +197,9 @@ def run_e2_session(
     classifier_n_action_steps = 8
     abs_action = False
     rotation_transformer = None
-    if train_dir:
+    if train_dir and random_actions:
+        print("[e2_runner] random_actions=true; skipping policy checkpoint load")
+    if train_dir and not random_actions:
         import dill, hydra, torch
         from omegaconf import OmegaConf as _OC
 
@@ -231,14 +247,25 @@ def run_e2_session(
     lowdim_wrapper = RobomimicLowdimWrapper(env=robomimic_env, obs_keys=obs_keys, init_state=None)
 
     dagger_cfg = load_dagger_config(dagger_config)
-    if viz_url:
+    if random_actions:
+        intervention_device = RandomInterventionDevice(
+            action_space=lowdim_wrapper.action_space,
+            scale=random_action_scale,
+            seed=random_seed,
+        )
+        print(
+            "[e2_runner] using random action generator "
+            f"(shape={lowdim_wrapper.action_space.shape}, scale={random_action_scale})"
+        )
+    elif viz_url:
         intervention_device = HTTPInterventionDevice(server_url=viz_url)
     else:
         intervention_device = create_intervention_device(dagger_cfg)
 
     visualizer = None
     viz_cfg = dagger_cfg.get("visualization", {})
-    if viz_url or viz_cfg.get("enabled", True):
+    visualization_enabled = bool(viz_url or (not random_actions and viz_cfg.get("enabled", True)))
+    if visualization_enabled:
         try:
             kw = dict(
                 camera_names=viz_cfg.get("camera_names", ["agentview"]),
@@ -288,10 +315,10 @@ def run_e2_session(
             intervention_device=intervention_device,
             n_obs_steps=classifier_n_obs_steps,
             n_action_steps=classifier_n_action_steps,
-            max_steps=500,
+            max_steps=max_steps,
             output_dir=per_req_dir,
             visualizer=visualizer,
-            action_transform=convert_action,
+            action_transform=None if random_actions else convert_action,
         )
 
         # Operator-facing display

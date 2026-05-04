@@ -48,6 +48,10 @@ def main(cfg: DictConfig) -> None:
         viz_url=cfg.get("viz_url"),
         dagger_config=cfg.get("dagger_config", "keyboard_default"),
         max_demos=cfg.get("max_demos"),
+        max_steps=int(cfg.get("max_steps", 500)),
+        random_actions=bool(cfg.get("random_actions", False)),
+        random_action_scale=float(cfg.get("random_action_scale", 1.0)),
+        random_seed=cfg.get("random_seed"),
         poll_interval_s=float(cfg.get("poll_interval_s", 2.0)),
     )
     print(f"[run_e2_sim] completed {n} demonstration(s)")

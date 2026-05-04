@@ -5,6 +5,7 @@ from policy_doctor.envs.intervention_device import (
     InterventionDevice,
     KeyboardInterventionDevice,
     PassthroughInterventionDevice,
+    RandomInterventionDevice,
     SpaceMouseInterventionDevice,
 )
 from policy_doctor.envs.dagger_runner import RobomimicDAggerRunner, EpisodeRecord
@@ -16,6 +17,7 @@ __all__ = [
     "InterventionDevice",
     "KeyboardInterventionDevice",
     "PassthroughInterventionDevice",
+    "RandomInterventionDevice",
     "SpaceMouseInterventionDevice",
     "RobomimicDAggerRunner",
     "EpisodeRecord",

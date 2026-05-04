@@ -36,26 +36,7 @@ import torch
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from policy_doctor.paths import CONFIGS_DIR, REPO_ROOT
-
-TASK_CONFIG = {
-    "square_mh": {
-        "dataset_path": str(REPO_ROOT / "data" / "robomimic" / "datasets" / "square" / "mh" / "low_dim_abs.hdf5"),
-        "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
-    },
-    "lift_mh": {
-        "dataset_path": str(REPO_ROOT / "data" / "robomimic" / "datasets" / "lift" / "mh" / "low_dim_abs.hdf5"),
-        "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
-    },
-    "transport_mh": {
-        "dataset_path": str(REPO_ROOT / "data" / "robomimic" / "datasets" / "transport" / "mh" / "low_dim_abs.hdf5"),
-        "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
-    },
-    "robocasa_layout_lowdim": {
-        "dataset_path": str(REPO_ROOT / "data" / "robocasa" / "datasets" / "kitchen_lowdim_merged.hdf5"),
-        "obs_keys": ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"],
-    },
-}
+from policy_doctor.paths import CONFIGS_DIR
 
 
 def auto_device() -> str:
@@ -148,13 +129,20 @@ def main(cfg: DictConfig) -> None:
                 f"Set no_monitor=true to run without the behavior graph."
             )
 
-    task_cfg = TASK_CONFIG.get(task)
-    if task_cfg is None:
-        raise ValueError(f"Unknown task '{task}'. Choices: {list(TASK_CONFIG)}")
+    from policy_doctor.envs.data_collection_config import (
+        available_data_collection_tasks,
+        load_data_collection_task_config,
+    )
 
+    try:
+        task_cfg = load_data_collection_task_config(str(task))
+    except FileNotFoundError as e:
+        raise ValueError(
+            f"Unknown task '{task}'. Choices: {available_data_collection_tasks()}"
+        ) from e
     if dataset_path is None:
         dataset_path = task_cfg["dataset_path"]
-    obs_keys = task_cfg["obs_keys"]
+    obs_keys = list(task_cfg["recording"]["obs_keys"])
 
     if device == "auto":
         device = auto_device()

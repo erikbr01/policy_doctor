@@ -51,6 +51,59 @@ class PassthroughInterventionDevice(InterventionDevice):
         pass
 
 
+class RandomInterventionDevice(InterventionDevice):
+    """Non-interactive device that continuously emits random env-shaped actions.
+
+    This is intended for plumbing/integration tests where we only need to drain
+    request queues and produce a saved trajectory; the actions are not expected
+    to be useful demonstrations.
+    """
+
+    def __init__(
+        self,
+        *,
+        action_space=None,
+        action_dim: Optional[int] = None,
+        scale: float = 1.0,
+        seed: Optional[int] = None,
+    ) -> None:
+        if action_space is None and action_dim is None:
+            raise ValueError("RandomInterventionDevice requires action_space or action_dim")
+        self.action_space = action_space
+        self.action_dim = action_dim
+        self.scale = float(scale)
+        self._rng = np.random.default_rng(seed)
+
+    @property
+    def is_intervening(self) -> bool:
+        return True
+
+    def get_action(self) -> Optional[np.ndarray]:
+        if self.action_space is not None and hasattr(self.action_space, "shape"):
+            shape = tuple(self.action_space.shape)
+            low = np.asarray(getattr(self.action_space, "low", -1.0), dtype=np.float32)
+            high = np.asarray(getattr(self.action_space, "high", 1.0), dtype=np.float32)
+            if low.shape == () or not np.all(np.isfinite(low)):
+                low = np.full(shape, -1.0, dtype=np.float32)
+            if high.shape == () or not np.all(np.isfinite(high)):
+                high = np.full(shape, 1.0, dtype=np.float32)
+            midpoint = (low + high) / 2.0
+            half_range = (high - low) / 2.0
+            raw = self._rng.uniform(-1.0, 1.0, size=shape).astype(np.float32)
+            action = midpoint + raw * half_range * self.scale
+            return np.clip(action, low, high).astype(np.float32)
+
+        assert self.action_dim is not None
+        return self._rng.uniform(
+            -self.scale,
+            self.scale,
+            size=(int(self.action_dim),),
+        ).astype(np.float32)
+
+    def notify(self, message: str) -> None:
+        pass
+
+
 class KeyboardInterventionDevice(InterventionDevice):
     """pynput-based keyboard controller for arm teleoperation.
 

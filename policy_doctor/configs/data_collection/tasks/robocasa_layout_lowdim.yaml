@@ -1,0 +1,10 @@
+# Task-specific config for DAgger / E2 data collection on RoboCasa low-dim layouts.
+task: robocasa_layout_lowdim
+dataset_path: data/robocasa/datasets/kitchen_lowdim_merged.hdf5
+
+recording:
+  obs_keys:
+    - object
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
