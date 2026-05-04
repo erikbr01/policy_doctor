@@ -171,6 +171,47 @@ plumbing.
   proposal_server's `boot()` requiring a `pool_episodes_dir` whose
   episodes share the indexing convention the cluster metadata uses.
 
+## 7b. Update — live-agent verification of the rendering refactor
+
+After committing the storyboard refactor I retried a fresh A_G session
+on `gemini-flash-latest` against the same transport_mh seed-0 r512
+clustering. Free-tier quota cut the run at turn 12, so it didn't
+finalize, but the tool-call sequence was:
+
+```
+get_graph_summary → find_failure_nodes(0.3) → list_nodes(>=0.5)
+→ get_node(c5) → get_node(c11) → get_node(c10)
+→ list_slices_in_node(c5)
+→ get_slice_video(r0147_t64_t68)
+→ get_slice_video(r0120_t72_t76)
+→ get_slice_video(r0187_t72_t76)
+→ list_slices_in_node(c10)
+→ get_slice_video(r0039_t66_t70)
+→ [quota-exhausted before submission]
+```
+
+I extracted those four storyboards and looked at them
+(`/tmp/run3_evidence_jpegs/`). With the new defaults:
+
+- `r0147_t64_t68` (c5): the **top row** (agentview) shows the robot
+  picking up the hammer, lifting it, and dropping it onto the floor
+  across 5 frames; the hammer is visible mid-air and on the ground
+  afterwards. The **middle row** (robot0 wrist) shows the gripper
+  holding then releasing the hammer's wooden handle. The failure mode
+  is now legible from the storyboard alone.
+- `r0120_t72_t76` (c5): hammer slips out during pickup; visible across
+  agentview and wrist cam. Same failure pattern as the previous slice,
+  confirming that c5 *is* a coherent grasp-failure cluster.
+
+Compare with the pre-refactor evidence I extracted earlier
+(`/tmp/evidence_jpegs/sub1_*` from the prior session): those panels
+were near-static and one-camera, and the failure was not visible in
+them at all. The contrast is the load-bearing argument that the
+refactor moved the needle: the agent now has imagery *capable* of
+grounding its prose. Whether it will use that capability correctly in
+finalized submissions depends on running long enough to submit, which
+needs a paid backend.
+
 ## 8. Recommended next experimental moves
 
 In rough priority order:
