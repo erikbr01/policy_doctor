@@ -118,7 +118,6 @@ def load_clustering_result(
 
 
 def save_clustering_result(
-    task_config: str,
     name: str,
     cluster_labels: np.ndarray,
     metadata: List[Dict[str, Any]],
@@ -130,11 +129,12 @@ def save_clustering_result(
     level: str,
     n_clusters: int,
     n_samples: int,
+    output_dir: Path | None = None,
+    task_config: str | None = None,
 ) -> Path:
     """Save a clustering result to disk.
 
     Args:
-        task_config: Task config name.
         name: Display name; will be slugified for the directory name.
         cluster_labels: 1D array of cluster labels.
         metadata: List of per-slice metadata dicts (JSON-serializable).
@@ -145,12 +145,21 @@ def save_clustering_result(
         level: e.g. 'rollout', 'demo'.
         n_clusters: Number of clusters (excluding noise).
         n_samples: Number of samples (len(cluster_labels)).
+        output_dir: Explicit output directory. When provided, results are written to
+            ``output_dir / slug`` instead of the iv configs tree. Takes precedence
+            over task_config.
+        task_config: Task config name (legacy). Used only when output_dir is None.
 
     Returns:
         Path to the result directory.
     """
     slug = _slugify(name)
-    result_dir = get_clustering_dir(task_config) / slug
+    if output_dir is not None:
+        result_dir = Path(output_dir) / slug
+    elif task_config is not None:
+        result_dir = get_clustering_dir(task_config) / slug
+    else:
+        raise ValueError("Either output_dir or task_config must be provided")
     result_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {

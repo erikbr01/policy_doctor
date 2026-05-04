@@ -129,6 +129,14 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
 
         # assert n_obs_steps <= n_action_steps
         dataset_path = os.path.expanduser(dataset_path)
+        # Resolve relative paths against CUPID_ROOT when not found from CWD.
+        # This handles the case where eval_save_episodes is called in-process
+        # from a working directory that differs from CUPID_ROOT.
+        if not os.path.isabs(dataset_path) and not os.path.exists(dataset_path):
+            _cupid_root = pathlib.Path(__file__).parents[2]
+            _candidate = _cupid_root / dataset_path
+            if _candidate.exists():
+                dataset_path = str(_candidate)
         robosuite_fps = 20
         steps_per_render = max(robosuite_fps // fps, 1)
 
@@ -298,7 +306,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                       "Skipping rollout evaluation (env not registered in this conda env).")
                 return dict()
         env = self.env
-        
+
         # plan for rollout
         n_envs = len(self.env_fns)
         n_inits = len(self.env_init_fn_dills)

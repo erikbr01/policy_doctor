@@ -49,7 +49,7 @@ class EpisodeDataset(IterableDataset):
         
         # Episode files.
         episode_files = sorted(glob.glob(os.path.join(dataset_path, "*")))
-        self._episode_files = [file for file in episode_files if os.path.basename(file) != "metadata.yaml"]
+        self._episode_files = [file for file in episode_files if file.endswith(".pkl")]
         self._metadata = load_yaml(os.path.join(dataset_path, "metadata.yaml"))
         self._episode_idxs = ep_lens_to_idxs(np.array(self.episode_lengths))
         self._episode_cache = collections.deque()

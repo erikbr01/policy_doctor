@@ -24,6 +24,26 @@ python -m policy_doctor.scripts.run_pipeline +experiment=trak_filtering_mar13_p9
   steps=[run_clustering,run_curation_config,train_curated,eval_curated]
 python -m policy_doctor.scripts.run_pipeline steps=[eval_policies] dry_run=true train_date=jan28 eval_date=jan28
 
+# MimicGen full experiment (select seed → generate → train → eval for all arms)
+python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_square \
+  experiment=mimicgen_square_pipeline_apr23
+
+# MimicGen ablations reusing an existing run_dir (run in same run_dir as main experiment)
+python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_square \
+  experiment=mimicgen_square_ablations_apr23 \
+  steps=[mimicgen_random_20,mimicgen_behavior_graph_20]
+
+# MimicGen variance sweep (standalone, no pipeline — ablates generation knobs on D0)
+./scripts/run_variance_sweep.sh       # generates to /tmp/mimicgen_variance_sweep/
+./scripts/run_variance_sweep_finish.sh  # re-runs last arm + plots all
+
+# Plot EEF trajectories from a variance run result.json
+conda activate policy_doctor && python scripts/plot_mimicgen_eef_from_result.py \
+  --result /tmp/mimicgen_variance_sweep/A_baseline/result.json \
+  --out_dir /tmp/out/A_baseline
+
 # Training (bypasses pipeline, wraps cupid/train.py)
 ./scripts/experiments/train_robomimic_square.sh --compile --tf32
 ./scripts/experiments/train_robomimic_square.sh --num-gpus 2 --compile --tf32
@@ -83,6 +103,8 @@ The codebase is split across four conda environments because `cupid` requires Py
 
 Consequence: pipeline run directories default to `third_party/cupid/data/pipeline_runs/<run_name>/` and checkpoints under `third_party/cupid/data/outputs/train/...`.
 
+Training artifact path pattern: `data/outputs/train/<train_date>/<train_date>_train_<policy>_<task>_<seed>/` (see `curation_pipeline/paths.py:get_train_dir`).
+
 ### Attribution methods
 
 Both TRAK and InfEmbed compute pairwise influence between rollout (test) samples and training demonstrations:
@@ -129,6 +151,42 @@ The graph is used for two things: visualization (Streamlit, Pyvis) and slice sea
 - `skip_if_done=true` (default) means re-running resumes from the last incomplete step
 - Steps that invoke the sim stack (`train_attribution`, `compute_infembed`, `train_curated`, etc.) shell out to `conda run -n cupid` to use the correct environment
 
+**`CompositeStep`** (`base_step.py`) groups a fixed sub-step sequence under one namespace:
+- Sub-steps write to `<run_dir>/<composite_name>/<sub_step_name>/`; resumability is per-sub-step
+- Sub-steps can still read sibling top-level step results (e.g. `run_clustering/`) via `parent_run_dir`, which is transparently set to the top-level run root
+- Subclasses declare `sub_step_classes` (ordered list) and `cfg_overrides` (dotpath→value applied before any sub-step)
+
+### MimicGen trajectory generation pipeline
+
+The MimicGen experiment tests whether behavior-graph-guided seed selection improves generated data quality. The pipeline compares three heuristics, all sharing upstream `run_clustering` results:
+
+**Seed selection heuristics** (`policy_doctor/mimicgen/heuristics.py`):
+- `BehaviorGraphPathHeuristic` — ranks paths to SUCCESS by probability, returns rollouts matching the highest-probability path (proposed method)
+- `DiversitySelectionHeuristic` — takes one rollout per path before moving to the next, maximizing behavioral diversity across seeds
+- `RandomSelectionHeuristic` — uniform random from eligible (successful) rollouts (baseline)
+
+**Sub-step sequence per arm** (implemented as `CompositeStep` in `steps/mimicgen_arm.py`):
+1. `select_mimicgen_seed_from_graph` — uses behavior graph to pick N seed rollouts; materializes `seed.hdf5`
+2. `generate_mimicgen_demos` — runs MimicGen in `mimicgen_torch2` env; auto-wires to `seed.hdf5` from prior step
+3. `train_on_combined_data` — merges original + generated HDF5, trains policy in `mimicgen_torch2` env
+4. `eval_mimicgen_combined` — evaluates the retrained policy
+
+**Run directory layout** with multiple arms sharing a run:
+```
+<run_dir>/
+    run_clustering/               # shared upstream result
+    mimicgen_random/              # CompositeStep arm: random heuristic
+        select_mimicgen_seed_from_graph/
+        generate_mimicgen_demos/
+        train_on_combined_data/
+    mimicgen_behavior_graph/      # CompositeStep arm: BG heuristic
+    mimicgen_diversity/           # CompositeStep arm: diversity heuristic
+```
+
+**Adding a new arm**: subclass `CompositeStep`, set `name`, `sub_step_classes = _SUB_STEPS`, and `cfg_overrides`, then register in `pipeline.py`'s `ALL_STEPS` and `_build_step_registry()`.
+
+**MimicGen generation parameters** live in `policy_doctor/configs/mimicgen/<task>.yaml` (e.g. `square_d0.yaml`, `square_d1.yaml`). Key variance knobs: `action_noise`, `subtask_term_offset_range`, `nn_k`, `interpolate_from_last_target_pose`, `fix_initial_object_poses`, `object_pose_ranges` (per-object, per-axis offset from seed pose).
+
 ### Streamlit / visualization separation
 
 Strict separation (enforced in `third_party/cupid/CLAUDE.md` and followed throughout):
@@ -151,6 +209,7 @@ Component layers: `InfEmbedStreamScorer` → `FittedModelAssigner` / `NearestCen
 
 - Base config: `policy_doctor/configs/config.yaml` — sets defaults for `data_source`, `pipeline/config`, `vlm/defaults`, and `experiment: null`
 - Task/simulator profile: `data_source` group (`cupid_robomimic`, `mimicgen_square`, `robocasa_layout`)
+- MimicGen generation params: `mimicgen` group (`square_d0`, `square_d1`, `coffee`, `threading`) — load with `mimicgen=square_d1` or inline under `mimicgen_datagen:` in experiment YAML
 - Robomimic-specific slices: `policy_doctor/configs/robomimic/` (tasks, baseline, evaluation, attribution, curation_filtering, curation_selection)
 - Experiment presets: `policy_doctor/configs/experiment/` — selected with `+experiment=name` (the `+` is needed when adding a new defaults group not present in the base config)
 - Attribution compile/tf32 flags live in YAML (`attribution.tf32`, `attribution.compile`), not CLI flags like training scripts
