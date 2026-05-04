@@ -40,6 +40,12 @@ vlm_cluster_classification:
   # bit-reproducibility of pre-existing sample plans.
   global_episode_disjoint: false
 
+  # Widen the visual frame window symmetrically by this many timesteps on each
+  # side, WITHOUT changing the cluster window or sample plan. Tests whether
+  # longer visual context (more motion across frames) is the bottleneck. 0 keeps
+  # frames inside the cluster window (default).
+  view_window_extension: 0
+
   # Optional prompt overrides (null = use defaults)
   system_prompt: null
   user_preamble_template: null

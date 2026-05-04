@@ -93,6 +93,7 @@ class ValidateClusterCoherenceVLMStep(PipelineStep[Dict[str, Any]]):
         max_clusters_raw = vcc.get("max_clusters")
         max_clusters = int(max_clusters_raw) if max_clusters_raw is not None else None
         global_episode_disjoint = bool(vcc.get("global_episode_disjoint", False))
+        view_window_extension = int(vcc.get("view_window_extension", 0))
 
         system_prompt = vcc.get("system_prompt") or None
         user_preamble = vcc.get("user_preamble_template") or None
@@ -178,6 +179,7 @@ class ValidateClusterCoherenceVLMStep(PipelineStep[Dict[str, Any]]):
                 user_prompt_question=user_question,
                 max_clusters=max_clusters,
                 global_episode_disjoint=global_episode_disjoint,
+                view_window_extension=view_window_extension,
             )
             per_seed[seed] = summary
 

@@ -437,11 +437,24 @@ def _load_storyboard(
     metadata: List[dict],
     max_frames: int,
     rng: np.random.Generator,
+    *,
+    view_window_extension: int = 0,
 ) -> "Image.Image":
+    """Render one slice as a storyboard composite.
+
+    ``view_window_extension`` widens the visual frame window symmetrically by
+    ``view_window_extension`` timesteps on each side, **without changing the
+    cluster window itself** — so the same sample plan can probe whether longer
+    visual context (more motion across frames) recovers more accuracy. Defaults
+    to 0 (frames only from inside the cluster window).
+    """
     from PIL import Image
 
     meta = metadata[slice_idx]
     r_idx, w0, w1 = resolve_window_indices(meta)
+    if view_window_extension and view_window_extension > 0:
+        w0 = max(0, w0 - int(view_window_extension))
+        w1 = w1 + int(view_window_extension)  # extract_window_frames clips to ep length
     frames = extract_window_frames(
         eval_dir, r_idx, w0, w1, max_frames=max_frames, rng=rng
     )
@@ -502,17 +515,22 @@ def run_query_with_label_maps(
     user_prompt_question: str,
     frame_rng: np.random.Generator,
     label_maps: List[Dict[int, str]],
+    view_window_extension: int = 0,
 ) -> Dict[str, Any]:
     """Run one query with pre-determined per-rep label maps (for reproducibility)."""
     from PIL import Image as PILImage
 
     query_storyboard = _load_storyboard(
-        eval_dir, query_idx, metadata, max_frames, frame_rng
+        eval_dir, query_idx, metadata, max_frames, frame_rng,
+        view_window_extension=view_window_extension,
     )
     example_storyboards: Dict[int, List[PILImage.Image]] = {}
     for cid in cluster_ids:
         boards = [
-            _load_storyboard(eval_dir, ex_idx, metadata, max_frames, frame_rng)
+            _load_storyboard(
+                eval_dir, ex_idx, metadata, max_frames, frame_rng,
+                view_window_extension=view_window_extension,
+            )
             for ex_idx in example_indices.get(cid, [])
         ]
         example_storyboards[cid] = boards
@@ -725,6 +743,7 @@ def run_cluster_coherence_classification(
     max_clusters: Optional[int] = None,
     dry_run: bool = False,
     global_episode_disjoint: bool = False,
+    view_window_extension: int = 0,
 ) -> Dict[str, Any]:
     """Run Experiment E1 for one clustering result.
 
@@ -778,6 +797,8 @@ def run_cluster_coherence_classification(
     plan["clustering_dir"] = str(clustering_dir)
     plan["eval_dir"] = str(eval_dir)
     plan["backend"] = getattr(backend, "name", type(backend).__name__)
+    plan["max_frames_per_storyboard"] = int(max_frames_per_storyboard)
+    plan["view_window_extension"] = int(view_window_extension)
 
     # Pre-generate label maps for all queries
     plan["label_maps"] = generate_label_maps_for_plan(plan, rng)
@@ -840,6 +861,7 @@ def run_cluster_coherence_classification(
                     user_prompt_question=question,
                     frame_rng=frame_rng,
                     label_maps=label_maps_int,
+                    view_window_extension=view_window_extension,
                 )
                 all_records.append(record)
                 pred_f.write(json.dumps(record, default=str) + "\n")

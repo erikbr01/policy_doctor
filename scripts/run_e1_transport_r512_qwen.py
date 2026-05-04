@@ -46,6 +46,14 @@ def main() -> int:
         help="Block cross-cluster episode contamination by preferring queries "
              "whose episode appears in NO cluster's example pool.",
     )
+    ap.add_argument(
+        "--view_window_extension",
+        type=int,
+        default=0,
+        help="Widen the visual frame window symmetrically by this many timesteps "
+             "on each side without changing the cluster window. Tests whether "
+             "longer visual context recovers more accuracy at fixed clustering.",
+    )
     args = ap.parse_args()
 
     import policy_doctor as _pd
@@ -107,6 +115,7 @@ def main() -> int:
         max_clusters=args.max_clusters,
         dry_run=False,
         global_episode_disjoint=args.global_episode_disjoint,
+        view_window_extension=args.view_window_extension,
     )
 
     print("\n=== Summary ===")

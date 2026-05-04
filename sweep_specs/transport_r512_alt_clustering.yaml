@@ -1,0 +1,29 @@
+# Sweep spec for transport_mh r512x512 seed-0 alternative clusterings.
+#
+# Each entry in `grid` is a list; the cartesian product is taken (with
+# rep-specific kwargs filtered, so e.g. obs_strategy is only varied for
+# state/state_action). Knobs that don't apply to a given representation are
+# dropped, then duplicates are removed — so listing many state-action knobs
+# does not blow up the infembed run count.
+#
+# Use:
+#   python scripts/run_clustering_sweep.py --spec sweep_specs/transport_r512_alt_clustering.yaml
+#
+# Or dry-run to print planned commands:
+#   python scripts/run_clustering_sweep.py --spec ... --dry_run
+
+eval_dir: /mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/mar27/mar27_train_diffusion_unet_lowdim_transport_mh_0_r512x512/latest
+sweep_root: /tmp/clustering_sweeps/transport_r512_seed0_alt
+seed: 42
+task_config: transport_mh_mar27_r512_seed0_alt_sweep
+
+grid:
+  representation: [infembed, state, state_action]
+  window_width: [3, 5, 10]
+  stride: [2]
+  aggregation: [sum, mean]
+  prescale: [standard]
+  umap_n_components: [50, 100]
+  n_clusters: [10, 15, 20]
+  obs_strategy: [current]        # state/state_action only
+  action_strategy: [executed]    # state_action only
