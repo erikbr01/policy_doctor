@@ -147,7 +147,15 @@ practice. A passing run does not mean a useful run.
 ## 3. Enqueue requests onto the server
 
 The agent run writes to `--out_dir`; the server doesn't auto-pick it up.
-Bulk-import the whole session in one call:
+Bulk-import the whole session in one call. Convenient wrapper:
+
+```bash
+python scripts/enqueue_session.py /tmp/e2_session_seed0
+# or with a non-default server URL:
+python scripts/enqueue_session.py /tmp/e2_session_seed0 --server http://localhost:5003
+```
+
+Or hit the endpoint directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:5003/requests/import_session \
