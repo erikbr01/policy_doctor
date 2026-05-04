@@ -38,6 +38,8 @@ When absent (older clustering runs), the selection falls back to random sampling
 
 Example and query slices for a given cluster are drawn from different rollout episodes wherever possible, preventing the VLM from classifying on episode-level visual cues (initial object placement, lighting) rather than behavioral content.  When disjointness is impossible (cluster spans only one episode), this is logged in `sample_plan.json` under `disjointness_status`.
 
+The default per-cluster check has a known blind spot: the VLM is shown all `K · n_example` example storyboards in one prompt, so a query's episode may appear in *another cluster's* examples even when it's disjoint from its own cluster's. Set `vlm_cluster_classification.global_episode_disjoint: true` to enforce a stronger, two-pass selection: queries are preferred from episodes that appear in **no** cluster's example pool (`tier1_global`), then locally-disjoint-only (`tier2_local`), then same-episode (`tier3_same_episode`). The plan records `global_disjointness_status` per cluster and per-query `query_origins` so the analysis can bucket exactly. The flag defaults to `false` to preserve bit-reproducibility of pre-existing sample plans.
+
 ### Opaque labels + randomisation
 
 Cluster IDs are mapped to opaque labels ("Group A", "Group B", …) to prevent the VLM from inferring meaning from numerical ordering.  The mapping is re-shuffled independently for every (query, repetition) pair.

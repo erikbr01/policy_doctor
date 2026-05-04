@@ -156,6 +156,89 @@ def _centroid_distances(
     return np.linalg.norm(diffs, axis=1)
 
 
+def _select_one_cluster_legacy(
+    cid: int,
+    cluster_labels: np.ndarray,
+    metadata: List[dict],
+    embeddings_reduced: Optional[np.ndarray],
+    *,
+    n_example: int,
+    n_query: int,
+    rng: np.random.Generator,
+) -> Dict[str, Any]:
+    """Pre-refactor per-cluster example+query selection.
+
+    Identical logic and rng-consumption order to the original (pre two-pass)
+    implementation. Used when ``global_episode_disjoint=False`` so old sample
+    plans replay bit-for-bit when re-run with the same seed and inputs.
+    """
+    all_idx = _indices_for_cluster(cluster_labels, cid)
+    if len(all_idx) == 0:
+        return {
+            "example_indices": [],
+            "query_indices": [],
+            "disjointness_status": "empty",
+        }
+
+    dists: Optional[np.ndarray] = None
+    if embeddings_reduced is not None:
+        dists = _centroid_distances(all_idx, embeddings_reduced)
+
+    n_ex = min(n_example, len(all_idx))
+    if dists is not None:
+        sorted_order = np.argsort(dists)
+        example_local = sorted_order[:n_ex]
+        example_idx = all_idx[example_local].tolist()
+    else:
+        chosen = rng.choice(all_idx, size=n_ex, replace=False)
+        example_idx = [int(i) for i in chosen]
+
+    example_eps = {_rollout_idx_of(metadata[i]) for i in example_idx}
+
+    remaining_mask = np.ones(len(all_idx), dtype=bool)
+    ex_set = set(example_idx)
+    for i, idx in enumerate(all_idx):
+        if int(idx) in ex_set:
+            remaining_mask[i] = False
+    remaining = all_idx[remaining_mask]
+    remaining_dists = dists[remaining_mask] if dists is not None else None
+
+    disjoint_mask = np.array([
+        _rollout_idx_of(metadata[int(idx)]) not in example_eps
+        for idx in remaining
+    ])
+    disjoint_pool = remaining[disjoint_mask]
+    disjoint_dists = (
+        remaining_dists[disjoint_mask] if remaining_dists is not None else None
+    )
+
+    n_q = min(n_query, len(remaining))
+    if len(disjoint_pool) >= n_q:
+        query_idx = _stratified_sample(disjoint_pool, n_q, disjoint_dists, rng)
+        disjointness = "full"
+    elif len(disjoint_pool) > 0:
+        query_idx = _stratified_sample(
+            disjoint_pool, len(disjoint_pool), disjoint_dists, rng
+        )
+        same_ep_pool = remaining[~disjoint_mask]
+        same_ep_dists = (
+            remaining_dists[~disjoint_mask] if remaining_dists is not None else None
+        )
+        need = n_q - len(query_idx)
+        query_idx += _stratified_sample(same_ep_pool, need, same_ep_dists, rng)
+        disjointness = "partial"
+    else:
+        query_idx = _stratified_sample(remaining, n_q, remaining_dists, rng)
+        disjointness = "same_episode" if len(remaining) > 0 else "insufficient"
+
+    return {
+        "example_indices": [int(i) for i in example_idx],
+        "query_indices": [int(i) for i in query_idx],
+        "disjointness_status": disjointness,
+        "n_available": int(len(all_idx)),
+    }
+
+
 def build_sample_plan(
     cluster_labels: np.ndarray,
     metadata: List[dict],
@@ -165,6 +248,7 @@ def build_sample_plan(
     n_query: int,
     rng: np.random.Generator,
     max_clusters: Optional[int] = None,
+    global_episode_disjoint: bool = False,
 ) -> Dict[str, Any]:
     """Build the pre-committed sampling plan for Experiment E1.
 
@@ -174,8 +258,16 @@ def build_sample_plan(
       - ``query_indices``: n_query held-out slices (stratified; episode-disjoint
         from examples wherever possible).
 
-    Returns a JSON-serialisable dict.  Writes this as ``sample_plan.json`` before
-    any VLM call so the sampling is pre-committed.
+    When ``global_episode_disjoint=True``, query selection runs in a second pass
+    after all examples are chosen and prefers queries whose rollout episode
+    appears in NO cluster's example pool. This blocks the cross-cluster
+    episode-cue confound: at K=20/n_example=3, the prompt shows 60 example
+    storyboards spread across 20 clusters; even if a query's episode is disjoint
+    from its own cluster's examples, it can still appear in another cluster's
+    examples and let the VLM cheat by visual episode-matching.
+
+    Returns a JSON-serialisable dict. Always written as ``sample_plan.json``
+    before any VLM call so sampling is pre-committed.
     """
     unique_ids = sorted(int(c) for c in set(cluster_labels.tolist()) if c >= 0)
     if max_clusters is not None:
@@ -186,8 +278,24 @@ def build_sample_plan(
         "n_query": n_query,
         "cluster_ids": unique_ids,
         "clusters": {},
+        "global_episode_disjoint": bool(global_episode_disjoint),
     }
 
+    # Legacy path: when the flag is off, run the original per-cluster
+    # interleaved selection (examples then queries, cluster by cluster). This
+    # preserves bit-reproducibility of pre-refactor sample plans — the rng is
+    # consumed in the same order as before.
+    if not global_episode_disjoint:
+        for cid in unique_ids:
+            plan["clusters"][cid] = _select_one_cluster_legacy(
+                cid, cluster_labels, metadata, embeddings_reduced,
+                n_example=n_example, n_query=n_query, rng=rng,
+            )
+        return plan
+
+    # Global-disjoint path: two-pass. Select examples for every cluster first
+    # so we can compute the global example-episode pool before query selection.
+    cluster_state: Dict[int, Dict[str, Any]] = {}
     for cid in unique_ids:
         all_idx = _indices_for_cluster(cluster_labels, cid)
         if len(all_idx) == 0:
@@ -198,12 +306,10 @@ def build_sample_plan(
             }
             continue
 
-        # Compute centroid distances if embeddings are available
         dists: Optional[np.ndarray] = None
         if embeddings_reduced is not None:
             dists = _centroid_distances(all_idx, embeddings_reduced)
 
-        # --- Example selection: n_example closest to centroid ---
         n_ex = min(n_example, len(all_idx))
         if dists is not None:
             sorted_order = np.argsort(dists)
@@ -215,50 +321,107 @@ def build_sample_plan(
 
         example_eps = {_rollout_idx_of(metadata[i]) for i in example_idx}
 
-        # --- Query selection: from remaining, episode-disjoint if possible ---
         remaining_mask = np.ones(len(all_idx), dtype=bool)
+        ex_set = set(example_idx)
         for i, idx in enumerate(all_idx):
-            if int(idx) in set(example_idx):
+            if int(idx) in ex_set:
                 remaining_mask[i] = False
         remaining = all_idx[remaining_mask]
         remaining_dists = dists[remaining_mask] if dists is not None else None
 
-        # Prefer episode-disjoint
-        disjoint_mask = np.array([
-            _rollout_idx_of(metadata[int(idx)]) not in example_eps
-            for idx in remaining
-        ])
-        disjoint_pool = remaining[disjoint_mask]
-        disjoint_dists = (
-            remaining_dists[disjoint_mask] if remaining_dists is not None else None
+        cluster_state[cid] = {
+            "all_idx": all_idx,
+            "example_idx": example_idx,
+            "example_eps": example_eps,
+            "remaining": remaining,
+            "remaining_dists": remaining_dists,
+        }
+
+    global_example_eps: set = set()
+    for st in cluster_state.values():
+        global_example_eps |= st["example_eps"]
+
+    for cid in unique_ids:
+        if cid not in cluster_state:
+            continue  # empty cluster, already handled
+        st = cluster_state[cid]
+        example_idx = st["example_idx"]
+        example_eps = st["example_eps"]
+        remaining = st["remaining"]
+        remaining_dists = st["remaining_dists"]
+
+        # Episode label of each remaining slice.
+        rem_eps = np.array([_rollout_idx_of(metadata[int(i)]) for i in remaining])
+        local_disjoint_mask = np.array([ep not in example_eps for ep in rem_eps])
+        global_disjoint_mask = np.array(
+            [ep not in global_example_eps for ep in rem_eps]
         )
 
+        # Tiered pools (each strictly stronger than the next).
+        # tier1 = global-disjoint, tier2 = local-disjoint only (in another
+        # cluster's examples), tier3 = same as own cluster's examples.
+        tier1_mask = global_disjoint_mask
+        tier2_mask = local_disjoint_mask & ~global_disjoint_mask
+        tier3_mask = ~local_disjoint_mask
+
+        def _sample_from_mask(mask: np.ndarray, n: int) -> List[int]:
+            if n <= 0 or not mask.any():
+                return []
+            pool = remaining[mask]
+            pool_d = remaining_dists[mask] if remaining_dists is not None else None
+            return _stratified_sample(pool, n, pool_d, rng)
+
         n_q = min(n_query, len(remaining))
-        if len(disjoint_pool) >= n_q:
-            query_idx = _stratified_sample(disjoint_pool, n_q, disjoint_dists, rng)
-            disjointness = "full"
-        elif len(disjoint_pool) > 0:
-            # Partial: fill with disjoint first, then allow same-episode
-            query_idx = _stratified_sample(
-                disjoint_pool, len(disjoint_pool), disjoint_dists, rng
-            )
-            same_ep_pool = remaining[~disjoint_mask]
-            same_ep_dists = (
-                remaining_dists[~disjoint_mask] if remaining_dists is not None else None
-            )
+        query_idx: List[int] = []
+        query_origins: List[str] = []
+        used_tiers: List[str] = []
+        for tier_name, tier_mask in (
+            ("tier1_global", tier1_mask),
+            ("tier2_local", tier2_mask),
+            ("tier3_same_episode", tier3_mask),
+        ):
             need = n_q - len(query_idx)
-            query_idx += _stratified_sample(same_ep_pool, need, same_ep_dists, rng)
-            disjointness = "partial"
+            if need <= 0:
+                break
+            picked = _sample_from_mask(tier_mask, need)
+            if picked:
+                query_idx.extend(picked)
+                query_origins.extend([tier_name] * len(picked))
+                used_tiers.append(f"{tier_name}:{len(picked)}")
+
+        # Backward-compatible local-only status.
+        if local_disjoint_mask.sum() == 0:
+            local_status = "same_episode" if len(remaining) > 0 else "insufficient"
+        elif tier3_mask.sum() > 0 and any(t.startswith("tier3") for t in used_tiers):
+            # We had to dip into same-episode despite some local-disjoint being available.
+            local_status = "partial"
         else:
-            # No disjoint slices available — allow same-episode
-            query_idx = _stratified_sample(remaining, n_q, remaining_dists, rng)
-            disjointness = "same_episode" if len(remaining) > 0 else "insufficient"
+            local_status = "full"
+
+        picked_tiers = [t.split(":")[0] for t in used_tiers]
+        if picked_tiers == ["tier1_global"]:
+            global_status = "global_full"
+        elif "tier1_global" in picked_tiers and "tier3_same_episode" not in picked_tiers:
+            global_status = "global_partial_local"
+        elif "tier1_global" in picked_tiers:
+            global_status = "global_partial_same_ep"
+        elif "tier2_local" in picked_tiers and "tier3_same_episode" not in picked_tiers:
+            global_status = "local_only"
+        elif "tier3_same_episode" in picked_tiers and "tier2_local" in picked_tiers:
+            global_status = "local_partial_same_ep"
+        elif "tier3_same_episode" in picked_tiers:
+            global_status = "same_episode"
+        else:
+            global_status = "insufficient"
 
         plan["clusters"][cid] = {
             "example_indices": [int(i) for i in example_idx],
             "query_indices": [int(i) for i in query_idx],
-            "disjointness_status": disjointness,
-            "n_available": int(len(all_idx)),
+            "query_origins": query_origins,
+            "disjointness_status": local_status,
+            "global_disjointness_status": global_status,
+            "tiers_used": used_tiers,
+            "n_available": int(len(st["all_idx"])),
         }
 
     return plan
@@ -561,6 +724,7 @@ def run_cluster_coherence_classification(
     user_prompt_question: Optional[str] = None,
     max_clusters: Optional[int] = None,
     dry_run: bool = False,
+    global_episode_disjoint: bool = False,
 ) -> Dict[str, Any]:
     """Run Experiment E1 for one clustering result.
 
@@ -607,6 +771,7 @@ def run_cluster_coherence_classification(
         n_query=n_query,
         rng=rng,
         max_clusters=max_clusters,
+        global_episode_disjoint=global_episode_disjoint,
     )
     plan["n_repetitions"] = n_repetitions
     plan["random_seed"] = random_seed

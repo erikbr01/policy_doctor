@@ -32,6 +32,14 @@ vlm_cluster_classification:
   # Optionally cap number of clusters (null = all)
   max_clusters: null
 
+  # When true, enforce that query slices come from episodes that appear in NO
+  # cluster's example pool (not just the query's own cluster). Blocks the
+  # cross-cluster episode-cue confound where a query's episode appears in
+  # another cluster's examples and the VLM picks that cluster via visual
+  # episode-matching rather than behavioral content. Default false to preserve
+  # bit-reproducibility of pre-existing sample plans.
+  global_episode_disjoint: false
+
   # Optional prompt overrides (null = use defaults)
   system_prompt: null
   user_preamble_template: null

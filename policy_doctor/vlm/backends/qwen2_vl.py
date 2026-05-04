@@ -359,6 +359,72 @@ class Qwen2VLBackend(VLMBackend):
         decoded = self._processor.batch_decode(trimmed, skip_special_tokens=True)[0]
         return decoded.strip()
 
+    def classify_slice(
+        self,
+        *,
+        query_images: Sequence[Image.Image],
+        example_sets: Sequence[Tuple[str, Sequence[Image.Image]]],
+        system_prompt: Optional[str],
+        user_preamble: str,
+        user_prompt: str,
+    ) -> str:
+        import torch
+
+        self._lazy_init()
+        assert self._processor is not None and self._model is not None
+
+        all_images: List[Image.Image] = []
+        content: list = []
+        if user_preamble:
+            content.append({"type": "text", "text": user_preamble})
+        for label, imgs in example_sets:
+            content.append({"type": "text", "text": f"{label}:"})
+            for im in imgs:
+                content.append({"type": "image", "image": im})
+                all_images.append(im)
+        content.append({"type": "text", "text": "Query:"})
+        for im in query_images:
+            content.append({"type": "image", "image": im})
+            all_images.append(im)
+        content.append({"type": "text", "text": user_prompt})
+
+        messages: list = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": content})
+
+        text = self._processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        proc_extra: Dict[str, Any] = {}
+        if self.image_max_pixels is not None or self.image_min_pixels is not None:
+            ik: Dict[str, Any] = {}
+            if self.image_min_pixels is not None:
+                ik["min_pixels"] = int(self.image_min_pixels)
+            if self.image_max_pixels is not None:
+                ik["max_pixels"] = int(self.image_max_pixels)
+            proc_extra["images_kwargs"] = ik
+        inputs = self._processor(
+            text=[text],
+            images=all_images,
+            return_tensors="pt",
+            padding=True,
+            **proc_extra,
+        )
+        inputs = inputs.to(self.device)
+
+        with torch.inference_mode():
+            out_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+            )
+        trimmed = out_ids[:, inputs["input_ids"].shape[1] :]
+        decoded = self._processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+        return decoded.strip()
+
     def evaluate_slice_caption_coherency(
         self,
         *,
