@@ -98,9 +98,11 @@ def main() -> int:
     ap.add_argument(
         "--composite_target_size",
         type=int,
-        default=512,
+        default=768,
         help="Side length of the composite image when storyboard_mode=composite. "
-             "Per-cell resolution scales as ~target/sqrt(max_frames). Default 512.",
+             "Per-cell resolution scales as ~target/sqrt(max_frames). Default 768 "
+             "— K=10 v2 sweep found 768 (cells ~384) > 512 (cells ~256) by "
+             "~+0.04 clean accuracy at no extra image-token cost.",
     )
     ap.add_argument(
         "--query_storyboard_mode",

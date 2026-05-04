@@ -3,6 +3,14 @@
 # Tests whether a VLM can classify held-out slices into their correct
 # influence-derived cluster — validating that clusters are behaviorally meaningful.
 #
+# Defaults below reflect the best-known config from the visual-context sweeps
+# (see docs/experiments/results/e1_results_summary.md, F8/F9):
+#   - composite mode at target=768  (cells ≈ 384x384, beats 512 by ~+0.04 clean)
+#   - max_frames_per_storyboard=4   (mf=9 underperforms; pure frames OOMs / no gain)
+#   - global_episode_disjoint=true  (necessary; episode-confounded queries inflate by ~10pt)
+#   - n_repetitions=3, centroid-proximal examples (auto-enabled when
+#     embeddings_reduced.npy is present alongside cluster_labels.npy)
+#
 # Requires:
 #   - Completed run_clustering step (or explicit vlm_cluster_classification.clustering_dir)
 #   - Eval episode pickles with 'img' column
@@ -26,30 +34,39 @@ vlm_cluster_classification:
   n_example: 5                   # prototype slices per cluster (centroid-proximal)
   n_query: 5                     # held-out slices per cluster
   n_repetitions: 3               # VLM calls per query (majority vote)
-  max_frames_per_storyboard: 4   # frames in each composite storyboard image
+  max_frames_per_storyboard: 4   # 2x2 grid; mf=9 with 3x3 cells underperformed
   random_seed: 42                # fixed before any VLM call
 
   # Optionally cap number of clusters (null = all)
   max_clusters: null
 
-  # When true, enforce that query slices come from episodes that appear in NO
-  # cluster's example pool (not just the query's own cluster). Blocks the
-  # cross-cluster episode-cue confound where a query's episode appears in
-  # another cluster's examples and the VLM picks that cluster via visual
-  # episode-matching rather than behavioral content. Default false to preserve
-  # bit-reproducibility of pre-existing sample plans.
-  global_episode_disjoint: false
+  # Block the cross-cluster episode-cue confound: query slices come from
+  # episodes that appear in NO cluster's example pool (not just the query's own
+  # cluster's). Setting to false reverts to the per-cluster-only check, which
+  # leaks ~10 percentage points of headline accuracy via episode-level visual
+  # cues. Default true for new runs; old sample plans regenerate identically
+  # (with seed+inputs fixed) only when this is false (see "legacy" path in
+  # build_sample_plan).
+  global_episode_disjoint: true
+
+  # Storyboard rendering
+  # composite (default): pack mf frames into one image per slice — best on
+  # measurement at K=10 (clean acc 0.519 at target=768 vs 0.481 at target=512).
+  # frames: send each frame as its own image; underperforms composite at K=5
+  # and OOMs at K=10 with mf=4.
+  storyboard_mode: composite
+  composite_target_size: 768     # 768x768 → 384x384 cells at mf=4
 
   # Widen the visual frame window symmetrically by this many timesteps on each
-  # side, WITHOUT changing the cluster window or sample plan. Tests whether
-  # longer visual context (more motion across frames) is the bottleneck. 0 keeps
-  # frames inside the cluster window (default).
+  # side, WITHOUT changing the cluster window or sample plan. Sweep at K=10
+  # found this knob is *harmful* in isolation (frames sample outside the
+  # cluster window unless density is preserved). Keep at 0.
   view_window_extension: 0
 
   # Append per-timestep numeric text after each slice's storyboard. Useful when
   # the visual signal alone isn't enough — gives the VLM access to the same
   # state vector the policy receives or the action it executed. Adds tokens
-  # but no extra images.
+  # but no extra images. Off by default; tested separately.
   include_action_text: false
   include_state_text: false
 

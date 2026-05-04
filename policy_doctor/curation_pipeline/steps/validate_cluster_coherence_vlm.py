@@ -92,10 +92,17 @@ class ValidateClusterCoherenceVLMStep(PipelineStep[Dict[str, Any]]):
         random_seed = int(vcc.get("random_seed", 42))
         max_clusters_raw = vcc.get("max_clusters")
         max_clusters = int(max_clusters_raw) if max_clusters_raw is not None else None
-        global_episode_disjoint = bool(vcc.get("global_episode_disjoint", False))
+        global_episode_disjoint = bool(vcc.get("global_episode_disjoint", True))
         view_window_extension = int(vcc.get("view_window_extension", 0))
         include_action_text = bool(vcc.get("include_action_text", False))
         include_state_text = bool(vcc.get("include_state_text", False))
+        storyboard_mode = str(vcc.get("storyboard_mode", "composite"))
+        composite_target_size = int(vcc.get("composite_target_size", 768))
+        query_storyboard_mode_raw = vcc.get("query_storyboard_mode")
+        query_storyboard_mode = (
+            str(query_storyboard_mode_raw)
+            if query_storyboard_mode_raw is not None else None
+        )
 
         system_prompt = vcc.get("system_prompt") or None
         user_preamble = vcc.get("user_preamble_template") or None
@@ -184,6 +191,9 @@ class ValidateClusterCoherenceVLMStep(PipelineStep[Dict[str, Any]]):
                 view_window_extension=view_window_extension,
                 include_action_text=include_action_text,
                 include_state_text=include_state_text,
+                storyboard_mode=storyboard_mode,
+                composite_target_size=composite_target_size,
+                query_storyboard_mode=query_storyboard_mode,
             )
             per_seed[seed] = summary
 

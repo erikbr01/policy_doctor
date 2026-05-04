@@ -66,6 +66,11 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--device_map", default=None)
     ap.add_argument("--include_action_text", action="store_true")
     ap.add_argument("--include_state_text", action="store_true")
+    ap.add_argument("--storyboard_mode", default=None,
+                    choices=[None, "composite", "frames"])
+    ap.add_argument("--composite_target_size", type=int, default=None)
+    ap.add_argument("--query_storyboard_mode", default=None,
+                    choices=[None, "composite", "frames"])
     ap.add_argument("--max_clusters_override", type=int, default=None,
                     help="If set, force this max_clusters on every eval; otherwise read from manifest n_clusters.")
     ap.add_argument("--force", action="store_true",
@@ -160,6 +165,12 @@ def main() -> int:
                 cmd.append("--include_action_text")
             if args.include_state_text:
                 cmd.append("--include_state_text")
+            if args.storyboard_mode is not None:
+                cmd.extend(["--storyboard_mode", args.storyboard_mode])
+            if args.composite_target_size is not None:
+                cmd.extend(["--composite_target_size", str(args.composite_target_size)])
+            if args.query_storyboard_mode is not None:
+                cmd.extend(["--query_storyboard_mode", args.query_storyboard_mode])
 
             print(f"\n[e1_sweep_eval] [{i}/{len(cdirs)}] {slug}  K={k}")
             print(f"  $ {shlex.join(cmd)}")

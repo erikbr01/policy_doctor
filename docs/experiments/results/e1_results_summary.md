@@ -106,7 +106,7 @@ Combining F5 and F6:
 
 The current configuration (mf=4 ext=0 at composite 512², image_max_pixels=1024²) appears close to a local optimum given the storyboard format. To break past 48% clean, the next moves are: (a) raise composite resolution so 3×3 / 4×4 grids stay readable, (b) feed numeric per-timestep state/action alongside images (implemented; see commit `6391f0c`, untested), and/or (c) revisit the clustering itself (representation, window width — see Q4/Q5 below).
 
-### F8 — Visual context format sweep at K=10: bigger cells help, asymmetric formatting hurts
+### F8 — Visual context format sweep at K=10: bigger cells help, asymmetric formatting hurts; K=5 confirms format isn't the bottleneck
 
 Tested three storyboard formats against the K=10 v2 baseline (composite mf=4 target=512², cells=256²), each holding sample plan, model, and seed fixed.
 
@@ -123,7 +123,55 @@ Tested three storyboard formats against the K=10 v2 baseline (composite mf=4 tar
 
 Methodological consequence: when introducing per-slice multi-image variants in the future, **all slices** should be in the same format. Mixed formats break VLM grouping inference.
 
-**F8c — Pure frames mode doesn't fit at K=10 on a single 24GB GPU.** At K=10/n_example=3/mf=4, frames mode produces 124 images per call. Even with `image_max_pixels=147456` (≈384²/frame), the vision encoder's per-image position-embedding allocations cumulatively overflow 24GB. To test pure frames cleanly we have to drop to K=5 (max ~75 frames per call) — see Q1''.
+**F8c — Pure frames mode doesn't fit at K=10 on a single 24GB GPU.** At K=10/n_example=3/mf=4, frames mode produces 124 images per call. Even with `image_max_pixels=147456` (≈384²/frame), the vision encoder's per-image position-embedding allocations cumulatively overflow 24GB. To test pure frames cleanly we have to drop to K=5 (max ~75 frames per call) — see Q1'' / F9.
+
+### F9 — K=5 follow-up: pure frames format is *not* the bottleneck
+
+Built a fresh K=5 clustering (`/tmp/transport_mh_seed0_r512_clustering_k5`) and ran two configs at K=5/n_example=3/n_query=3/n_reps=3, both fitting comfortably in context.
+
+| Config (K=5) | Headline | Clean (n=15) | p (vs 0.20) | Ratio above chance |
+|---|---|---|---|---|
+| baseline (composite mf=4 at 512²) | 0.467 | **7/15 = 0.467** | 0.018 | 2.3× |
+| pure frames mf=4 (native 512² each) | 0.400 | 6/15 = 0.400 | 0.061 (NS) | 2.0× |
+
+**Pure frames does not beat composite, even at full per-frame native resolution and full context fit.** Composite wins by 1 correct out of 15 (within sampling noise, but pointing the same direction).
+
+**The K curve, summarized:**
+
+| K | Chance | Clean acc | Ratio above chance |
+|---|---|---|---|
+| K=20 v2 | 0.05 | 0.241 | 4.8× |
+| K=15 v2 | 0.067 | 0.308 | 4.6× |
+| **K=10 v2** | 0.10 | 0.481 | **4.8×** |
+| K=10 + 768² composite | 0.10 | 0.519 | 5.2× |
+| K=5 | 0.20 | 0.467 | 2.3× |
+| K=5 frames | 0.20 | 0.400 | 2.0× |
+
+The signal-to-chance ratio is **stable at 4.6–5.2× from K=15 down to K=10**, then *drops* to ~2× at K=5. K=10 looks like the sweet spot for visual recoverability — going coarser (K=5) merges genuinely distinct behaviors that the VLM can no longer disambiguate.
+
+**Synthesis (F8 + F9):** the storyboard composite is *not* the bottleneck. Format alone (composite vs frames vs hybrid) doesn't move the needle once we control for image count and per-cell resolution. The remaining gap from ~50% clean → ceiling is in the clustering itself or the slice content (5-frame windows + cluster-prototype ambiguity), not the prompt format. Larger composite cells (F8a) give a small honest gain (+0.04 clean); everything else moves it sideways or down.
+
+---
+
+## Best-known config (post-F8/F9)
+
+Defaults in `policy_doctor/configs/experiment/e1_cluster_coherence_vlm.yaml`, the Hydra step, and the runner script (`scripts/run_e1_transport_r512_qwen.py`) have been updated to:
+
+| Knob | Default | Rationale |
+|---|---|---|
+| K | 10 (downstream choice) | Sweet spot in the K curve; K=15/20 over-cluster, K=5 over-merges |
+| `n_repetitions` | 3 | majority vote; standard since v2 |
+| `max_frames_per_storyboard` | 4 | mf=9 underperforms (cells too small) |
+| `global_episode_disjoint` | **true** | blocks ~10pt of episode-cue inflation |
+| `storyboard_mode` | composite | frames doesn't help, hybrid hurts |
+| `composite_target_size` | **768** | 384² cells beat 256² by +0.04 clean at no token cost |
+| `view_window_extension` | 0 | non-zero values hurt at fixed mf |
+| `query_storyboard_mode` | unset (= storyboard_mode) | hybrid hurts the prompt structure |
+| `random_seed` | 42 | as before |
+
+Sweep eval driver (`run_e1_sweep_eval.py`) accepts the new knobs as CLI flags so a sweep can be evaluated under any of them.
+
+Earlier sample plans and metrics (K=20 v1, K=10 v2 at 512², etc.) are bit-frozen on disk and remain comparable to one another. New runs from the current defaults will not be bit-identical to those, by design.
 
 ---
 
