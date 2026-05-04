@@ -44,6 +44,11 @@ class AgentRunConfig:
     base_seed: int = 0
     kinematic_summary_strategy: str = "raw_states"
     cache_enabled: bool = True
+    # Storyboard rendering knobs forwarded to ctx.config['storyboard'] and
+    # consumed by Layer 2 visual tools (get_slice_video, get_rollout_video).
+    # Keys are documented at policy_doctor/vlm/proposals/agents/tools/access.py
+    # in `_render_slice_storyboard`. None = use the function defaults.
+    storyboard: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -79,11 +84,18 @@ def run_one_session(
     kinematic_summary_strategy: str = "raw_states",
     cache_enabled: bool = True,
     user_message: Optional[str] = None,
+    storyboard: Optional[Dict[str, Any]] = None,
 ) -> SessionResult:
     """Run a single session and persist its artefacts."""
     cond = parse_condition(condition)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    session_config: Dict[str, Any] = {
+        "kinematic_summary_strategy": kinematic_summary_strategy,
+    }
+    if storyboard:
+        session_config["storyboard"] = dict(storyboard)
 
     ctx = SessionContext.build(
         condition=cond.value,
@@ -99,7 +111,7 @@ def run_one_session(
         budget_config=budget_config,
         cache_enabled=cache_enabled,
         task_hint=task_hint,
-        config={"kinematic_summary_strategy": kinematic_summary_strategy},
+        config=session_config,
     )
 
     tools = build_tool_registry(cond, ctx)
@@ -156,6 +168,7 @@ def run_condition(
             max_tokens=cfg.max_tokens,
             kinematic_summary_strategy=cfg.kinematic_summary_strategy,
             cache_enabled=cfg.cache_enabled,
+            storyboard=cfg.storyboard,
             **session_kwargs,
         )
         out.seeds.append(seed)

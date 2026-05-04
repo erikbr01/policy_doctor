@@ -83,6 +83,14 @@ class Qwen2VLBackend(VLMBackend):
         image_max_pixels: Optional[int] = None,
         image_min_pixels: Optional[int] = None,
         high_detail_pixels: bool = False,
+        # 4-bit / 8-bit weight loading via bitsandbytes. Use load_in_4bit for
+        # the largest checkpoints (e.g. Qwen3-VL-32B fits in ~22GB across two
+        # GPUs in NF4 + double-quant). When device_map is set, the model is
+        # placed by accelerate; we skip the .to(device) call.
+        load_in_4bit: bool = False,
+        load_in_8bit: bool = False,
+        device_map: Optional[Any] = None,
+        max_memory: Optional[Dict[Any, str]] = None,
         **_kwargs: Any,
     ) -> None:
         self.model_id = model_id
@@ -90,6 +98,10 @@ class Qwen2VLBackend(VLMBackend):
         self.torch_dtype_name = torch_dtype
         self.max_new_tokens = max_new_tokens
         self.attn_implementation = attn_implementation
+        self.load_in_4bit = bool(load_in_4bit)
+        self.load_in_8bit = bool(load_in_8bit)
+        self.device_map = device_map
+        self.max_memory = max_memory
         self.qwen_frame_input = _normalize_qwen_frame_input(
             qwen_frame_input, legacy_use_video=use_qwen_video_input
         )
@@ -141,13 +153,38 @@ class Qwen2VLBackend(VLMBackend):
         self._processor = AutoProcessor.from_pretrained(self.model_id, trust_remote_code=True)
         load_kw: Dict[str, Any] = dict(
             torch_dtype=td,
-            device_map=None,
+            device_map=self.device_map,
             trust_remote_code=True,
         )
         if self.attn_implementation:
             load_kw["attn_implementation"] = self.attn_implementation
+        if self.max_memory is not None:
+            load_kw["max_memory"] = self.max_memory
+        if self.load_in_4bit or self.load_in_8bit:
+            try:
+                from transformers import BitsAndBytesConfig
+            except ImportError as e:
+                raise ImportError(
+                    "load_in_4bit/8bit requires `bitsandbytes` and a recent "
+                    "`transformers` (`pip install bitsandbytes`)."
+                ) from e
+            if self.load_in_4bit:
+                load_kw["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=td,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+            else:
+                load_kw["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            # bitsandbytes-quantized weights cannot be moved with .to(); the
+            # model must be placed via device_map. Force "auto" if the caller
+            # didn't pick one, so the model lands on whatever GPUs are free.
+            if load_kw["device_map"] is None:
+                load_kw["device_map"] = "auto"
         self._model = _VLModel.from_pretrained(self.model_id, **load_kw)
-        self._model.to(self.device)
+        if load_kw.get("device_map") is None:
+            self._model.to(self.device)
         self._model.eval()
 
     def _describe_slice_qwen3_video_cookbook(

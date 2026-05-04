@@ -318,7 +318,9 @@ def _make_get_slice_video(ctx: SessionContext) -> ToolSpec:
                 code="not_found",
             )
 
-        composite = _render_slice_storyboard(entry.episode_pkl, start, end)
+        composite = _render_slice_storyboard(
+            entry.episode_pkl, start, end, **_storyboard_kwargs(ctx)
+        )
         if composite is None:
             return ToolResult.error(
                 "get_slice_video",
@@ -392,7 +394,10 @@ def _make_get_rollout_video(ctx: SessionContext) -> ToolSpec:
             img = _load_storyboard(entry.storyboard_path)
             if img is None:
                 # Fall back to rendering on the fly from the pkl.
-                img = _render_slice_storyboard(entry.episode_pkl, 0, max(entry.length - 1, 0))
+                img = _render_slice_storyboard(
+                    entry.episode_pkl, 0, max(entry.length - 1, 0),
+                    **_storyboard_kwargs(ctx),
+                )
             if img is None:
                 return ToolResult.error(
                     "get_rollout_video",
@@ -453,14 +458,94 @@ def _load_storyboard(path: Optional[Path]) -> Optional[Image.Image]:
         return None
 
 
-def _render_slice_storyboard(
-    pkl_path: Path, start: int, end: int, *, n_frames: int = 4
-) -> Optional[Image.Image]:
-    """Render a 4-frame storyboard cropped to ``[start, end]``.
+def _storyboard_kwargs(ctx: SessionContext) -> Dict[str, Any]:
+    """Extract storyboard-render kwargs from ``ctx.config['storyboard']``.
 
-    Returns ``None`` for low-dimensional runs (no per-step image columns in
-    the pkl). Mirrors the loader in ``build_rollout_pool`` so cropping
-    behavior matches the full-rollout storyboards.
+    Layer 2 visual tools share these knobs so a YAML config can shape what
+    the agent sees without touching code: temporal padding, frames per row,
+    target image size, camera selection.
+    """
+    cfg = (ctx.config or {}).get("storyboard") or {}
+    kw: Dict[str, Any] = {}
+    if "n_frames" in cfg:
+        kw["n_frames"] = int(cfg["n_frames"])
+    if "pad_before" in cfg:
+        kw["pad_before"] = int(cfg["pad_before"])
+    if "pad_after" in cfg:
+        kw["pad_after"] = int(cfg["pad_after"])
+    if cfg.get("cameras"):
+        kw["cameras"] = tuple(cfg["cameras"])
+    if cfg.get("target_size"):
+        ts = cfg["target_size"]
+        kw["target_size"] = (int(ts[0]), int(ts[1]))
+    return kw
+
+
+# Default camera preference order, used when the caller does not specify cameras.
+# A scene-level view first (so the agent can localize the action), then a wrist
+# camera if the task records one (so grasp alignment is legible).
+_DEFAULT_CAMERA_PREFERENCE: Tuple[str, ...] = (
+    "img_agentview",
+    "img_robot0_eye_in_hand",
+    "img",
+    "img_shouldercamera0",
+    "img_shouldercamera1",
+    "img_robot1_eye_in_hand",
+    "frame",
+    "image",
+)
+
+
+def _resolve_cameras(
+    df_columns: List[str],
+    requested: Optional[Tuple[str, ...]],
+) -> List[str]:
+    """Pick the camera columns to render.
+
+    If *requested* is given, return the subset that actually exists in
+    *df_columns*, preserving the requested order. Otherwise auto-select a
+    sensible default: a scene-level view (so the agent can localize the
+    action), plus every wrist camera that exists (so grasp alignment is
+    legible regardless of which arm is doing the work). Falls back to the
+    first available preference column when no scene view is present.
+    """
+    if requested:
+        return [c for c in requested if c in df_columns]
+
+    cols = set(df_columns)
+    out: List[str] = []
+    for scene in ("img_agentview", "img", "frame", "image"):
+        if scene in cols:
+            out.append(scene)
+            break
+    for wrist in ("img_robot0_eye_in_hand", "img_robot1_eye_in_hand"):
+        if wrist in cols:
+            out.append(wrist)
+    if not out:
+        out = [c for c in _DEFAULT_CAMERA_PREFERENCE if c in cols][:1]
+    return out
+
+
+def _render_slice_storyboard(
+    pkl_path: Path,
+    start: int,
+    end: int,
+    *,
+    n_frames: int = 5,
+    pad_before: int = 12,
+    pad_after: int = 12,
+    cameras: Optional[Tuple[str, ...]] = None,
+    target_size: Tuple[int, int] = (1024, 1024),
+) -> Optional[Image.Image]:
+    """Render a multi-camera, time-padded storyboard for slice ``[start, end]``.
+
+    Layout: ``len(cameras)`` rows × ``n_frames`` columns. Each panel is one
+    camera's view at one sampled timestep. Time runs left-to-right. The
+    sampling window is ``[start - pad_before, end + pad_after]`` clamped to
+    the rollout's valid frame range, so the agent can see what happens
+    *around* a short slice rather than a near-static snapshot.
+
+    Returns ``None`` for low-dimensional runs (no image columns in the pkl).
     """
     try:
         import pandas as pd  # local import so tools/__init__ stays lightweight
@@ -469,36 +554,50 @@ def _render_slice_storyboard(
     except Exception:
         return None
 
-    # Try common image-column names produced by eval_save_episodes / robomimic.
-    # Order: simple "frame" / "image" first; then the multi-camera robocasa-style
-    # keys ("img", "img_agentview", etc.).
-    image_col_candidates = (
-        "frame", "image",
-        "img", "img_agentview", "img_shouldercamera0", "img_shouldercamera1",
-        "img_robot0_eye_in_hand", "img_robot1_eye_in_hand",
-    )
-    col = next((c for c in image_col_candidates if c in df.columns), None)
-    if col is None:
-        return None
-    arrs = df[col].to_list()
-    if not arrs:
+    cols = _resolve_cameras(list(df.columns), cameras)
+    if not cols:
         return None
 
-    end = min(end, len(arrs) - 1)
-    start = max(start, 0)
-    if end < start:
+    n_steps = len(df)
+    if n_steps == 0:
         return None
 
-    span = end - start + 1
+    win_start = max(0, start - max(0, pad_before))
+    win_end = min(n_steps - 1, end + max(0, pad_after))
+    if win_end < win_start:
+        return None
+    span = win_end - win_start + 1
+
+    n_frames = max(1, int(n_frames))
     if span >= n_frames:
-        idxs = [start + int(i * (span - 1) / max(1, n_frames - 1)) for i in range(n_frames)]
+        idxs = [
+            win_start + int(i * (span - 1) / max(1, n_frames - 1))
+            for i in range(n_frames)
+        ]
     else:
-        idxs = list(range(start, end + 1))
+        idxs = list(range(win_start, win_end + 1))
+    n_actual = len(idxs)
 
-    from policy_doctor.vlm.storyboard import make_storyboard
+    rows: List[Image.Image] = []
+    for col in cols:
+        arrs = df[col].to_list()
+        if not arrs:
+            continue
+        rows.append(
+            [Image.fromarray(np.asarray(arrs[i]).astype("uint8")) for i in idxs]
+        )
+    if not rows:
+        return None
 
-    frames = [Image.fromarray(np.asarray(arrs[i]).astype("uint8")) for i in idxs]
-    return make_storyboard(frames)
+    # Build a (n_cameras × n_frames) grid: rows = cameras, cols = frames.
+    cell_w = target_size[0] // n_actual
+    cell_h = target_size[1] // len(rows)
+    canvas = Image.new("RGB", target_size, (0, 0, 0))
+    for r, frames in enumerate(rows):
+        for c, frame in enumerate(frames):
+            thumb = frame.convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
+            canvas.paste(thumb, (c * cell_w, r * cell_h))
+    return canvas
 
 
 # ---------------------------------------------------------------------------

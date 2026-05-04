@@ -98,6 +98,20 @@ agentic:
   kinematic_summary_strategy: raw_states   # raw_states | cluster_stats
   # Cache visual results so re-fetches don't charge.
   cache_enabled: true
+  # Storyboard rendering knobs forwarded to Layer 2 visual tools
+  # (get_slice_video, get_rollout_video). These shape what the agent sees.
+  # See _render_slice_storyboard in
+  # policy_doctor/vlm/proposals/agents/tools/access.py.
+  storyboard:
+    n_frames: 5                  # cells per camera row (sampled across the padded window)
+    pad_before: 12               # extend the slice window earlier (frames)
+    pad_after: 12                # extend later (frames). Wider context => agent
+                                 # can see the failure unfold rather than a snapshot.
+    target_size: [1024, 1024]    # final composite resolution; per-cell legibility
+                                 # = target_size / (n_cameras x n_frames)
+    cameras: null                # null = auto-pick scene + every wrist camera that
+                                 # exists. Override with an explicit list to force,
+                                 # e.g. ["img_agentview", "img_robot0_eye_in_hand"].
 
 # ---- Pre-registration freeze ----------------------------------------------
 # All values above (plus the prompt files and tool schemas) are dumped to

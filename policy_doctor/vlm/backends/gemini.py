@@ -236,10 +236,32 @@ class GeminiVLMBackend(VLMBackend):
             system_instruction=system or None,
             tools=gemini_tools,
         )
-        response = self._client.models.generate_content(
-            model=self._model_name, contents=contents, config=cfg,
-        )
-        return _gemini_response_to_assistant_turn(response)
+        # Transient 5xx and 429s are common on the free tier; retry with
+        # exponential backoff so a single overloaded turn does not kill the
+        # whole agent session. Hard fails (4xx other than 429) bubble up.
+        import time as _time
+
+        from google.genai.errors import APIError, ServerError, ClientError  # type: ignore
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(5):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model_name, contents=contents, config=cfg,
+                )
+                return _gemini_response_to_assistant_turn(response)
+            except (ServerError, ClientError, APIError) as e:
+                code = getattr(e, "code", None) or getattr(e, "status_code", None)
+                if code in (429, 500, 502, 503, 504):
+                    last_exc = e
+                    delay = min(60.0, 2.0 * (2 ** attempt))
+                    _time.sleep(delay)
+                    continue
+                raise
+        # Exhausted retries.
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Gemini chat_with_tools: retries exhausted with no recorded exception")
 
 
 # ---------------------------------------------------------------------------

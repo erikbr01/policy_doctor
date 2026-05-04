@@ -359,18 +359,41 @@ def _make_revise_request(ctx: SessionContext) -> ToolSpec:
         if "success_criterion" in args:
             sr.request.success_criterion = str(args["success_criterion"])
 
-        try:
-            validate_request(sr.request, allowed_rollout_ids=set(ctx.pool.rollout_ids))
-        except RequestValidationError as e:
-            # Roll back.
+        def _rollback() -> None:
             sr.request.target_behavior = before["target_behavior"]
             sr.request.prohibitions = list(before.get("prohibitions") or [])
             sr.request.success_criterion = before.get("success_criterion", "task_success")
+
+        try:
+            validate_request(sr.request, allowed_rollout_ids=set(ctx.pool.rollout_ids))
+        except RequestValidationError as e:
+            _rollback()
             return ToolResult.error(
                 "revise_request",
                 f"validation failed; rolled back: {e}",
                 code="validation_failed",
             )
+
+        # The agentic duplicate-target gate (mirrors propose_collection_request
+        # gate 2). Without this check, the agent could revise a submission to
+        # have the same target_behavior as another submission. Compare against
+        # ``ctx.submitted`` skipping the request being revised.
+        if "target_behavior" in args:
+            normalized_new = _normalize_behavior_text(sr.request.target_behavior)
+            for existing in ctx.submitted:
+                if existing.request_id == rid:
+                    continue
+                if _normalize_behavior_text(existing.request.target_behavior) == normalized_new:
+                    _rollback()
+                    return ToolResult.error(
+                        "revise_request",
+                        f"revised target_behavior duplicates submitted request "
+                        f"{existing.request_id}. Two requests with the same operator "
+                        "instruction provide little additional experimental signal. "
+                        "Describe what differs operationally — different approach angle, "
+                        "different grasp, different recovery strategy.",
+                        code="duplicate_target_behavior",
+                    )
 
         new_reasoning = str(args.get("reasoning") or "").strip()
         if not new_reasoning:

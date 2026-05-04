@@ -91,9 +91,16 @@ def _resolve_reference_pkl(server_pool_index: Dict[str, Any], rollout_id: str) -
 def _init_state_for_request(
     server_url: str,
     request: Dict[str, Any],
-) -> np.ndarray:
+) -> Optional[np.ndarray]:
     """Pull the reference rollout pkl path from the server's pool index, then
-    extract the recorded ``sim_state`` at the request's reference_frame."""
+    extract the recorded ``sim_state`` at the request's reference_frame.
+
+    Returns ``None`` when the referenced pkl was produced by
+    ``eval_save_episodes`` (which does NOT record ``sim_state``) — in that
+    case the caller falls back to ``env.reset()`` which gives a
+    rollout-start state. Mid-rollout init (recovery, alternative_strategy)
+    requires DAgger-saved pkls, which carry the per-step ``sim_state``.
+    """
     from policy_doctor.vlm.proposals.init_state import extract_sim_state_at_frame
 
     resp = requests.get(f"{server_url.rstrip('/')}/pool", timeout=10)
@@ -101,7 +108,11 @@ def _init_state_for_request(
     pool_index = resp.json()
     ic = request["initial_conditions"]
     pkl = _resolve_reference_pkl(pool_index, ic["reference_rollout_id"])
-    return extract_sim_state_at_frame(pkl, int(ic.get("reference_frame", 0)))
+    try:
+        return extract_sim_state_at_frame(pkl, int(ic.get("reference_frame", 0)))
+    except (KeyError, AttributeError):
+        # ``sim_state`` column missing — eval pkls don't always record it.
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -246,9 +257,19 @@ def run_e2_session(
         with open(per_req_dir / "request.json", "w") as f:
             json.dump(active, f, indent=2)
 
-        # Reset sim to the request's reference state
+        # Reset sim to the request's reference state. None = fall back to
+        # env.reset() (rollout-start). Recovery / alternative_strategy
+        # requests prefer mid-rollout state but degrade gracefully when the
+        # source pkls don't carry sim_state (typical for eval_save_episodes
+        # outputs); the operator sees the request prose either way.
         init_state = _init_state_for_request(proposal_server_url, active)
         lowdim_wrapper.init_state = init_state
+        if init_state is None and active.get("request_type") != "full_trajectory":
+            print(
+                f"[e2_runner] note: {active['request_type']} request {rid} "
+                "has no sim_state in source pkl — starting from env.reset() "
+                "(use DAgger-saved pkls for true mid-rollout init)"
+            )
 
         env = RobomimicDAggerEnv(
             inner_env=lowdim_wrapper, obs_keys=obs_keys, output_dir=per_req_dir
