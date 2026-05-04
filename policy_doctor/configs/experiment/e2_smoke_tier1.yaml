@@ -4,7 +4,7 @@
 # classifier round-trip, agent rationale + trace.
 
 defaults:
-  - /e2: defaults
+  - /e2@e2_proposals: defaults
   - _self_
 
 e2_proposals:
@@ -29,7 +29,7 @@ e2_proposals:
 
   # Legacy one-shot path — unused in tier 1 but kept loadable.
   vlm_backend: mock
-  vlm_backend_params: {}
+  vlm_backend_params: null
   vlm_lifecycle: persistent
   n_repetitions: 1
   max_retries: 1

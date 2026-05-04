@@ -5,7 +5,7 @@
 #   submission round-trip, aggregation.
 
 defaults:
-  - /e2: defaults
+  - /e2@e2_proposals: defaults
   - _self_
 
 e2_proposals:
@@ -14,7 +14,7 @@ e2_proposals:
   chat_enabled: false
   agentic:
     agent_backend: mock
-    agent_backend_params: {}
+    agent_backend_params: null
     n_sessions_per_condition: 2
     max_turns: 30
     budget:
@@ -29,10 +29,11 @@ e2_proposals:
   # The legacy one-shot proposal generator is unused in tier 0; mock backend
   # values are kept so the proposal_server still imports cleanly.
   vlm_backend: mock
-  vlm_backend_params: {}
+  vlm_backend_params: null
   vlm_lifecycle: persistent
   n_repetitions: 1
   max_retries: 1
   n_requests_per_type:
     full_trajectory: 1
     recovery: 1
+    alternative_strategy: 0

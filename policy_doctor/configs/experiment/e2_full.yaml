@@ -4,7 +4,7 @@
 # pre-registration; do not change after a run starts.
 
 defaults:
-  - /e2: defaults
+  - /e2@e2_proposals: defaults
   - _self_
 
 e2_proposals:
@@ -29,7 +29,7 @@ e2_proposals:
 
   # Legacy one-shot path retained as ablation; unused for the headline result.
   vlm_backend: mock
-  vlm_backend_params: {}
+  vlm_backend_params: null
   vlm_lifecycle: persistent
   n_repetitions: 3
   max_retries: 3

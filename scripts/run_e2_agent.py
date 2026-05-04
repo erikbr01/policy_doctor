@@ -39,10 +39,15 @@ for p in [_REPO, _REPO / "third_party" / "cupid"]:
     config_name="config",
 )
 def main(cfg: DictConfig) -> None:
-    e2_cfg = OmegaConf.select(cfg, "e2_proposals")
+    e2_defaults = OmegaConf.select(cfg, "e2")
+    e2_overrides = OmegaConf.select(cfg, "e2_proposals")
+    if e2_defaults is not None and e2_overrides is not None:
+        e2_cfg = OmegaConf.merge(e2_defaults, e2_overrides)
+    else:
+        e2_cfg = e2_overrides or e2_defaults
     if e2_cfg is None:
         raise RuntimeError(
-            "missing e2_proposals config; pass +experiment=e2_smoke_tier0 (or similar)"
+            "missing E2 config; pass experiment=e2_smoke_tier0 (or similar)"
         )
 
     if str(OmegaConf.select(e2_cfg, "mode") or "agentic") != "agentic":
@@ -51,6 +56,15 @@ def main(cfg: DictConfig) -> None:
         )
 
     _run(e2_cfg)
+
+
+def _to_plain_container(value):
+    """Return a plain dict/list for either OmegaConf nodes or native containers."""
+    if value is None:
+        return None
+    if OmegaConf.is_config(value):
+        return OmegaConf.to_container(value, resolve=True)
+    return value
 
 
 def _run(e2_cfg: DictConfig) -> None:
@@ -87,17 +101,14 @@ def _run(e2_cfg: DictConfig) -> None:
 
     agentic_cfg = OmegaConf.select(e2_cfg, "agentic")
     backend_name = str(OmegaConf.select(agentic_cfg, "agent_backend") or "mock")
-    backend_params = OmegaConf.to_container(
-        OmegaConf.select(agentic_cfg, "agent_backend_params") or {},
-        resolve=True,
+    backend_params = _to_plain_container(
+        OmegaConf.select(agentic_cfg, "agent_backend_params")
     ) or {}
     backend = get_vlm_backend(backend_name, backend_params)
 
-    budget_dict = OmegaConf.to_container(
-        OmegaConf.select(agentic_cfg, "budget") or {},
-        resolve=True,
-    ) or {}
+    budget_dict = _to_plain_container(OmegaConf.select(agentic_cfg, "budget")) or {}
     budget_config = BudgetConfig.from_dict(budget_dict)
+    storyboard_cfg = _to_plain_container(OmegaConf.select(agentic_cfg, "storyboard"))
 
     run_cfg = AgentRunConfig(
         backend=backend,
@@ -115,6 +126,7 @@ def _run(e2_cfg: DictConfig) -> None:
             if OmegaConf.select(agentic_cfg, "cache_enabled") is not None
             else True
         ),
+        storyboard=storyboard_cfg,
     )
 
     conditions = list(OmegaConf.select(e2_cfg, "conditions") or ["A_G", "A_NG"])

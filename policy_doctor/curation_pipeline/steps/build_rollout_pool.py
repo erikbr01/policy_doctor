@@ -57,7 +57,8 @@ class BuildRolloutPoolStep(PipelineStep[Dict[str, Any]]):
 
         cfg = self.cfg
         rp_cfg = OmegaConf.select(cfg, "e2_rollout_pool") or {}
-        rp_cfg = OmegaConf.to_container(rp_cfg, resolve=True) or {}
+        if OmegaConf.is_config(rp_cfg):
+            rp_cfg = OmegaConf.to_container(rp_cfg, resolve=True) or {}
 
         episodes_dir = rp_cfg.get("episodes_dir") or OmegaConf.select(cfg, "e2_proposals.pool_episodes_dir")
         if not episodes_dir:
@@ -160,6 +161,8 @@ class BuildRolloutPoolStep(PipelineStep[Dict[str, Any]]):
             return []
         if "frame" in df.columns:
             arrs = df["frame"].to_list()
+        elif "img" in df.columns:
+            arrs = df["img"].to_list()
         elif "image" in df.columns:
             arrs = df["image"].to_list()
         else:

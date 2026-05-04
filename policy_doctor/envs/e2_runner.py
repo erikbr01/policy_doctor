@@ -84,7 +84,14 @@ def _resolve_reference_pkl(server_pool_index: Dict[str, Any], rollout_id: str) -
     for entry in server_pool_index.get("rollouts", []):
         if entry["rollout_id"] == rollout_id:
             episodes_dir = Path(server_pool_index["episodes_dir"])
-            return episodes_dir / f"ep{entry['episode_idx']:04d}.pkl"
+            stem = f"ep{entry['episode_idx']:04d}"
+            unsuffixed = episodes_dir / f"{stem}.pkl"
+            if unsuffixed.exists():
+                return unsuffixed
+            matches = sorted(episodes_dir.glob(f"{stem}_*.pkl"))
+            if matches:
+                return matches[0]
+            return unsuffixed
     raise KeyError(f"rollout_id {rollout_id!r} not in server pool")
 
 
@@ -110,7 +117,7 @@ def _init_state_for_request(
     pkl = _resolve_reference_pkl(pool_index, ic["reference_rollout_id"])
     try:
         return extract_sim_state_at_frame(pkl, int(ic.get("reference_frame", 0)))
-    except (KeyError, AttributeError):
+    except (KeyError, AttributeError, FileNotFoundError):
         # ``sim_state`` column missing — eval pkls don't always record it.
         return None
 

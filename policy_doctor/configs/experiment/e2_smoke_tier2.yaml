@@ -3,7 +3,7 @@
 # Real Claude tool use; reduced retraining + eval suite. Hours-scale.
 
 defaults:
-  - /e2: defaults
+  - /e2@e2_proposals: defaults
   - _self_
 
 e2_proposals:
@@ -28,7 +28,7 @@ e2_proposals:
 
   # Legacy one-shot path — kept loadable but unused.
   vlm_backend: mock
-  vlm_backend_params: {}
+  vlm_backend_params: null
   vlm_lifecycle: persistent
   n_repetitions: 2
   max_retries: 3
