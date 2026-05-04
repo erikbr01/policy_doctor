@@ -27,7 +27,10 @@ from policy_doctor.vlm.proposals.agents.conditions import (
 from policy_doctor.vlm.proposals.agents.context import SessionContext
 from policy_doctor.vlm.proposals.agents.session import AgentSession, SessionResult
 from policy_doctor.vlm.proposals.agents.system_prompts import prompt_text
-from policy_doctor.vlm.proposals.agents.tools.registry import build_tool_registry
+from policy_doctor.vlm.proposals.agents.tools.registry import (
+    build_exploration_tool_registry,
+    build_tool_registry,
+)
 from policy_doctor.vlm.proposals.agents.trace import SessionTrace
 
 
@@ -85,6 +88,7 @@ def run_one_session(
     cache_enabled: bool = True,
     user_message: Optional[str] = None,
     storyboard: Optional[Dict[str, Any]] = None,
+    exploration_taxonomy: Optional[Dict[str, Any]] = None,
 ) -> SessionResult:
     """Run a single session and persist its artefacts."""
     cond = parse_condition(condition)
@@ -112,11 +116,14 @@ def run_one_session(
         cache_enabled=cache_enabled,
         task_hint=task_hint,
         config=session_config,
+        backend=backend,
     )
 
-    tools = build_tool_registry(cond, ctx)
+    tools = build_tool_registry(cond, ctx, backend=backend)
     system_prompt = prompt_text(cond)
-    user_msg = user_message or _default_user_message(pool, task_hint)
+    user_msg = user_message or _default_user_message(
+        pool, task_hint, exploration_taxonomy=exploration_taxonomy
+    )
 
     trace_path = out_dir / "trace.jsonl"
     with SessionTrace(out_path=trace_path) as trace:
@@ -178,16 +185,21 @@ def run_condition(
     return out
 
 
-def _default_user_message(pool, task_hint: str) -> str:
+def _default_user_message(
+    pool,
+    task_hint: str,
+    exploration_taxonomy: Optional[Dict[str, Any]] = None,
+) -> str:
     """Initial user turn shown to the agent.
 
     Includes the task hint and a sampled list of rollout ids so the agent has
     concrete handles to query. The tool surface is the source of truth for
-    everything else.
+    everything else. If ``exploration_taxonomy`` is provided, it is appended as
+    a structured prior from the pre-stage exploration session.
     """
     sample_ids = [e.rollout_id for e in pool.entries[:20]]
     sample_str = " ".join(sample_ids)
-    return (
+    msg = (
         f"Task: {task_hint or '(unspecified)'}\n\n"
         "You have a tool surface for inspecting the rollout pool and (when this "
         "condition includes the graph) its behavior structure. The pool contains "
@@ -196,6 +208,16 @@ def _default_user_message(pool, task_hint: str) -> str:
         "set of demonstration requests via propose_collection_request, and end "
         "with finalize_strategy."
     )
+    if exploration_taxonomy:
+        msg += (
+            "\n\n## Pre-exploration cluster taxonomy\n\n"
+            "The following was produced by a prior text-only survey of all clusters.\n"
+            "Use it to inform which clusters to target for visual evidence collection.\n"
+            "Do not blindly trust it — verify with get_slice_video — but treat it as\n"
+            "your starting prior.\n\n"
+            f"{json.dumps(exploration_taxonomy, indent=2)}"
+        )
+    return msg
 
 
 # ---------------------------------------------------------------------------

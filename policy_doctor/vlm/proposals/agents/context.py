@@ -26,6 +26,7 @@ from policy_doctor.vlm.proposals.request import DemonstrationRequest
 if TYPE_CHECKING:
     from policy_doctor.behaviors.behavior_graph import BehaviorGraph
     from policy_doctor.vlm.proposals.pool import RolloutPool
+    from policy_doctor.vlm.backends.base import VLMBackend
 
 
 @dataclass
@@ -133,6 +134,7 @@ class SessionContext:
 
     task_hint: str = ""
     config: Dict[str, Any] = field(default_factory=dict)
+    backend: Optional["VLMBackend"] = None
 
     # ---- node value cache ----------------------------------------------------
     # Computed lazily on first access. Re-computed on demand if the graph is
@@ -173,6 +175,7 @@ class SessionContext:
         pool: "RolloutPool",
         budget_config: Optional[BudgetConfig] = None,
         cache_enabled: bool = True,
+        backend: Optional["VLMBackend"] = None,
         **kwargs: Any,
     ) -> "SessionContext":
         return cls(
@@ -181,5 +184,6 @@ class SessionContext:
             pool=pool,
             budget=BudgetTracker(config=budget_config or BudgetConfig()),
             cache=ResultCache(enabled=cache_enabled),
+            backend=backend,
             **kwargs,
         )

@@ -16,7 +16,8 @@ Surface composition:
 
 from __future__ import annotations
 
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional, TYPE_CHECKING
 
 from policy_doctor.vlm.proposals.agents.conditions import (
     Condition,
@@ -25,10 +26,14 @@ from policy_doctor.vlm.proposals.agents.conditions import (
 from policy_doctor.vlm.proposals.agents.context import SessionContext
 from policy_doctor.vlm.proposals.agents.tools.types import ToolSpec
 
+if TYPE_CHECKING:
+    from policy_doctor.vlm.backends.base import VLMBackend
+
 
 def build_tool_registry(
     condition: Condition | str,
     ctx: SessionContext,
+    backend: Optional["VLMBackend"] = None,
 ) -> Dict[str, ToolSpec]:
     """Build the ordered tool registry for ``condition``.
 
@@ -52,6 +57,8 @@ def build_tool_registry(
             # Layer 3 lands later; A_G works without it during early development.
             pass
         specs.extend(submission.build(ctx, with_target_cluster=True))
+        from policy_doctor.vlm.proposals.agents.tools import grounding
+        specs.extend(grounding.build(ctx))
 
     elif cond in (Condition.A_NG, Condition.H_NG):
         from policy_doctor.vlm.proposals.agents.tools import no_graph, submission
@@ -66,5 +73,37 @@ def build_tool_registry(
     for spec in specs:
         if spec.name in by_name:
             raise ValueError(f"duplicate tool name {spec.name!r} in registry for {cond}")
+        by_name[spec.name] = spec
+    return by_name
+
+
+def build_exploration_tool_registry(
+    ctx: SessionContext,
+    out_dir: Optional[Path] = None,
+) -> Dict[str, ToolSpec]:
+    """Build the tool registry for the pre-stage exploration session.
+
+    Includes: all cheap topology tools, all access tools (including
+    get_slice_video for visual spot-checks), all analysis tools.
+    Does NOT include submission tools.
+    Terminal tool: finalize_exploration.
+    """
+    from policy_doctor.vlm.proposals.agents.tools import (
+        access,
+        analysis,
+        exploration,
+        topology,
+    )
+
+    specs = []
+    specs.extend(topology.build(ctx))
+    specs.extend(access.build(ctx))
+    specs.extend(analysis.build(ctx))
+    specs.extend(exploration.build(ctx, out_dir=out_dir))
+
+    by_name: Dict[str, ToolSpec] = {}
+    for spec in specs:
+        if spec.name in by_name:
+            raise ValueError(f"duplicate tool name {spec.name!r} in exploration registry")
         by_name[spec.name] = spec
     return by_name
