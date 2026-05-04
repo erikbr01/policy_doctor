@@ -201,6 +201,51 @@ def _make_app():
                 },
             )
 
+    @app.get("/storyboards/<sid>")
+    def get_storyboard(sid):
+        """Render a slice or rollout id to a JPEG. Used by the operator console
+        to show the imagery the agent grounded its request on (the request's
+        ``reference_storyboard_ids``). Slice ids are ``{rid}::{start}::{end}``;
+        rollout ids are bare. The endpoint deliberately does NOT distinguish
+        the two condition-side names — both render the same way."""
+        import io
+        from flask import Response, abort
+
+        from policy_doctor.vlm.proposals.agents.tools.access import (
+            _render_slice_storyboard,
+            parse_slice_id,
+        )
+
+        with _STATE.lock:
+            pool = _STATE.pool
+        if pool is None:
+            abort(503, "pool unavailable")
+
+        parsed = parse_slice_id(sid)
+        try:
+            if parsed is not None:
+                rid, start, end = parsed
+                entry = pool.by_id(rid)
+                img = _render_slice_storyboard(entry.episode_pkl, start, end)
+            else:
+                entry = pool.by_id(sid)
+                img = _render_slice_storyboard(entry.episode_pkl, 0, max(entry.length - 1, 0))
+        except KeyError:
+            abort(404, f"unknown id {sid}")
+        if img is None:
+            abort(500, f"could not render {sid}")
+
+        max_dim = 384
+        img = img.convert("RGB")
+        if max(img.size) > max_dim:
+            ratio = max_dim / max(img.size)
+            img = img.resize(
+                (int(img.size[0] * ratio), int(img.size[1] * ratio)),
+            )
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return Response(buf.getvalue(), mimetype="image/jpeg")
+
     # ---- proposal generation --------------------------------------------
 
     @app.post("/propose")

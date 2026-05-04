@@ -112,7 +112,16 @@ def _render_queue(server_url: str) -> None:
     if active:
         # Defense in depth: filter the operator-hidden fields if any leaked.
         scrubbed = {k: v for k, v in active.items() if k not in ("target_cluster", "source_condition")}
+        ref_ids = scrubbed.pop("reference_storyboard_ids", []) or []
         st.json(scrubbed)
+        if ref_ids:
+            st.caption(
+                f"Reference storyboards ({len(ref_ids)}) — what the agent inspected before writing this request:"
+            )
+            cols = st.columns(min(3, len(ref_ids)))
+            for i, sid in enumerate(ref_ids):
+                with cols[i % len(cols)]:
+                    st.image(f"{server_url}/storyboards/{sid}", caption=sid)
     else:
         st.write("No pending request to display.")
 

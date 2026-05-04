@@ -116,30 +116,30 @@ This means an over-exploring agent can always commit a partial strategy on the w
 
 ## Submission validation gates
 
-In addition to the schema and denylist checks inherited from the one-shot path's `request.validate_request`, the agentic submission tool enforces three additional gates surfaced as structured errors the agent reads and recovers from:
+In addition to the schema and denylist checks inherited from the one-shot path's `request.validate_request`, the agentic submission tool enforces these gates, all surfaced as structured errors the agent reads and recovers from:
 
 | Gate | Error code | What it catches | Why |
 |------|-----------|-----------------|-----|
 | Recovery requires `reference_frame > 0` | `recovery_frame_zero` | A `recovery` request starting at frame 0 is `full_trajectory` mislabeled. | The cluster-adherence axis weights `recovery` differently from `full_trajectory`; mislabeled requests contaminate the score. |
 | `target_behavior` text must be unique across submissions | `duplicate_target_behavior` | Two submissions with identical operator instructions. | Identical operator instructions provide no additional experimental signal. The check is whitespace- and case-normalized. |
-| `target_cluster` requires prior inspection | `cluster_not_inspected` | Submitting a `target_cluster` the agent never read about. | An agent that targets a cluster without inspecting it isn't using the graph; the experimental signal degrades. The agent must call `get_node`, `list_slices_in_node`, or `get_slice_video` for the cluster first. |
+| `target_cluster` requires prior inspection (A_G) | `cluster_not_inspected` | Submitting a `target_cluster` the agent never read about. | An agent that targets a cluster without inspecting it isn't using the graph; the experimental signal degrades. The agent must call `get_node`, `list_slices_in_node`, or `get_slice_video` for the cluster first. |
+| Submission must cite ≥3 evidence storyboards | `insufficient_evidence` | A_G with fewer than 3 `evidence_slice_ids`; A_NG with fewer than 3 `evidence_rollout_ids`. | Without evidence, target_behavior prose is ungrounded and the operator has no way to verify the agent's reading. Three is the minimum that lets the agent point at a *pattern*, not a single example. |
+| Cited evidence must have been visually inspected | `evidence_not_inspected` | Citing a slice or rollout id the agent never fetched in this session. | Stops fabrication; ensures the prose is grounded in imagery the agent actually saw. |
+| A_G evidence slices must lie in `target_cluster` | `evidence_wrong_cluster` | Citing slices from cluster X while targeting cluster Y. | The evidence chain has to match the cluster claim. |
 
-A stricter optional gate is gated by config:
-
-| Gate | Error code | When |
-|------|-----------|------|
-| `target_cluster` requires *visual* inspection | `visual_inspection_required` | Opt-in via `ctx.config['require_visual_inspection_for_target_cluster'] = True`. Forces `get_slice_video` (not just `get_node`) on the cluster before targeting. |
-
-The strict-visual gate makes visual budget usage a *requirement* rather than a measurement, so it changes the experimental claim. Default off; turn on when the headline question becomes "do storyboards add value beyond text" rather than "does the agent choose to look at storyboards."
+The evidence gates make visual inspection a *prerequisite* for submission rather than a measurement. This is intentional: the previously-considered alternative — measuring whether the agent *chose* to look at storyboards — produced runs in which models (Qwen3-VL-8B in particular) submitted ungrounded, hallucinated `target_behavior` prose. The current claim is therefore "given that the agent must ground in storyboards, does graph access change *what* it cites and *what* it proposes?" The control across conditions is the same minimum-evidence requirement (slice ids in A_G, rollout ids in A_NG), so the gate does not bias condition comparisons.
 
 ## Inspection bookkeeping
 
-The `cluster_not_inspected` gate above requires tracking which clusters the agent has read about. `SessionContext` carries two sets:
+The inspection gates above require tracking what the agent has touched. `SessionContext` carries three sets:
 
-* `inspected_nodes: Set[int]` — cluster IDs the agent has inspected via `get_node`, `list_slices_in_node`, or `get_slice_video` (the latter inspects the cluster owning the slice).
-* `inspected_slices: Set[str]` — slice IDs visually fetched via `get_slice_video`. Used by the strict-visual variant of the inspection gate.
+* `inspected_nodes: Set[int]` — cluster IDs read via `get_node`, `list_slices_in_node`, or `get_slice_video` (the latter inspects the cluster owning the slice). Drives the A_G `cluster_not_inspected` gate.
+* `inspected_slices: Set[str]` — slice IDs visually fetched via `get_slice_video`. Drives the A_G `evidence_not_inspected` gate.
+* `inspected_rollouts: Set[str]` — rollout IDs visually fetched via `get_rollout_video`. Drives the A_NG `evidence_not_inspected` gate.
 
-These sets are append-only within a session and reset at session start.
+All three are append-only within a session and reset at session start. The `evidence_*_ids` arrays cited on a submission are checked against `inspected_slices` (A_G) or `inspected_rollouts` (A_NG); any unfamiliar id is rejected.
+
+Operator-side, the persisted `DemonstrationRequest.to_operator_dict()` collapses `evidence_slice_ids` and `evidence_rollout_ids` into a single condition-blind field, `reference_storyboard_ids`. The operator UI renders the same imagery in both conditions and never sees which list it came from — the operator can't tell whether a request originated from A_G or A_NG by inspecting it.
 
 ## Kinematic-summary fallback
 
