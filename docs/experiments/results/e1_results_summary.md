@@ -55,18 +55,71 @@ Plus 3 reciprocal pairs (3↔6, 4↔8, 10↔13). These are the over-splits that 
 
 Across both runs, every "perfect" cluster (3/3 correct) was either same_episode-confounded or, at K=10 v2, the single-episode trapped cluster 7. The single clean perfect cluster across all v2 runs is K=20 v2 cluster 5. 5-frame visual ambiguity makes "perfect" outcomes rare on episode-disjoint data.
 
+### F5 — VLM scale (8B → 32B-NF4) doesn't move the needle
+
+Re-ran the K=10 v2 evaluation with **Qwen3-VL-32B at 4-bit NF4** (device_map=auto across both GPUs). Same sample plan, same prompt structure, only the model differs.
+
+| Run | Headline | Clean (tier1_global) |
+|---|---|---|
+| Qwen3-VL-8B K=10 v2 | 0.533 | **0.481** |
+| Qwen3-VL-32B-NF4 K=10 v2 | 0.533 | **0.481** |
+
+Identical aggregate accuracy. Per-query, the two models disagree on **15 of 30** classifications — they're producing structurally different decisions but happen to both score 16/30 correct. Both runs have 1 perfect cluster (the same-episode cluster 7), 5 mostly_correct, 3 mixed, 1 diffuse — though *which* cluster is diffuse differs (8B: cluster 6; 32B: cluster 2).
+
+**Implication:** the gap from 48% clean → ~100% is **not** primarily a VLM-capacity bottleneck. A 4× parameter scale-up at NF4 doesn't help. Pursuing larger frontier VLMs (Gemini 3, Claude Opus) is unlikely to produce dramatic gains either, unless they exceed Qwen-32B by a much larger margin.
+
+The bottleneck must therefore be elsewhere — see F6.
+
+### F6 — Visual context: image *resolution* per frame matters more than frame *count* or temporal *span*
+
+Two-axis sweep on the K=10 v2 baseline (n_query=3, n_reps=3, global-disjoint, n=27 clean queries) varying `view_window_extension` (how far outside the cluster window to sample frames) and `max_frames_per_storyboard` (4 frames in a 2×2 grid vs 9 frames in a 3×3 grid, with the composite output fixed at 512×512).
+
+| | mf=4 ext=0 | mf=4 ext=5 | mf=4 ext=10 | mf=4 ext=15 | mf=9 ext=0 | mf=9 ext=5 | mf=9 ext=10 | mf=9 ext=15 |
+|---|---|---|---|---|---|---|---|---|
+| Headline | 0.533 | 0.500 | 0.267 | 0.433 | 0.400 | 0.467 | (rerun pending) | 0.400 |
+| Clean | **0.481** | 0.444 | 0.185 | 0.370 | 0.333 | 0.407 | — | 0.333 |
+| Clean p (vs 0.10) | 5.2e-7 | 4.1e-6 | 0.13 | 1.7e-4 | — | — | — | — |
+
+The baseline (mf=4, ext=0) is the winner. Two findings:
+
+**F6a — Frame *count* helps only when frame *density* helps.** With max_frames_per_storyboard fixed and `view_window_extension > 0`, the 4 sampled frames are spaced uniformly across the wider window. With the 5-timestep cluster window centered, this means:
+- ext=0: 4 frames at fractions [0, 1/3, 2/3, 1] of a 5-step span → all 4 inside the cluster.
+- ext=5: 4 frames at [0, 5, 10, 15] of a 15-step span → only 1 frame inside.
+- ext=10: 4 frames at [0, 8.3, 16.7, 25] of a 25-step span → **none** inside (collapse to 0.185, p=0.13 — not significant).
+- ext=15: 4 frames at [0, 11.7, 23.3, 35] of a 35-step span → 1 happens to land in the cluster window again, partial recovery.
+
+The dip at ext=10 followed by recovery at ext=15 is a sampling artifact, not a real "longer context is bad" finding.
+
+**F6b — More frames at lower per-cell resolution hurts.** mf=9 (3×3 grid → ~170×170 px per cell at the fixed 512×512 composite) is uniformly worse than mf=4 (2×2 → ~256×256 per cell) at every comparable extension. The VLM gains visible motion-sequence information from more frames but loses the per-frame resolution needed to identify what's happening.
+
+**F6c — But density-matched extension does help.** mf=9 ext=5 (0.407) beats mf=9 ext=0 (0.333). When frame density across the visual window is matched to the baseline (~0.6 frames/timestep), longer context recovers some accuracy — just not enough to overcome the resolution loss from a 3×3 grid.
+
+**The right experimental knob is composite resolution, not frame count.** Bumping `make_storyboard` `target_size` from 512² to e.g. 1536² lets a 3×3 grid keep ~512×512 per cell. That separates "more frames" from "smaller frames" — the right test for whether visual context length is the actual bottleneck. **Not yet run** (needs the storyboard module to accept a target_size override; current default is hard-coded).
+
+### F7 — Headline conclusion: the bottleneck is local-frame information density, not interpreter capacity
+
+Combining F5 and F6:
+- VLM scale doesn't help (F5).
+- Visual extension at fixed frame count doesn't help, and *can hurt* due to sampling-position artifacts (F6a).
+- More frames doesn't help when it costs per-frame resolution (F6b).
+- Density-matched extension helps slightly when frame count is held (F6c).
+
+The current configuration (mf=4 ext=0 at composite 512², image_max_pixels=1024²) appears close to a local optimum given the storyboard format. To break past 48% clean, the next moves are: (a) raise composite resolution so 3×3 / 4×4 grids stay readable, (b) feed numeric per-timestep state/action alongside images (implemented; see commit `6391f0c`, untested), and/or (c) revisit the clustering itself (representation, window width — see Q4/Q5 below).
+
 ---
 
 ## Open methodological questions (informing the next sweep batch)
 
-The remaining gap from K=10's 48% clean → ~80% (a reasonable ceiling for cluster coherence) likely reflects multiple compounding factors:
+Of the original six confounds, two are now substantially settled:
 
-1. **Slice length.** 5-frame windows ≈ 0.5 s of motion. Brief visual context.
-2. **VLM capacity.** Qwen3-VL-8B with 30–60 example storyboards per prompt. Attention budget is real.
-3. **Image budget per storyboard.** 4 frames in a 2×2 grid; default `image_max_pixels=1024×1024`.
-4. **Clustering hyperparameters.** Window width, stride, aggregation, prescale, UMAP dim. Only K has been swept.
-5. **Representation choice.** All measurements so far use InfEmbed clustering. State-only and state-action baselines are necessary to compare.
-6. **Stronger VLM.** Gemini 3 Flash, Claude Sonnet 4.6 — pending API setup.
+| # | Confound | Status |
+|---|---|---|
+| 1 | Slice length / temporal context | **Partially answered (F6a)** — naive extension at fixed frame count *worsens* accuracy due to sampling-position artifacts. Density-matched extension helps slightly (F6c) but is bottlenecked by per-cell resolution (F6b). The clean test (raise composite resolution) hasn't been run yet. |
+| 2 | VLM capacity | **Answered (F5)** — Qwen3-VL-32B-NF4 is identical to 8B. Not the bottleneck. |
+| 3 | Image budget per storyboard | **Now the leading candidate** — F6b suggests per-cell resolution is the operative variable. Composite resolution is fixed at 512² in `make_storyboard`; needs to be configurable. |
+| 4 | Clustering hyperparameters | Not yet swept. Window width / stride / aggregation / prescale / UMAP dim. Sweep harness is built (see "Architecture"). |
+| 5 | Representation choice | Not yet swept. State-only and state-action baselines are built (see `slice_representations.py`). |
+| 6 | Stronger frontier VLM | Pending. F5 makes this a lower-priority lever. |
 
 ---
 
@@ -74,11 +127,9 @@ The remaining gap from K=10's 48% clean → ~80% (a reasonable ceiling for clust
 
 The next implementation phase (in flight, see "Architecture" below) targets questions 1, 4, 5 — and lays the foundation for 2 + 6 by keeping the E1 evaluation interface stable.
 
-### Q1 — Extended visual context
+### Q1 — Extended visual context (DONE — see F6)
 
-Add `view_window_extension: int` (default 0) to `_load_storyboard`. When > 0, the frames passed to the VLM come from a wider window than the cluster window (extended symmetrically), without changing the clustering or sample plan. Tests whether longer visual context recovers more accuracy at fixed K.
-
-Suggested values: `view_window_extension ∈ {0, 5, 10, 15}`. Run at K=10 (highest signal-to-noise) and one other K for comparison.
+`view_window_extension` is implemented and swept at K=10. Result: not the right knob in isolation. The follow-up is composite-resolution sweep at fixed mf=9 (or mf=16) — that requires `make_storyboard` to accept a `target_size` override, which is not yet wired through the runner script.
 
 ### Q4 — Clustering hyperparameter sweeps
 
@@ -265,5 +316,6 @@ Most informative single-axis slices to evaluate first:
 
 - Does state-only clustering recover *any* visually-coherent structure at K=10? (If clean acc near chance, that's evidence influence carries unique signal.)
 - Does state_action clustering match or beat InfEmbed at K=10?
-- Is the K=10 → 48% → ceiling gap closed by extended visual context? By how much?
+- Does **composite-resolution scaling** (e.g. 1536² with mf=9 → 512px cells) close the K=10 → ceiling gap? F6 makes this the next-most-informative single experiment.
+- Does **per-slice numeric obs/action text** (`--include_action_text` / `--include_state_text`, commit `6391f0c`) help on top of the visual baseline? Runs both ways at K=10 to isolate.
 - Does window_width=10 with the InfEmbed representation give cleaner clusters than width=5?
