@@ -260,8 +260,9 @@ _INITIAL_CONDITIONS_SCHEMA: Dict[str, Any] = {
 def propose_collection_request_schema(*, with_target_cluster: bool) -> Dict[str, Any]:
     """JSON schema for ``propose_collection_request``.
 
-    The A_G surface emits ``target_cluster``; the A_NG surface omits it
-    (the field is computed post-hoc from the reference rollout).
+    The A_G surface emits ``target_cluster`` and ``evidence_slice_ids``; the
+    A_NG surface emits ``evidence_rollout_ids`` (rollouts the agent watched
+    via ``get_rollout_video``) instead.
     """
     props: Dict[str, Any] = {
         "request_type": {
@@ -274,7 +275,9 @@ def propose_collection_request_schema(*, with_target_cluster: bool) -> Dict[str,
             "minLength": 1,
             "description": "Behaviorally-observable description of what the operator should do. "
             "MUST NOT mention clusters, nodes, the graph, embeddings, or any "
-            "internal representation — these terms leak the experimental condition.",
+            "internal representation — these terms leak the experimental condition. "
+            "MUST be grounded in what you SAW in the evidence storyboards — "
+            "describe the specific failure pattern observable in the frames.",
         },
         "prohibitions": {
             "type": "array",
@@ -291,7 +294,9 @@ def propose_collection_request_schema(*, with_target_cluster: bool) -> Dict[str,
             "type": "string",
             "minLength": 1,
             "description": "REQUIRED. One or two sentences explaining why this request matters "
-            "for improving the policy. Logged to the trace; not shown to the operator.",
+            "for improving the policy. Reference the visual evidence — what mistake "
+            "did you observe in the storyboards that this demonstration corrects? "
+            "Logged to the trace; not shown to the operator.",
         },
     }
     required = [
@@ -305,7 +310,27 @@ def propose_collection_request_schema(*, with_target_cluster: bool) -> Dict[str,
             "type": "integer",
             "description": "Behavior-cluster id this request targets.",
         }
-        required.append("target_cluster")
+        props["evidence_slice_ids"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 3,
+            "description": "REQUIRED. At least 3 slice_ids (format 'r{NNNN}_t{start}_t{end}') "
+            "you have visually inspected via get_slice_video that show the failure "
+            "mode this request will correct. Each slice MUST belong to target_cluster. "
+            "These are the operator's reference: the agent must have actually looked "
+            "at them, not just listed them.",
+        }
+        required.extend(["target_cluster", "evidence_slice_ids"])
+    else:
+        props["evidence_rollout_ids"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 3,
+            "description": "REQUIRED. At least 3 rollout_ids you have visually inspected via "
+            "get_rollout_video that show the failure mode this request will correct. "
+            "The agent must have actually looked at them.",
+        }
+        required.append("evidence_rollout_ids")
     return {
         "type": "object",
         "properties": props,

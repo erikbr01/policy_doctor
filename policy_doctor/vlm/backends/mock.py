@@ -216,7 +216,11 @@ _SCRIPT_A_G = [
     {"kind": "tool", "name": "get_graph_summary"},
     {"kind": "tool", "name": "list_nodes", "args": {}},
     {"kind": "tool", "name": "list_paths", "args": {"from_node": "START", "to_node": "FAILURE", "top_k": 3}},
+    # Inspect each cluster the script will later target — required by the
+    # ``cluster_not_inspected`` gate on the submission validator.
     {"kind": "tool", "name": "get_node", "args_idx": 0},
+    {"kind": "tool", "name": "get_node", "args_idx": 1},
+    {"kind": "tool", "name": "get_node", "args_idx": 2},
     {"kind": "tool", "name": "propose_collection_request", "submission_idx": 0},
     {"kind": "tool", "name": "propose_collection_request", "submission_idx": 1},
     {"kind": "tool", "name": "propose_collection_request", "submission_idx": 2},
@@ -233,6 +237,15 @@ _SCRIPT_A_NG = [
     {"kind": "tool", "name": "propose_collection_request", "submission_idx": 1},
     {"kind": "tool", "name": "propose_collection_request", "submission_idx": 2},
     {"kind": "finalize", "rationale": "Targeted three failure rollouts for recovery demonstrations."},
+]
+
+
+# Per-submission target_behavior text — must vary across submissions to pass
+# the duplicate-target-behavior gate.
+_TARGET_BEHAVIORS = [
+    "approach the workspace from above with the gripper open and grasp the target object",
+    "after the initial slip, stabilize the object and complete the placement cleanly",
+    "use a side approach instead of overhead and lift the object onto the platform",
 ]
 
 
@@ -268,16 +281,17 @@ def _scripted_args(
     if name == "propose_collection_request":
         sub_idx = int(step.get("submission_idx", 0))
         types = ["full_trajectory", "recovery", "alternative_strategy"]
+        request_type = types[sub_idx % len(types)]
         rid = rollout_ids[sub_idx % len(rollout_ids)]
         body: Dict[str, Any] = {
-            "request_type": types[sub_idx % len(types)],
+            "request_type": request_type,
             "initial_conditions": {
                 "reference_rollout_id": rid,
-                "reference_frame": 5 if types[sub_idx % len(types)] == "recovery" else 0,
+                # Recovery requires reference_frame >= 1; vary by submission so
+                # successive recovery requests still differ in initial state.
+                "reference_frame": (5 + sub_idx) if request_type == "recovery" else 0,
             },
-            "target_behavior": (
-                "approach the workspace from above and complete the manipulation cleanly"
-            ),
+            "target_behavior": _TARGET_BEHAVIORS[sub_idx % len(_TARGET_BEHAVIORS)],
             "prohibitions": ["do not push the object off the table"],
             "success_criterion": "task_success",
             "reasoning": (
@@ -285,8 +299,20 @@ def _scripted_args(
                 "demonstrating the recovery should improve the policy."
             ),
         }
+        # Synthesize evidence using the fixture's slice-id format. The A_G
+        # script targets cluster=sub_idx, with windows at j*5 in the
+        # fixture (clusters 0,1,2 → windows 0-4, 5-9, 10-14). For A_NG we
+        # cite 3 distinct rollout_ids the test will pre-inspect.
         if with_target_cluster:
             body["target_cluster"] = sub_idx
+            window_start = sub_idx * 5
+            window_end = window_start + 4
+            body["evidence_slice_ids"] = [
+                f"{rollout_ids[i % len(rollout_ids)]}_t{window_start}_t{window_end}"
+                for i in range(3)
+            ]
+        else:
+            body["evidence_rollout_ids"] = list(rollout_ids[:3])
         return body
     return {}
 

@@ -240,6 +240,10 @@ def _make_list_paths(ctx: SessionContext) -> ToolSpec:
         input_schema=S.LIST_PATHS,
         func=_run,
         cost="cheap",
+        # Specific (from, to) verification lookup. Charges normally during
+        # exploration; remains available after budget exhaustion as a
+        # recovery affordance so the agent can verify a path before submitting.
+        bypass_when_exhausted=True,
     )
 
 
@@ -257,6 +261,10 @@ def _make_get_node(ctx: SessionContext) -> ToolSpec:
                 f"node_id={args.get('node_id')!r} not in graph",
                 code="not_found",
             )
+        # Track that the agent has inspected this cluster — submission
+        # validator requires inspection before targeting.
+        if node_id >= 0:
+            ctx.inspected_nodes.add(int(node_id))
 
         g = ctx.graph
         node = g.nodes[node_id]
@@ -318,6 +326,10 @@ def _make_get_node(ctx: SessionContext) -> ToolSpec:
         input_schema=S.GET_NODE,
         func=_run,
         cost="cheap",
+        # Specific node verification lookup. Charges normally during
+        # exploration; remains available after budget exhaustion so the
+        # agent can satisfy the cluster_not_inspected gate before submitting.
+        bypass_when_exhausted=True,
     )
 
 
@@ -389,6 +401,9 @@ def _make_get_edge(ctx: SessionContext) -> ToolSpec:
         input_schema=S.GET_EDGE,
         func=_run,
         cost="cheap",
+        # Specific edge verification lookup. Charges normally; remains
+        # callable after exhaustion as a recovery affordance.
+        bypass_when_exhausted=True,
     )
 
 

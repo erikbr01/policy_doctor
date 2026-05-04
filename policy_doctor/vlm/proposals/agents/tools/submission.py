@@ -5,11 +5,31 @@ discarded by the experiment runner. The tools here are thin wrappers over the
 existing :class:`policy_doctor.vlm.proposals.request.DemonstrationRequest`
 schema and validation, so adherence scoring + operator interface continue to
 work unchanged.
+
+In addition to the schema/denylist checks inherited from
+``request.validate_request``, this module enforces three agentic-experiment
+gates that catch failure modes observed during integration testing:
+
+* ``recovery`` requests must have ``reference_frame > 0`` — otherwise they're
+  ``full_trajectory`` requests mislabeled, which contaminates the
+  cluster-adherence axis.
+* ``target_behavior`` text must be unique across submissions — duplicate
+  prose means the operator would do the same thing twice, providing little
+  experimental signal.
+* For graph-condition submissions, ``target_cluster`` must reference a
+  cluster the agent has actually inspected (via ``get_node`` or
+  ``list_slices_in_node`` or ``get_slice_video``). A stricter
+  visual-inspection requirement is opt-in via
+  ``ctx.config['require_visual_inspection_for_target_cluster']``.
+
+All gates produce structured errors the agent can read and recover from,
+matching the existing validation feedback pattern.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
 
 from policy_doctor.vlm.proposals.agents.context import (
@@ -24,6 +44,48 @@ from policy_doctor.vlm.proposals.request import (
     RequestValidationError,
     validate_request,
 )
+
+
+# Minimum reference_frame for recovery requests. 0 means "start of rollout"
+# which would make a recovery request indistinguishable from full_trajectory.
+_RECOVERY_MIN_FRAME = 1
+
+# Minimum number of evidence items the agent must reference. 3 forces the
+# agent to inspect more than one example, so the operator-facing prose is
+# grounded in a pattern rather than a single (possibly atypical) frame.
+_MIN_EVIDENCE_ITEMS = 3
+
+
+def _normalize_behavior_text(s: str) -> str:
+    """For dedup purposes — case-insensitive, whitespace-collapsed."""
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _slice_belongs_to_cluster(ctx: SessionContext, slice_id: str, cluster_id: int) -> bool:
+    """Check whether ``slice_id`` (as emitted by list_slices_in_node) is in ``cluster_id``."""
+    from policy_doctor.vlm.proposals.agents.tools.access import (
+        _slice_bounds,
+        parse_slice_id,
+    )
+    from policy_doctor.vlm.proposals.pool import rollout_id_to_episode_idx
+
+    if ctx.cluster_labels is None or ctx.cluster_metadata is None:
+        return False
+    parsed = parse_slice_id(slice_id)
+    if parsed is None:
+        return False
+    rid_str, start, end = parsed
+    try:
+        ep_idx = rollout_id_to_episode_idx(rid_str)
+    except ValueError:
+        return False
+    for i, meta in enumerate(ctx.cluster_metadata):
+        if int(meta.get("rollout_idx", -1)) != ep_idx:
+            continue
+        m_start, m_end = _slice_bounds(meta)
+        if (m_start, m_end) == (start, end):
+            return int(ctx.cluster_labels[i]) == int(cluster_id)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +126,8 @@ def _make_propose_collection_request(
             success_criterion=str(args.get("success_criterion", "task_success")),
             target_cluster=int(args["target_cluster"]) if with_target_cluster and "target_cluster" in args else None,
             source_condition=ctx.condition,
+            evidence_slice_ids=list(args.get("evidence_slice_ids") or []),
+            evidence_rollout_ids=list(args.get("evidence_rollout_ids") or []),
         )
 
         allowed = set(ctx.pool.rollout_ids)
@@ -84,6 +148,116 @@ def _make_propose_collection_request(
                 "'reasoning' is required and may not be empty",
                 code="bad_arg",
             )
+
+        # ---- Agentic-experiment validation gates ------------------------
+
+        # Gate 0: A_G / H_G submissions must set target_cluster.
+        # The JSON-schema "required" constraint is enforced by the model
+        # provider's tool parser, but loose tool-call formats (Qwen, some
+        # Gemini variants) can drop the field. We re-check here so the
+        # experimental signal — A_G submissions carry an explicit cluster
+        # annotation — is honored regardless of provider strictness.
+        if with_target_cluster and request.target_cluster is None:
+            return ToolResult.error(
+                "propose_collection_request",
+                "target_cluster is required in this condition. Pick a cluster id you "
+                "have inspected via get_node, list_slices_in_node, or get_slice_video, "
+                "and include it as an integer in the request.",
+                code="missing_target_cluster",
+            )
+
+        # Gate 1: recovery requires reference_frame > 0.
+        if request.request_type == "recovery" and request.initial_conditions.reference_frame < _RECOVERY_MIN_FRAME:
+            return ToolResult.error(
+                "propose_collection_request",
+                f"recovery requests require reference_frame >= {_RECOVERY_MIN_FRAME} "
+                f"(starting at frame 0 would make this indistinguishable from full_trajectory). "
+                "Pick a frame just before the failure point — read the reference rollout's "
+                "cluster_path via get_rollout_summary to find a good split.",
+                code="recovery_frame_zero",
+            )
+
+        # Gate 2: target_behavior text must be unique across submissions.
+        # Compares case-insensitively after whitespace normalization.
+        normalized_new = _normalize_behavior_text(request.target_behavior)
+        for existing in ctx.submitted:
+            if _normalize_behavior_text(existing.request.target_behavior) == normalized_new:
+                return ToolResult.error(
+                    "propose_collection_request",
+                    f"target_behavior duplicates submitted request {existing.request_id}. "
+                    "Two requests with the same operator instruction provide little "
+                    "additional experimental signal. Describe what differs operationally — "
+                    "different approach angle, different grasp, different recovery strategy.",
+                    code="duplicate_target_behavior",
+                )
+
+        # Gate 3a: target_cluster (when supplied) must have been textually
+        # inspected. This is the "you should know what you're targeting"
+        # check; visual evidence is gated separately below.
+        if request.target_cluster is not None:
+            tc = int(request.target_cluster)
+            if tc not in ctx.inspected_nodes:
+                return ToolResult.error(
+                    "propose_collection_request",
+                    f"target_cluster={tc} has not been inspected. Call get_node({tc}) "
+                    "(or list_slices_in_node) before targeting it.",
+                    code="cluster_not_inspected",
+                )
+
+        # Gate 3b: visual evidence requirement. Each submission must cite at
+        # least N specific examples the agent has actually looked at via
+        # get_slice_video / get_rollout_video — so the operator-facing prose
+        # is grounded in observed failures rather than templated from priors.
+        if with_target_cluster:
+            evidence = list(args.get("evidence_slice_ids") or [])
+            if len(evidence) < _MIN_EVIDENCE_ITEMS:
+                return ToolResult.error(
+                    "propose_collection_request",
+                    f"evidence_slice_ids requires at least {_MIN_EVIDENCE_ITEMS} entries — "
+                    "concrete slice_ids you have inspected via get_slice_video that show the "
+                    "failure mode this request corrects. Use list_slices_in_node to find "
+                    f"slices in cluster {request.target_cluster}, then get_slice_video on each.",
+                    code="insufficient_evidence",
+                )
+            tc = int(request.target_cluster)
+            for sid in evidence:
+                if sid not in ctx.inspected_slices:
+                    return ToolResult.error(
+                        "propose_collection_request",
+                        f"evidence slice {sid!r} was not visually inspected. Call "
+                        "get_slice_video on every slice you cite as evidence. The operator "
+                        "needs prose grounded in what you actually saw.",
+                        code="evidence_not_inspected",
+                    )
+                if not _slice_belongs_to_cluster(ctx, sid, tc):
+                    return ToolResult.error(
+                        "propose_collection_request",
+                        f"evidence slice {sid!r} does not belong to target_cluster={tc}. "
+                        "Each evidence slice must be a member of the cluster this request "
+                        "intends to correct, so the operator's intervention addresses the "
+                        "same failure pattern the agent observed.",
+                        code="evidence_wrong_cluster",
+                    )
+        else:
+            # A_NG path: evidence_rollout_ids must be 3+ rollouts the agent
+            # watched via get_rollout_video.
+            evidence = list(args.get("evidence_rollout_ids") or [])
+            if len(evidence) < _MIN_EVIDENCE_ITEMS:
+                return ToolResult.error(
+                    "propose_collection_request",
+                    f"evidence_rollout_ids requires at least {_MIN_EVIDENCE_ITEMS} entries — "
+                    "rollout_ids you have inspected via get_rollout_video that show the "
+                    "failure mode this request corrects.",
+                    code="insufficient_evidence",
+                )
+            for rid in evidence:
+                if rid not in ctx.inspected_rollouts:
+                    return ToolResult.error(
+                        "propose_collection_request",
+                        f"evidence rollout {rid!r} was not visually inspected. Call "
+                        "get_rollout_video on every rollout you cite as evidence.",
+                        code="evidence_not_inspected",
+                    )
 
         ctx.submitted.append(SubmittedRequest(request=request, reasoning=reasoning))
         return ToolResult.text(
@@ -116,6 +290,9 @@ def _make_propose_collection_request(
         input_schema=schema,
         func=_run,
         cost="cheap",
+        # Submissions bypass the budget so the agent can always commit a
+        # partial strategy after exploration runs out.
+        bypass_budget=True,
     )
 
 
@@ -153,6 +330,7 @@ def _make_list_submitted_requests(ctx: SessionContext) -> ToolSpec:
         input_schema=S.LIST_SUBMITTED_REQUESTS,
         func=_run,
         cost="cheap",
+        bypass_budget=True,
     )
 
 
@@ -220,6 +398,7 @@ def _make_revise_request(ctx: SessionContext) -> ToolSpec:
         input_schema=S.REVISE_REQUEST,
         func=_run,
         cost="cheap",
+        bypass_budget=True,
     )
 
 
@@ -250,6 +429,7 @@ def _make_delete_request(ctx: SessionContext) -> ToolSpec:
         input_schema=S.DELETE_REQUEST,
         func=_run,
         cost="cheap",
+        bypass_budget=True,
     )
 
 

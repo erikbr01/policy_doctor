@@ -35,11 +35,11 @@ REQUEST_TYPES: Tuple[str, ...] = (
     "alternative_strategy",
 )
 
-# Conditions accepted in ``source_condition``. Includes both the legacy
-# one-shot names ("graph", "outcome_only") and the agentic experiment names
-# ("A_G", "A_NG", "H_NG", "H_G"). The rename to A_*/H_* is the final
-# implementation step; both vocabularies coexist until then so the agentic
-# code path can land independently.
+# Conditions accepted in ``source_condition``. The agentic conditions
+# (A_G, A_NG, H_NG, H_G) are documented in
+# :mod:`policy_doctor.vlm.proposals.agents.conditions`. The legacy one-shot
+# names ("graph", "outcome_only") remain as the canonical names of the
+# one-shot ablation path — they are not aliases.
 CONDITIONS: Tuple[str, ...] = (
     "graph",
     "outcome_only",
@@ -86,6 +86,15 @@ class DemonstrationRequest:
     target_cluster: Optional[int] = None     # set in graph condition; post-hoc in outcome
     source_condition: Optional[str] = None   # graph | outcome_only
 
+    # ---- evidence (operator-facing in normalized form) ---------------------
+    # The agent must cite at least N storyboard slices/rollouts it has
+    # visually inspected. We persist these so the operator can see WHAT the
+    # agent saw, and so the experimental record captures the evidence chain.
+    # Operator endpoints normalize both into ``reference_storyboard_ids``
+    # to avoid leaking the condition via field name.
+    evidence_slice_ids: List[str] = field(default_factory=list)       # A_G / H_G
+    evidence_rollout_ids: List[str] = field(default_factory=list)     # A_NG / H_NG
+
     @classmethod
     def new_id(cls) -> str:
         """Opaque UUIDv4. Never encode condition or any VLM output in the id."""
@@ -98,10 +107,21 @@ class DemonstrationRequest:
         return d
 
     def to_operator_dict(self) -> Dict[str, Any]:
-        """Strip server-side fields; this is what the operator UI sees."""
+        """Strip server-side fields; this is what the operator UI sees.
+
+        Evidence ids (slice or rollout) are normalized into a single
+        ``reference_storyboard_ids`` field so the operator UI can render the
+        same imagery for both conditions without leaking which path the agent
+        took. The condition-specific source fields are dropped.
+        """
         d = self.to_dict()
         d.pop("target_cluster", None)
         d.pop("source_condition", None)
+        # Normalize: combine evidence_slice_ids + evidence_rollout_ids into
+        # one operator-facing field. Drop the condition-revealing originals.
+        ev_slices = d.pop("evidence_slice_ids", []) or []
+        ev_rollouts = d.pop("evidence_rollout_ids", []) or []
+        d["reference_storyboard_ids"] = list(ev_slices) + list(ev_rollouts)
         return d
 
     @classmethod
@@ -110,6 +130,8 @@ class DemonstrationRequest:
         if isinstance(ic, dict):
             ic = InitialConditions(**ic)
         return cls(
+            evidence_slice_ids=list(d.get("evidence_slice_ids") or []),
+            evidence_rollout_ids=list(d.get("evidence_rollout_ids") or []),
             request_id=d["request_id"],
             request_type=d["request_type"],
             initial_conditions=ic,

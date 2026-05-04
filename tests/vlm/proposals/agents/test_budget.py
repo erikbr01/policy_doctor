@@ -53,10 +53,21 @@ class TestBudgetTracker(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertEqual(err.metadata["budget_kind"], "video")
 
-    def test_terminal_calls_bypass_budget(self):
+    def test_bypass_calls_skip_budget(self):
         b = BudgetTracker(config=BudgetConfig(max_tool_calls=0, max_visual_calls=0, max_video_calls=0))
-        # Even with zero budget, finalize_strategy can be called.
-        self.assertIsNone(b.check("finalize_strategy", "cheap", is_terminal=True))
+        # Even with zero budget, bypass=True calls go through (set by
+        # is_terminal or bypass_budget on ToolSpec).
+        self.assertIsNone(b.check("finalize_strategy", "cheap", bypass=True))
+        self.assertIsNone(b.check("propose_collection_request", "cheap", bypass=True))
+
+    def test_exhausted_error_message_instructs_to_submit(self):
+        b = BudgetTracker(config=BudgetConfig(max_tool_calls=1))
+        b.charge("cheap")
+        err = b.check("get_node", "cheap")
+        self.assertIsNotNone(err)
+        text = err.content[0].text
+        self.assertIn("propose_collection_request", text)
+        self.assertIn("finalize_strategy", text)
 
     def test_session_timeout(self):
         b = BudgetTracker(config=BudgetConfig(max_session_duration_s=0.0))

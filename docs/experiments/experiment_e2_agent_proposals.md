@@ -90,6 +90,68 @@ agentic.budget:
 
 Cached visual results return immediately and **do not charge the budget on the second hit**, encouraging the agent to inspect a slice once and refer back to it. After total exhaustion, only `finalize_strategy` is callable.
 
+### Budget visibility (status-line injection)
+
+Every tool result the agent sees ends with a synthetic text block of the form
+
+```
+[session: 2/5 requests submitted, 17/40 tool calls used, 1/2 visual calls used. Call finalize_strategy when your strategy is complete.]
+```
+
+Without this, an early integration test against Qwen3-VL-8B showed that the agent had no visible signal of remaining budget or completion-target — and consequently kept exploring until the loop force-terminated, producing zero submissions. The status line makes the experiment's exit criterion ambient information the model cannot ignore.
+
+When `BudgetTracker.warning_for(...)` triggers (default: ≤5 calls remain), the line is prefixed with a `REMINDER —` and an explicit instruction to submit any pending requests and call `finalize_strategy`. The threshold is configurable via `agentic.budget.warning_remaining_threshold`; raising it earlier in the session is appropriate for models prone to tool-call drift.
+
+The injection is on by default and can be disabled per-session via `AgentSession(inject_status_line=False)` for tests that need byte-exact result content.
+
+### Submission tools bypass the budget
+
+When the budget is exhausted, an agent that explored too much could otherwise be locked out of its own output channel — making the experimental record empty. To prevent that, the four Layer 4 submission tools (`propose_collection_request`, `revise_request`, `delete_request`, `list_submitted_requests`) and `finalize_strategy` all bypass the budget gate. They never charge against the budget and never get rejected as exhausted.
+
+The corresponding `budget_exhausted` error message instructs the agent accordingly:
+
+> Budget for *kind* tool calls exhausted. Submission tools (propose_collection_request, revise_request, delete_request, list_submitted_requests) and finalize_strategy are still callable — submit any remaining strategy now and then call finalize_strategy with a brief rationale. Do not attempt further exploration.
+
+This means an over-exploring agent can always commit a partial strategy on the way out, even if every exploration call has been spent. Verified by `tests/vlm/proposals/agents/test_mcp_server.py::test_propose_collection_request_bypasses_exhausted_budget`.
+
+## Submission validation gates
+
+In addition to the schema and denylist checks inherited from the one-shot path's `request.validate_request`, the agentic submission tool enforces three additional gates surfaced as structured errors the agent reads and recovers from:
+
+| Gate | Error code | What it catches | Why |
+|------|-----------|-----------------|-----|
+| Recovery requires `reference_frame > 0` | `recovery_frame_zero` | A `recovery` request starting at frame 0 is `full_trajectory` mislabeled. | The cluster-adherence axis weights `recovery` differently from `full_trajectory`; mislabeled requests contaminate the score. |
+| `target_behavior` text must be unique across submissions | `duplicate_target_behavior` | Two submissions with identical operator instructions. | Identical operator instructions provide no additional experimental signal. The check is whitespace- and case-normalized. |
+| `target_cluster` requires prior inspection | `cluster_not_inspected` | Submitting a `target_cluster` the agent never read about. | An agent that targets a cluster without inspecting it isn't using the graph; the experimental signal degrades. The agent must call `get_node`, `list_slices_in_node`, or `get_slice_video` for the cluster first. |
+
+A stricter optional gate is gated by config:
+
+| Gate | Error code | When |
+|------|-----------|------|
+| `target_cluster` requires *visual* inspection | `visual_inspection_required` | Opt-in via `ctx.config['require_visual_inspection_for_target_cluster'] = True`. Forces `get_slice_video` (not just `get_node`) on the cluster before targeting. |
+
+The strict-visual gate makes visual budget usage a *requirement* rather than a measurement, so it changes the experimental claim. Default off; turn on when the headline question becomes "do storyboards add value beyond text" rather than "does the agent choose to look at storyboards."
+
+## Inspection bookkeeping
+
+The `cluster_not_inspected` gate above requires tracking which clusters the agent has read about. `SessionContext` carries two sets:
+
+* `inspected_nodes: Set[int]` — cluster IDs the agent has inspected via `get_node`, `list_slices_in_node`, or `get_slice_video` (the latter inspects the cluster owning the slice).
+* `inspected_slices: Set[str]` — slice IDs visually fetched via `get_slice_video`. Used by the strict-visual variant of the inspection gate.
+
+These sets are append-only within a session and reset at session start.
+
+## Kinematic-summary fallback
+
+When per-rollout state arrays (`raw_states/*.npz` or per-step state in `eval_save_episodes` pkls) are not available, the `get_node` tool's `kinematic_summary` field falls back to a structural cluster_stats summary. To keep the fallback informative — concrete enough that the agent can write differentiated `target_behavior` prose — it includes:
+
+* V-value (Bellman) and failure_likelihood for the cluster.
+* Pool-level success rate among rollouts that visit the cluster.
+* Top 3 most-likely predecessors with edge probabilities.
+* Top 3 most-likely successors with edge probabilities and Δv (advantage) annotations.
+
+When raw state data *is* available, the preferred path computes mean EE position, gripper open/close fraction, and segment duration from a sample of the cluster's slices.
+
 ## Adherence scoring (unchanged from one-shot mode)
 
 The same three-axis scoring used in the one-shot version:
@@ -530,6 +592,40 @@ Reported metrics:
 With three primary pairwise comparisons, apply Bonferroni or Benjamini-Hochberg correction.
 
 K=2 in Tier 2 is statistically toothless on its own — point estimates and per-axis distributions still inform whether to commit to Tier 3.
+
+## Empirical observations from integration testing
+
+The features above (status-line injection, validation gates, richer kinematic_summary, operational system prompts) were added in response to specific failures observed when running Qwen3-VL-8B against the apr26 mimicgen-square sweep clustering (k=15, 500 rollouts, 11,122 slices). They are documented here because they materially affect what counts as a methodology-level result vs. a model-level result.
+
+### Tool-call drift is real and model-dependent
+
+Initial run: Qwen3-VL-8B with the original (advisory) `A_G.md` and a 35-call budget made 35 tool calls and submitted **zero** requests. The model meaningfully explored — calling `get_graph_summary` first, picking high-failure clusters via `find_failure_nodes`, querying `get_node` on each candidate, exploring `find_recovery_paths` — but never crossed from explore to commit.
+
+After (status-line + operational prompt + tighter budget): same model, default `A_G.md`, 15-call budget with the budget warning firing at 8 remaining. Result: **still zero submissions** in 32 seconds — the model walked all 15 clusters via `get_node` and force-terminated. The agent saw the status line `[session: 0/4 requests submitted, …]` on every tool result. It did not act on it.
+
+A separately-tested forcing prompt (one that explicitly enumerated the rollouts to use and the request types to submit) produced 3 valid submissions in 21 seconds, but the submissions were degenerate — identical `target_behavior` text across all three, only the cluster id varying. With the new `duplicate_target_behavior` gate active, two of those three submissions would be rejected.
+
+Conclusion: the validation gates and infrastructure improvements are necessary but not sufficient for Qwen3-VL-8B to drive this experiment. **For Qwen-class models, an additional in-loop "stop-and-submit" injection at a budget threshold is likely required**; alternatively, the experiment should be run with stronger instruction-following models (Claude Sonnet/Opus, Gemini-Pro) which are known to follow tool-use prompts of this complexity.
+
+### What this means for pre-registration
+
+The original spec's pre-registration plan freezes prompts before any condition runs. The integration test suggests that approach is too tight: prompt iteration on Tier 1 (with smoke-tier budgets, no retraining) is methodologically necessary to find a prompt-budget combination the chosen agent backend can satisfy. The recommendation:
+
+1. Treat **prompt iteration on Tier 1 as a documented methodology step**, not a violation. Iterate `A_G.md` and `A_NG.md` against multiple Tier 1 seeds until the agent produces 4–8 differentiated submissions on each seed.
+2. Freeze the **post-iteration** version of the prompts before Tier 2/Tier 3.
+3. Record the final prompt hashes and the iteration-count in `pre_registration.yaml` so the pre-registration claim is an audit trail of how the prompts converged, not a fiction.
+
+This is what real method papers do; the rigid alternative does not survive contact with model variance.
+
+### E1 dependency on apr26
+
+The apr26 clustering used in the integration test has **not** had E1 (cluster-coherence VLM validation) run against it. E1 requires real rollout frames, which were not produced for this sweep (`eval_save_episodes` ran without image observations). For the actual experiment, E1 must precede E2 on the same clustering — without that, E2's adherence numbers are circular. This is the same caveat the spec already calls out in §"Self-validation risk."
+
+### Operator-facing differentiation is a real constraint
+
+Even when Qwen3-VL-8B did submit (under the forcing prompt, before the dedup gate was added), all three of its `target_behavior` strings were identical: "Pick up the square nut and place it on the rod without dropping it." The model varied `target_cluster` and `reference_rollout_id`, but the operator-readable instruction did not vary. The operator would do the same thing for all three demos.
+
+The new `duplicate_target_behavior` gate forces the model to differentiate. For the experiment, the H1 hypothesis (graph-aware agents propose better demos) requires the operator-facing prose itself to be informative — not just the cluster annotations. The kinematic_summary fallback (structured V/A/predecessor/successor info) helps anchor the prose in concrete graph features.
 
 ## Failure Modes
 

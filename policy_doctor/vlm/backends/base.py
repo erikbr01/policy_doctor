@@ -30,11 +30,17 @@ class ToolCall:
         Tool name (matches the registered :class:`ToolSpec.name`).
     arguments:
         Parsed argument dict; backends are responsible for JSON parsing.
+    provider_metadata:
+        Opaque per-provider data the loop must echo back on the next turn
+        (e.g. Gemini-3's ``thought_signature``). Not interpreted by the
+        loop; the producing backend embeds it on parse and the same backend
+        consumes it when re-encoding the turn into the next request.
     """
 
     id: str
     name: str
     arguments: Dict[str, Any]
+    provider_metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass

@@ -177,6 +177,40 @@ def build_context_and_tools(cfg: Dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 
+def _decorate_with_status(
+    items: List[Any],
+    *,
+    ctx,
+    target_n_submissions: int,
+    warning: Optional[Dict[str, Any]] = None,
+) -> List[Any]:
+    """Append a ``[session: …]`` text block to MCP content items.
+
+    Mirrors the in-process AgentSession behavior so the MCP client sees the
+    same budget signals — without this, an interactive Cursor / Claude Code
+    session has no visible deadline and the model may explore indefinitely.
+
+    When the budget tracker reports a warning (low remaining or exhausted),
+    the line is prefixed with ``REMINDER —`` and an explicit instruction to
+    submit pending requests and finalize.
+    """
+    from mcp.types import TextContent
+
+    from policy_doctor.vlm.proposals.agents.budget import format_status_line
+
+    cfg = ctx.budget.config
+    status_text = format_status_line(
+        n_submitted=len(ctx.submitted),
+        target_n_submissions=target_n_submissions,
+        n_tool_calls=ctx.budget.state.n_tool_calls,
+        max_tool_calls=cfg.max_tool_calls,
+        n_visual=ctx.budget.state.n_visual_calls,
+        max_visual=cfg.max_visual_calls,
+        warning=warning,
+    )
+    return list(items) + [TextContent(type="text", text=status_text)]
+
+
 def tool_result_to_mcp_content(result):
     """Translate a :class:`ToolResult` into a list of MCP content items.
 
@@ -252,6 +286,12 @@ async def run_async() -> None:
 
     server = Server("policy-doctor-e2")
 
+    # Mirror the in-process AgentSession's contract: append a session-status
+    # line to every tool result so the MCP client sees how much budget remains
+    # and how many requests have been submitted. Without this the model in
+    # Cursor / Claude Code has no signal of the deadline.
+    target_n_submissions = int(cfg.get("target_n_submissions", 5))
+
     @server.list_tools()
     async def _list_tools() -> List[Any]:
         return [
@@ -265,27 +305,67 @@ async def run_async() -> None:
 
     @server.call_tool()
     async def _call_tool(name: str, arguments: Optional[Dict[str, Any]]) -> List[Any]:
+        from policy_doctor.vlm.proposals.agents.budget import format_status_line
+
         spec = tools.get(name)
         if spec is None:
             from mcp.types import TextContent
 
             return [TextContent(type="text", text=f"[error:unknown_tool] {name!r}")]
 
-        # Run the synchronous tool body in a thread so async server isn't blocked
-        # by occasional pkl-reads or storyboard rendering.
-        result = await asyncio.to_thread(spec.func, arguments or {})
+        args = arguments or {}
 
-        # Charge budget *after* a successful call (mirrors AgentSession.dispatch).
+        # Cost class can escalate: get_*_video with format='video' is more
+        # expensive than the storyboard variant.
+        kind = spec.cost
+        if kind == "visual" and args.get("format") == "video":
+            kind = "video"
+
+        # 1. Cache hit — return immediately, no charge. Mirrors AgentSession.
+        cached = ctx.cache.get(name, args)
+        if cached is not None:
+            ctx.budget.note_cache_hit()
+            return _decorate_with_status(
+                tool_result_to_mcp_content(cached),
+                ctx=ctx, target_n_submissions=target_n_submissions,
+                warning=None,  # cache hit doesn't change budget; no fresh warning
+            )
+
+        # 2. Pre-flight budget check — return a structured error WITHOUT
+        # running the tool when the budget is exhausted. finalize_strategy
+        # (is_terminal=True) and the submission tools (bypass_budget=True)
+        # always pass this gate, so the agent can commit a partial strategy
+        # even after exploration runs out.
+        bypass = spec.is_terminal or spec.bypass_budget
+        budget_err = ctx.budget.check(name, kind, bypass=bypass)
+        # Recovery affordance: bypass_when_exhausted tools run even after the
+        # budget is gone (they were charged normally before exhaustion).
+        if budget_err is not None and spec.bypass_when_exhausted:
+            budget_err = None
+        if budget_err is not None:
+            logger.warning(
+                "budget exhausted for %s (kind=%s); returning structured error", name, kind,
+            )
+            return _decorate_with_status(
+                tool_result_to_mcp_content(budget_err),
+                ctx=ctx, target_n_submissions=target_n_submissions,
+                warning={
+                    "warning": f"{kind}_budget_exhausted",
+                    "remaining": 0,
+                },
+            )
+
+        # 3. Run the synchronous tool body in a thread so the async server
+        # isn't blocked by pkl-reads or storyboard rendering.
+        result = await asyncio.to_thread(spec.func, args)
+
+        # 4. Charge if successful. Note: failed calls don't charge — same
+        # as the in-process loop.
+        warning: Optional[Dict[str, Any]] = None
         if result.ok:
-            kind = spec.cost
-            if kind == "visual" and (arguments or {}).get("format") == "video":
-                kind = "video"
-            err = ctx.budget.check(name, kind, is_terminal=spec.is_terminal)
-            if err is not None:
-                # Budget would be exceeded — return the structured error
-                # rather than the result. (Surfaces same way the agent loop does.)
-                return tool_result_to_mcp_content(err)
-            ctx.budget.charge(kind, is_terminal=spec.is_terminal)
+            ctx.budget.charge(kind, bypass=bypass)
+            ctx.cache.put(name, args, result)
+            warning = ctx.budget.warning_for(kind)
 
         # Persist after every submission-affecting tool so the user can see
         # progress in the file system as it happens.
@@ -297,7 +377,10 @@ async def run_async() -> None:
         }:
             persist_session(ctx, session_dir)
 
-        return tool_result_to_mcp_content(result)
+        return _decorate_with_status(
+            tool_result_to_mcp_content(result),
+            ctx=ctx, target_n_submissions=target_n_submissions, warning=warning,
+        )
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())

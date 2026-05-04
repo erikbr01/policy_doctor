@@ -78,6 +78,8 @@ def _make_list_slices_in_node(ctx: SessionContext) -> ToolSpec:
         node_id = int(args.get("node_id"))
         n = int(args.get("n", 20))
         sort_by = str(args.get("sort_by", "centroid_distance"))
+        if node_id >= 0:
+            ctx.inspected_nodes.add(int(node_id))
 
         if ctx.cluster_labels is None or ctx.cluster_metadata is None:
             return ToolResult.error(
@@ -151,6 +153,9 @@ def _make_list_slices_in_node(ctx: SessionContext) -> ToolSpec:
         input_schema=S.LIST_SLICES_IN_NODE,
         func=_run,
         cost="cheap",
+        # Specific cluster lookup. Charges normally; remains callable after
+        # exhaustion as a recovery affordance for the cluster_not_inspected gate.
+        bypass_when_exhausted=True,
     )
 
 
@@ -224,6 +229,9 @@ def _make_get_rollout_summary(ctx: SessionContext) -> ToolSpec:
         input_schema=S.GET_ROLLOUT_SUMMARY,
         func=_run,
         cost="cheap",
+        # Specific rollout lookup. Charges normally; remains callable after
+        # exhaustion so the agent can verify reference_rollout_id pre-submit.
+        bypass_when_exhausted=True,
     )
 
 
@@ -271,6 +279,10 @@ def _make_list_rollouts(ctx: SessionContext) -> ToolSpec:
         input_schema=S.LIST_ROLLOUTS,
         func=_run,
         cost="cheap",
+        # Filtered rollout lookup. Charges normally; remains callable after
+        # exhaustion so the agent can locate a reference_rollout_id that
+        # passes through a chosen target_cluster.
+        bypass_when_exhausted=True,
     )
 
 
@@ -313,6 +325,20 @@ def _make_get_slice_video(ctx: SessionContext) -> ToolSpec:
                 f"no frames available for {sid!r} (low-dim run? video format unsupported)",
                 code="no_frames",
             )
+
+        # Track inspection: a slice video counts as inspecting the cluster
+        # the slice belongs to.
+        ctx.inspected_slices.add(sid)
+        if ctx.cluster_labels is not None and ctx.cluster_metadata is not None:
+            for i, meta in enumerate(ctx.cluster_metadata):
+                if (
+                    int(meta.get("rollout_idx", -1)) == rollout_id_to_episode_idx(rid)
+                    and _slice_bounds(meta) == (start, end)
+                ):
+                    label = int(ctx.cluster_labels[i])
+                    if label >= 0:
+                        ctx.inspected_nodes.add(label)
+                    break
 
         caption = f"slice {sid} (frames {start}-{end})"
         # Only storyboard format supported in v1; agent asking for 'video' gets storyboard with a note.
@@ -373,6 +399,7 @@ def _make_get_rollout_video(ctx: SessionContext) -> ToolSpec:
                     f"no storyboard available for {rid!r}",
                     code="no_frames",
                 )
+            ctx.inspected_rollouts.add(rid)
             return ToolResult(
                 name="get_rollout_video",
                 ok=True,
@@ -389,6 +416,7 @@ def _make_get_rollout_video(ctx: SessionContext) -> ToolSpec:
                 f"no video available for {rid!r}",
                 code="no_video",
             )
+        ctx.inspected_rollouts.add(rid)
         return ToolResult(
             name="get_rollout_video",
             ok=True,
@@ -441,7 +469,15 @@ def _render_slice_storyboard(
     except Exception:
         return None
 
-    col = "frame" if "frame" in df.columns else ("image" if "image" in df.columns else None)
+    # Try common image-column names produced by eval_save_episodes / robomimic.
+    # Order: simple "frame" / "image" first; then the multi-camera robocasa-style
+    # keys ("img", "img_agentview", etc.).
+    image_col_candidates = (
+        "frame", "image",
+        "img", "img_agentview", "img_shouldercamera0", "img_shouldercamera1",
+        "img_robot0_eye_in_hand", "img_robot1_eye_in_hand",
+    )
+    col = next((c for c in image_col_candidates if c in df.columns), None)
     if col is None:
         return None
     arrs = df[col].to_list()
@@ -462,7 +498,7 @@ def _render_slice_storyboard(
     from policy_doctor.vlm.storyboard import make_storyboard
 
     frames = [Image.fromarray(np.asarray(arrs[i]).astype("uint8")) for i in idxs]
-    return make_storyboard(frames, max_frames=n_frames)
+    return make_storyboard(frames)
 
 
 # ---------------------------------------------------------------------------

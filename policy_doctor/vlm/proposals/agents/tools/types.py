@@ -113,6 +113,22 @@ class ToolSpec:
     # If True, this tool ends the session when called successfully.
     is_terminal: bool = False
 
+    # If True, this tool is exempt from the budget check (no charge, never
+    # rejected as exhausted). The submission tools set this so the agent can
+    # always commit a partial strategy after exploration runs out — blocking
+    # propose_collection_request when the budget is exhausted defeats the
+    # purpose of the experiment. ``is_terminal`` implies ``bypass_budget`` in
+    # practice (finalize_strategy must always be callable).
+    bypass_budget: bool = False
+
+    # If True, this tool runs even when the budget would otherwise reject it,
+    # but is charged normally during regular operation. This is the recovery
+    # affordance for read-only ID lookups (get_node, get_rollout_summary, …):
+    # in normal exploration they cost budget like everything else, but once
+    # the agent has exhausted exploration and needs to verify something
+    # before submitting, they remain available.
+    bypass_when_exhausted: bool = False
+
     def declaration(self) -> Dict[str, Any]:
         """Anthropic-shaped tool declaration: ``{name, description, input_schema}``."""
         return {

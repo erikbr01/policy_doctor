@@ -278,25 +278,90 @@ def _first_present_col(df, names):
 
 
 def _summary_from_cluster_stats(ctx: "SessionContext", node_id: int) -> str:
+    """Structural summary when raw state data isn't available.
+
+    Even without physical EE / gripper info, we can still anchor descriptions in
+    structural / outcome statistics: V-value, failure likelihood, mean dwell,
+    top predecessors and successors with probabilities, and the success rate
+    among rollouts that pass through this node. Better than just node degree.
+    """
+    from policy_doctor.behaviors.behavior_graph import (
+        FAILURE_NODE_ID,
+        START_NODE_ID,
+        SUCCESS_NODE_ID,
+    )
+
     g = ctx.graph
     node = g.nodes.get(node_id)
     if node is None:
         return "(no statistics available for this node)"
 
-    out_edges = g.get_outgoing_transitions(node_id)
-    out_edges_sorted = sorted(out_edges, key=lambda x: -x[2])[:3]
+    name_for = {
+        START_NODE_ID: "START", SUCCESS_NODE_ID: "SUCCESS", FAILURE_NODE_ID: "FAILURE",
+    }
+    def _nm(n):
+        return name_for.get(n, f"c{n}")
 
-    parts = [
-        f"{node.num_episodes} rollouts pass through this node ({node.num_timesteps} timesteps total).",
-    ]
+    parts = [f"{node.num_episodes} rollouts pass through this cluster ({node.num_timesteps} timesteps total)."]
+
     if node.num_episodes:
         parts.append(
             f"Mean dwell: {node.num_timesteps / max(node.num_episodes, 1):.1f} timesteps per rollout."
         )
-    if out_edges_sorted:
-        succ = ", ".join(
-            f"c{tgt} (p={p:.2f})" if tgt >= 0 else f"{['', '', 'START', 'END', 'SUCCESS', 'FAILURE'][-tgt]} (p={p:.2f})"
-            for tgt, _, p in out_edges_sorted
-        )
-        parts.append(f"Top successors: {succ}.")
+
+    # V-value and failure likelihood — these are the agent's primary signal.
+    try:
+        v = ctx.node_values().get(node_id)
+        fl = ctx.failure_likelihoods().get(node_id)
+        if v is not None:
+            parts.append(f"V-value: {v:+.3f} (Bellman value under the graph's transition matrix).")
+        if fl is not None and fl > 0:
+            parts.append(f"Failure likelihood: {fl:.0%} of rollouts that visit this cluster eventually reach FAILURE.")
+    except Exception:
+        pass
+
+    # Pool-level success rate among rollouts that pass through this node.
+    try:
+        n_succ = n_fail = 0
+        for entry in ctx.pool.entries:
+            if not entry.cluster_path or node_id not in entry.cluster_path:
+                continue
+            if entry.success is True:
+                n_succ += 1
+            elif entry.success is False:
+                n_fail += 1
+        if n_succ + n_fail > 0:
+            parts.append(
+                f"Among {n_succ + n_fail} pool rollouts that visit this cluster, "
+                f"{n_succ} succeed and {n_fail} fail "
+                f"({n_succ / (n_succ + n_fail):.0%} task-success rate)."
+            )
+    except Exception:
+        pass
+
+    # Top predecessors — tells the agent what reaches this cluster.
+    in_edges = g.get_incoming_transitions(node_id)
+    if in_edges:
+        top_in = sorted(in_edges, key=lambda x: -x[2])[:3]
+        pred_str = ", ".join(f"{_nm(src)} (p={p:.2f})" for src, _, p in top_in)
+        parts.append(f"Most-likely predecessors: {pred_str}.")
+
+    # Top successors with advantage hints.
+    out_edges = g.get_outgoing_transitions(node_id)
+    if out_edges:
+        top_out = sorted(out_edges, key=lambda x: -x[2])[:3]
+        try:
+            values = ctx.node_values()
+            v_self = values.get(node_id, 0.0)
+            succ_parts = []
+            for tgt, _, p in top_out:
+                v_tgt = values.get(tgt, 0.0)
+                advantage = v_tgt - v_self
+                tag = "↑" if advantage > 0.05 else ("↓" if advantage < -0.05 else "≈")
+                succ_parts.append(f"{_nm(tgt)} (p={p:.2f}, Δv={advantage:+.2f} {tag})")
+            parts.append(f"Most-likely successors: {', '.join(succ_parts)}.")
+        except Exception:
+            succ_str = ", ".join(f"{_nm(tgt)} (p={p:.2f})" for tgt, _, p in top_out)
+            parts.append(f"Most-likely successors: {succ_str}.")
+
     return " ".join(parts)

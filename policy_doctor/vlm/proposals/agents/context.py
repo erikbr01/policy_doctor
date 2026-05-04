@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 import numpy as np
 
@@ -118,6 +118,18 @@ class SessionContext:
     submitted: List[SubmittedRequest] = field(default_factory=list)
     finalized: bool = False
     rationale: Optional[str] = None
+
+    # Inspection bookkeeping. Used by the submission validator to require
+    # the agent has actually *looked at* the cluster / rollout / slice it
+    # cites before submitting:
+    #   * ``inspected_nodes`` — clusters read via get_node / list_slices_in_node.
+    #   * ``inspected_slices`` — slice_ids fetched via get_slice_video (visual).
+    #   * ``inspected_rollouts`` — rollout_ids fetched via get_rollout_video (visual).
+    # Each closes a different failure mode where the agent generates prose
+    # from priors instead of from evidence.
+    inspected_nodes: Set[int] = field(default_factory=set)
+    inspected_slices: Set[str] = field(default_factory=set)
+    inspected_rollouts: Set[str] = field(default_factory=set)
 
     task_hint: str = ""
     config: Dict[str, Any] = field(default_factory=dict)

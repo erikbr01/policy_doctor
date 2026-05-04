@@ -17,11 +17,14 @@ class TestParseCondition(unittest.TestCase):
         self.assertEqual(parse_condition("H_NG"), Condition.H_NG)
         self.assertEqual(parse_condition("H_G"), Condition.H_G)
 
-    def test_legacy_aliases(self):
-        # Legacy one-shot names map to the agentic canonical equivalents so
-        # both vocabularies coexist without producing two enum members.
-        self.assertEqual(parse_condition("graph"), Condition.A_G)
-        self.assertEqual(parse_condition("outcome_only"), Condition.A_NG)
+    def test_one_shot_strings_are_not_aliases(self):
+        # The one-shot path uses "graph" / "outcome_only" as its own
+        # condition strings — they are NOT aliases for the agentic A_G/A_NG
+        # and parse_condition rejects them.
+        with self.assertRaises(ValueError):
+            parse_condition("graph")
+        with self.assertRaises(ValueError):
+            parse_condition("outcome_only")
 
     def test_passes_through_enum(self):
         self.assertEqual(parse_condition(Condition.A_G), Condition.A_G)

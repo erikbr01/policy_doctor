@@ -68,9 +68,4 @@ def parse_condition(raw: object) -> Condition:
     """Coerce strings / Condition values to a :class:`Condition`."""
     if isinstance(raw, Condition):
         return raw
-    s = str(raw).strip()
-    # Tolerate the legacy E2 names so the rename can land last.
-    legacy = {"graph": Condition.A_G, "outcome_only": Condition.A_NG}
-    if s in legacy:
-        return legacy[s]
-    return Condition(s)
+    return Condition(str(raw).strip())

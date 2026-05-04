@@ -8,7 +8,7 @@ mocked sim states, and a SessionContext suitable for exercising every Layer
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -16,6 +16,21 @@ from policy_doctor.behaviors.behavior_graph import BehaviorGraph
 from policy_doctor.vlm.proposals.agents.budget import BudgetConfig
 from policy_doctor.vlm.proposals.agents.context import SessionContext
 from policy_doctor.vlm.proposals.pool import RolloutEntry, RolloutPool
+
+
+# Fixture cluster → slice_ids that belong to it. Mirrors the j*5 windowing
+# in :func:`make_fixture_labels_metadata`. Tests use these to populate
+# ``ctx.inspected_slices`` without needing real frames.
+FIXTURE_SLICES_BY_CLUSTER: Dict[int, List[str]] = {
+    # j=0 windows: cluster 0 across all 6 rollouts
+    0: [f"r{i:04d}_t0_t4" for i in range(6)],
+    # j=1 windows: cluster 1 across all 6 rollouts
+    1: [f"r{i:04d}_t5_t9" for i in range(6)],
+    # j=2 windows for success rollouts: cluster 2
+    2: [f"r{i:04d}_t10_t14" for i in range(3)],
+    # j=2 windows for failure rollouts: cluster 4
+    4: [f"r{i:04d}_t10_t14" for i in range(3, 6)],
+}
 
 
 def make_fixture_pool(tmpdir: Path) -> RolloutPool:
@@ -68,7 +83,13 @@ def make_fixture_graph() -> BehaviorGraph:
     return BehaviorGraph.from_cluster_assignments(labels, metadata, level="rollout")
 
 
-def build_fixture_context(tmpdir: Path, *, condition: str = "A_G") -> SessionContext:
+def build_fixture_context(
+    tmpdir: Path,
+    *,
+    condition: str = "A_G",
+    pre_inspect_clusters: Optional[List[int]] = None,
+    pre_inspect_rollouts: Optional[List[str]] = None,
+) -> SessionContext:
     pool = make_fixture_pool(tmpdir)
     graph = make_fixture_graph()
     labels, metadata = make_fixture_labels_metadata()
@@ -92,4 +113,21 @@ def build_fixture_context(tmpdir: Path, *, condition: str = "A_G") -> SessionCon
         task_hint="Pick up the green cube and place it on the platform.",
         budget_config=BudgetConfig(max_tool_calls=80, max_visual_calls=30, max_video_calls=5),
     )
+    # Test-only shortcut: pre-populate inspections so submission tests can
+    # focus on submission semantics (denylist, dedup, evidence count) without
+    # the test setup having to call get_slice_video / get_rollout_video on
+    # fixtures that have no real frames.
+    if pre_inspect_clusters:
+        for cid in pre_inspect_clusters:
+            for sid in FIXTURE_SLICES_BY_CLUSTER.get(cid, []):
+                ctx.inspected_slices.add(sid)
+            if cid >= 0:
+                ctx.inspected_nodes.add(cid)
+    if pre_inspect_rollouts:
+        ctx.inspected_rollouts.update(pre_inspect_rollouts)
     return ctx
+
+
+def evidence_for_cluster(cluster_id: int, n: int = 3) -> List[str]:
+    """Return n slice_ids in the given fixture cluster (for evidence_slice_ids)."""
+    return FIXTURE_SLICES_BY_CLUSTER.get(cluster_id, [])[:n]

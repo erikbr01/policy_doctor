@@ -69,10 +69,18 @@ class BudgetState:
 # ---------------------------------------------------------------------------
 
 
+_EXHAUSTED_INSTRUCTION = (
+    "Submission tools (propose_collection_request, revise_request, "
+    "delete_request, list_submitted_requests) and finalize_strategy are still "
+    "callable — submit any remaining strategy now and then call finalize_strategy "
+    "with a brief rationale. Do not attempt further exploration."
+)
+
+
 def _budget_exhausted(tool_name: str, kind: CostKind) -> ToolResult:
     return ToolResult.error(
         tool_name,
-        f"Budget for {kind} tool calls exhausted. Only finalize_strategy is callable.",
+        f"Budget for {kind} tool calls exhausted. {_EXHAUSTED_INSTRUCTION}",
         code="budget_exhausted",
         budget_kind=kind,
     )
@@ -81,7 +89,7 @@ def _budget_exhausted(tool_name: str, kind: CostKind) -> ToolResult:
 def _session_timeout(tool_name: str) -> ToolResult:
     return ToolResult.error(
         tool_name,
-        "Session wall-clock budget exhausted. Only finalize_strategy is callable.",
+        f"Session wall-clock budget exhausted. {_EXHAUSTED_INSTRUCTION}",
         code="session_timeout",
     )
 
@@ -109,20 +117,21 @@ class BudgetTracker:
 
     # ---- guard ---------------------------------------------------------------
 
-    def check(self, tool_name: str, kind: CostKind, *, is_terminal: bool = False) -> Optional[ToolResult]:
+    def check(self, tool_name: str, kind: CostKind, *, bypass: bool = False) -> Optional[ToolResult]:
         """Return a :class:`ToolResult` error if the call cannot proceed, else ``None``.
 
-        ``is_terminal=True`` (e.g. ``finalize_strategy``) bypasses cost gates so
-        the agent can always end the session cleanly.
+        ``bypass=True`` (set by ``ToolSpec.is_terminal`` or ``ToolSpec.bypass_budget``)
+        skips every gate so the agent can always submit and finalize even after
+        exploration budget is exhausted.
         """
-        if is_terminal:
+        if bypass:
             return None
 
         # Wall clock first — affects every subsequent call.
         if self.session_time_remaining() <= 0:
             return _session_timeout(tool_name)
 
-        # Total tool-call budget — applies to ALL non-terminal calls.
+        # Total tool-call budget — applies to ALL non-bypass calls.
         if self.state.n_tool_calls >= self.config.max_tool_calls:
             return _budget_exhausted(tool_name, "cheap")
 
@@ -136,9 +145,9 @@ class BudgetTracker:
 
     # ---- charge --------------------------------------------------------------
 
-    def charge(self, kind: CostKind, *, is_terminal: bool = False) -> Dict[str, Any]:
+    def charge(self, kind: CostKind, *, bypass: bool = False) -> Dict[str, Any]:
         """Increment counters for a successful, non-cached call. Return budget snapshot."""
-        if not is_terminal:
+        if not bypass:
             self.state.n_tool_calls += 1
             if kind == "visual":
                 self.state.n_visual_calls += 1
@@ -196,6 +205,48 @@ def _normalize(args: Dict[str, Any]) -> str:
 def _hash_key(tool_name: str, args: Dict[str, Any]) -> str:
     payload = f"{tool_name}|{_normalize(args)}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Status-line formatter — shared between the in-process AgentSession and the
+# MCP server. Both paths append this to every tool_result so the model sees
+# how much budget is left and how many requests have been submitted.
+# ---------------------------------------------------------------------------
+
+
+def format_status_line(
+    *,
+    n_submitted: int,
+    target_n_submissions: int,
+    n_tool_calls: int,
+    max_tool_calls: int,
+    n_visual: int,
+    max_visual: int,
+    warning: Optional[Dict[str, Any]] = None,
+) -> str:
+    """One-line session status appended to every tool_result the agent sees.
+
+    Without this, the agent has no way to know how much budget it has left
+    or how many requests it has already submitted — leading to the
+    "tool-call drift" failure mode where it explores forever.
+
+    When a budget warning fires, the line is prefixed with REMINDER so the
+    agent can adapt before being forced to terminate.
+    """
+    base = (
+        f"[session: {n_submitted}/{target_n_submissions} requests submitted, "
+        f"{n_tool_calls}/{max_tool_calls} tool calls used, "
+        f"{n_visual}/{max_visual} visual calls used. "
+        "Call finalize_strategy when your strategy is complete.]"
+    )
+    if warning:
+        kind = warning.get("warning", "").replace("approaching_", "").replace("_budget", "")
+        return (
+            f"REMINDER — {warning.get('warning', 'budget low')}: "
+            f"{warning.get('remaining', '?')} {kind} calls remain. "
+            "Submit any pending requests and call finalize_strategy now. " + base
+        )
+    return base
 
 
 @dataclass

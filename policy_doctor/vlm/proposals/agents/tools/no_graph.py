@@ -192,6 +192,7 @@ def _make_get_rollout_video(ctx: SessionContext) -> ToolSpec:
                     f"no storyboard available for {rid!r}",
                     code="no_frames",
                 )
+            ctx.inspected_rollouts.add(rid)
             return ToolResult(
                 name="get_rollout_video",
                 ok=True,
@@ -208,6 +209,7 @@ def _make_get_rollout_video(ctx: SessionContext) -> ToolSpec:
                 f"no video available for {rid!r}",
                 code="no_video",
             )
+        ctx.inspected_rollouts.add(rid)
         return ToolResult(
             name="get_rollout_video",
             ok=True,

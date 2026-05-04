@@ -93,6 +93,29 @@ Same shape, in `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 For interactive Cursor / Claude Desktop sessions the budget caps default to "effectively unlimited." Tighten them when you want to mirror the experimental rigor of the headless `run_e2_agent.py` runs.
 
+## Budget enforcement
+
+The MCP server enforces the same `BudgetTracker` the in-process `AgentSession` uses, so the budget caps you set via env vars are real:
+
+* **Pre-flight check** — before each tool dispatch, the server checks the `max_tool_calls`, `max_visual_calls`, `max_video_calls`, and wall-clock budgets. If a call would exceed any of them, the server returns a structured `[error:budget_exhausted]` content block to the MCP client **without running the tool**. The model in Cursor / Claude Code sees the error and can recover.
+* **Cache shortcut** — repeat calls with identical arguments return cached content immediately and don't charge the budget. This matches the in-process loop and encourages re-reference rather than re-fetch.
+* **Status line on every result** — every tool result the client receives ends with a synthetic text block of the form
+  ```
+  [session: 2/5 requests submitted, 17/40 tool calls used, 1/2 visual calls used. Call finalize_strategy when your strategy is complete.]
+  ```
+  When the budget warning fires (last `warning_remaining_threshold` calls of any pool), the line is prefixed with `REMINDER —` and an explicit instruction to submit pending requests and finalize.
+* **Submission tools bypass the budget** — `propose_collection_request`, `revise_request`, `delete_request`, `list_submitted_requests`, and `finalize_strategy` are all marked `bypass_budget` (or `is_terminal` for finalize) and run even when the budget is exhausted. This means an over-exploring agent can always commit a partial strategy on the way out — blocking the experiment's output channel when budget runs out would defeat the point. The exhausted-budget error message tells the agent exactly this: "Submission tools and finalize_strategy are still callable — submit any remaining strategy now and then call finalize_strategy."
+
+For interactive Cursor / Claude Code use the budget caps default to "effectively unlimited" (10000 each). To experience the budget signals, lower them via env vars:
+
+```jsonc
+"env": {
+  "POLICY_DOCTOR_MAX_TOOL_CALLS": "40",
+  "POLICY_DOCTOR_MAX_VISUAL_CALLS": "10",
+  "POLICY_DOCTOR_MAX_VIDEO_CALLS": "2"
+}
+```
+
 ## What the client sees
 
 After connecting, the MCP client receives the full Layer 1–4 tool list (or the no-graph variant for `A_NG`):

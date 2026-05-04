@@ -117,6 +117,9 @@ def _make_find_recovery_paths(ctx: SessionContext) -> ToolSpec:
         input_schema=S.FIND_RECOVERY_PATHS,
         func=_run,
         cost="cheap",
+        # Specific (from_node) lookup. Charges normally; remains callable after
+        # exhaustion so the agent can verify a recovery target before submitting.
+        bypass_when_exhausted=True,
     )
 
 
@@ -242,6 +245,9 @@ def _make_compare_paths(ctx: SessionContext) -> ToolSpec:
         input_schema=S.COMPARE_PATHS,
         func=_run,
         cost="cheap",
+        # Specific (path_a, path_b) verification. Charges normally; remains
+        # callable after exhaustion to confirm path divergence pre-submit.
+        bypass_when_exhausted=True,
     )
 
 
