@@ -119,6 +119,10 @@ class VLMBackend(ABC):
         system_prompt: Optional[str],
         user_preamble: str,
         user_prompt: str,
+        query_extra_text: Optional[str] = None,
+        example_extra_texts: Optional[
+            Sequence[Optional[Sequence[Optional[str]]]]
+        ] = None,
     ) -> str:
         """Classify *query_images* into one of the K example groups.
 
@@ -127,15 +131,23 @@ class VLMBackend(ABC):
         representative frames for that group (typically storyboard composites,
         one per example slice).
 
+        *query_extra_text* and *example_extra_texts* (both optional): structured
+        text data to interleave with the images. ``example_extra_texts[i][j]``
+        is the text block (e.g. action sequence, state trajectory) shown
+        immediately after the j-th image in the i-th example group;
+        ``query_extra_text`` is shown immediately after the query image. Pass
+        ``None`` to omit. Backends that don't support extra text simply ignore
+        these kwargs.
+
         The backend builds a single multimodal prompt::
 
             [system_prompt]
             [user_preamble]
-            Group A: [img1] [img2] ...
-            Group B: [img1] ...
+            Group A: [img1] [extra_text_a1] [img2] [extra_text_a2] ...
+            Group B: [img1] [extra_text_b1] ...
             ...
             Query:
-            [query_img1] ...
+            [query_img1] [query_extra_text]
             [user_prompt]
 
         Returns the raw text response (parsed by the caller).

@@ -61,6 +61,11 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--model_id", default="Qwen/Qwen3-VL-8B-Instruct")
     ap.add_argument("--device", default="cuda:0",
                     help="Pass cuda:0 (default); pin the actual GPU via CUDA_VISIBLE_DEVICES.")
+    ap.add_argument("--load_in_4bit", action="store_true")
+    ap.add_argument("--load_in_8bit", action="store_true")
+    ap.add_argument("--device_map", default=None)
+    ap.add_argument("--include_action_text", action="store_true")
+    ap.add_argument("--include_state_text", action="store_true")
     ap.add_argument("--max_clusters_override", type=int, default=None,
                     help="If set, force this max_clusters on every eval; otherwise read from manifest n_clusters.")
     ap.add_argument("--force", action="store_true",
@@ -145,6 +150,16 @@ def main() -> int:
             ]
             if args.global_episode_disjoint:
                 cmd.append("--global_episode_disjoint")
+            if args.load_in_4bit:
+                cmd.append("--load_in_4bit")
+            if args.load_in_8bit:
+                cmd.append("--load_in_8bit")
+            if args.device_map is not None:
+                cmd.extend(["--device_map", args.device_map])
+            if args.include_action_text:
+                cmd.append("--include_action_text")
+            if args.include_state_text:
+                cmd.append("--include_state_text")
 
             print(f"\n[e1_sweep_eval] [{i}/{len(cdirs)}] {slug}  K={k}")
             print(f"  $ {shlex.join(cmd)}")

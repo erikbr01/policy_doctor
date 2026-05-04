@@ -75,6 +75,10 @@ class MockVLMBackend(VLMBackend):
         system_prompt: Optional[str],
         user_preamble: str,
         user_prompt: str,
+        query_extra_text: Optional[str] = None,
+        example_extra_texts: Optional[
+            Sequence[Optional[Sequence[Optional[str]]]]
+        ] = None,
     ) -> str:
         # Always predicts the first group label — deterministic for tests.
         if example_sets:

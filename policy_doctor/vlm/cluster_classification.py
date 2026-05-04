@@ -18,8 +18,10 @@ Key design decisions (per experiment spec):
 
 from __future__ import annotations
 
+import functools
 import json
 import pathlib
+import pickle
 import string
 from collections import defaultdict
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
@@ -27,7 +29,11 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 import numpy as np
 
 from policy_doctor.vlm.backends.base import VLMBackend
-from policy_doctor.vlm.frames import extract_window_frames, resolve_window_indices
+from policy_doctor.vlm.frames import (
+    extract_window_frames,
+    list_rollout_episode_pkls,
+    resolve_window_indices,
+)
 from policy_doctor.vlm.storyboard import make_storyboard
 
 # ---------------------------------------------------------------------------
@@ -464,6 +470,89 @@ def _load_storyboard(
 
 
 # ---------------------------------------------------------------------------
+# Optional state/action text for slice prompts
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=64)
+def _load_episode_df(eval_dir_str: str, rollout_idx: int):
+    """Cache the pickled episode DataFrame so storyboard + extra-text loads share it."""
+    pkls = list_rollout_episode_pkls(pathlib.Path(eval_dir_str) / "episodes")
+    if rollout_idx < 0 or rollout_idx >= len(pkls):
+        raise IndexError(
+            f"rollout_idx={rollout_idx} out of range for {len(pkls)} episode files"
+        )
+    with open(pkls[rollout_idx], "rb") as f:
+        return pickle.load(f)
+
+
+def _format_vec(arr: np.ndarray, *, max_dim: Optional[int] = None, precision: int = 3) -> str:
+    flat = np.asarray(arr).reshape(-1)
+    if max_dim is not None and flat.size > max_dim:
+        flat = flat[:max_dim]
+        suffix = f"...({arr.size - max_dim} more)"
+    else:
+        suffix = ""
+    formatted = ", ".join(f"{v:.{precision}f}" for v in flat.tolist())
+    return f"[{formatted}]{suffix}"
+
+
+def _load_slice_extra_text(
+    eval_dir: pathlib.Path,
+    slice_idx: int,
+    metadata: List[dict],
+    *,
+    include_action_text: bool,
+    include_state_text: bool,
+    state_max_dim: Optional[int] = 64,
+    action_max_dim: Optional[int] = 32,
+) -> Optional[str]:
+    """Format a per-timestep state/action text block for one slice.
+
+    Returns ``None`` when both flags are off. The block has the form::
+
+        [obs and action across t=0..T-1 within the cluster window]
+        t=0 obs=[...]  action=[...]
+        t=1 obs=[...]  action=[...]
+        ...
+
+    ``state_max_dim`` and ``action_max_dim`` truncate large per-timestep vectors
+    to keep token cost bounded; truncation is annotated inline.
+    """
+    if not (include_action_text or include_state_text):
+        return None
+    meta = metadata[slice_idx]
+    r_idx, w0, w1 = resolve_window_indices(meta)
+    df = _load_episode_df(str(eval_dir), r_idx)
+    lo = max(0, w0)
+    hi = min(len(df), w1)
+    if lo >= hi:
+        return None
+
+    lines: List[str] = []
+    header_parts = []
+    if include_state_text:
+        header_parts.append("obs[-1] (current frame)")
+    if include_action_text:
+        header_parts.append("action[0] (executed)")
+    lines.append("Numeric per-timestep " + " + ".join(header_parts) + ":")
+
+    for local_t, t in enumerate(range(lo, hi)):
+        row = df.iloc[t]
+        parts: List[str] = [f"t={local_t}"]
+        if include_state_text and "obs" in row:
+            obs = np.asarray(row["obs"])
+            obs_vec = obs[-1] if obs.ndim == 2 else obs.reshape(-1)
+            parts.append(f"obs={_format_vec(obs_vec, max_dim=state_max_dim)}")
+        if include_action_text and "action" in row:
+            act = np.asarray(row["action"])
+            act_vec = act[0] if act.ndim == 2 else act.reshape(-1)
+            parts.append(f"action={_format_vec(act_vec, max_dim=action_max_dim)}")
+        lines.append("  " + "  ".join(parts))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Response parsing
 # ---------------------------------------------------------------------------
 
@@ -516,6 +605,8 @@ def run_query_with_label_maps(
     frame_rng: np.random.Generator,
     label_maps: List[Dict[int, str]],
     view_window_extension: int = 0,
+    include_action_text: bool = False,
+    include_state_text: bool = False,
 ) -> Dict[str, Any]:
     """Run one query with pre-determined per-rep label maps (for reproducibility)."""
     from PIL import Image as PILImage
@@ -524,7 +615,14 @@ def run_query_with_label_maps(
         eval_dir, query_idx, metadata, max_frames, frame_rng,
         view_window_extension=view_window_extension,
     )
+    query_extra_text = _load_slice_extra_text(
+        eval_dir, query_idx, metadata,
+        include_action_text=include_action_text,
+        include_state_text=include_state_text,
+    )
+
     example_storyboards: Dict[int, List[PILImage.Image]] = {}
+    example_extra_text_by_cid: Dict[int, List[Optional[str]]] = {}
     for cid in cluster_ids:
         boards = [
             _load_storyboard(
@@ -534,6 +632,14 @@ def run_query_with_label_maps(
             for ex_idx in example_indices.get(cid, [])
         ]
         example_storyboards[cid] = boards
+        example_extra_text_by_cid[cid] = [
+            _load_slice_extra_text(
+                eval_dir, ex_idx, metadata,
+                include_action_text=include_action_text,
+                include_state_text=include_state_text,
+            )
+            for ex_idx in example_indices.get(cid, [])
+        ]
 
     preamble = user_preamble_template.format(n_groups=len(cluster_ids))
 
@@ -545,6 +651,9 @@ def run_query_with_label_maps(
             (label_map[cid], example_storyboards[cid])
             for cid in ordered_ids
         ]
+        example_extra_texts: List[Optional[List[Optional[str]]]] = [
+            example_extra_text_by_cid[cid] for cid in ordered_ids
+        ]
         valid_labels = [label_map[cid] for cid in ordered_ids] + ["unclear"]
 
         raw_text = backend.classify_slice(
@@ -553,6 +662,8 @@ def run_query_with_label_maps(
             system_prompt=system_prompt,
             user_preamble=preamble,
             user_prompt=user_prompt_question,
+            query_extra_text=query_extra_text,
+            example_extra_texts=example_extra_texts,
         )
         pred_opaque, is_unclear = parse_classification_response(raw_text, valid_labels)
         if is_unclear:
@@ -744,6 +855,8 @@ def run_cluster_coherence_classification(
     dry_run: bool = False,
     global_episode_disjoint: bool = False,
     view_window_extension: int = 0,
+    include_action_text: bool = False,
+    include_state_text: bool = False,
 ) -> Dict[str, Any]:
     """Run Experiment E1 for one clustering result.
 
@@ -799,6 +912,8 @@ def run_cluster_coherence_classification(
     plan["backend"] = getattr(backend, "name", type(backend).__name__)
     plan["max_frames_per_storyboard"] = int(max_frames_per_storyboard)
     plan["view_window_extension"] = int(view_window_extension)
+    plan["include_action_text"] = bool(include_action_text)
+    plan["include_state_text"] = bool(include_state_text)
 
     # Pre-generate label maps for all queries
     plan["label_maps"] = generate_label_maps_for_plan(plan, rng)
@@ -862,6 +977,8 @@ def run_cluster_coherence_classification(
                     frame_rng=frame_rng,
                     label_maps=label_maps_int,
                     view_window_extension=view_window_extension,
+                    include_action_text=include_action_text,
+                    include_state_text=include_state_text,
                 )
                 all_records.append(record)
                 pred_f.write(json.dumps(record, default=str) + "\n")

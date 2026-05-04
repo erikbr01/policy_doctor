@@ -46,6 +46,13 @@ vlm_cluster_classification:
   # frames inside the cluster window (default).
   view_window_extension: 0
 
+  # Append per-timestep numeric text after each slice's storyboard. Useful when
+  # the visual signal alone isn't enough — gives the VLM access to the same
+  # state vector the policy receives or the action it executed. Adds tokens
+  # but no extra images.
+  include_action_text: false
+  include_state_text: false
+
   # Optional prompt overrides (null = use defaults)
   system_prompt: null
   user_preamble_template: null

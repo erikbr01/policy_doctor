@@ -172,18 +172,33 @@ class GeminiVLMBackend(VLMBackend):
         system_prompt: Optional[str],
         user_preamble: str,
         user_prompt: str,
+        query_extra_text: Optional[str] = None,
+        example_extra_texts: Optional[
+            Sequence[Optional[Sequence[Optional[str]]]]
+        ] = None,
     ) -> str:
         parts: list = []
         if user_preamble:
             parts.append(user_preamble + "\n\n")
-        for label, imgs in example_sets:
+        for ci, (label, imgs) in enumerate(example_sets):
             parts.append(f"{label}:\n")
-            for img in imgs:
+            extras_for_group = (
+                example_extra_texts[ci]
+                if example_extra_texts is not None and ci < len(example_extra_texts)
+                else None
+            )
+            for j, img in enumerate(imgs):
                 parts.append({"mime_type": "image/jpeg", "data": _pil_to_bytes(img)})
+                if extras_for_group is not None and j < len(extras_for_group):
+                    extra = extras_for_group[j]
+                    if extra:
+                        parts.append("\n" + extra + "\n")
             parts.append("\n")
         parts.append("Query:\n")
         for img in query_images:
             parts.append({"mime_type": "image/jpeg", "data": _pil_to_bytes(img)})
+        if query_extra_text:
+            parts.append("\n" + query_extra_text)
         parts.append("\n" + user_prompt)
         return self._generate_text(parts, system_prompt=system_prompt)
 

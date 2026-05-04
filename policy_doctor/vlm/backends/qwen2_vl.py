@@ -404,6 +404,10 @@ class Qwen2VLBackend(VLMBackend):
         system_prompt: Optional[str],
         user_preamble: str,
         user_prompt: str,
+        query_extra_text: Optional[str] = None,
+        example_extra_texts: Optional[
+            Sequence[Optional[Sequence[Optional[str]]]]
+        ] = None,
     ) -> str:
         import torch
 
@@ -414,15 +418,26 @@ class Qwen2VLBackend(VLMBackend):
         content: list = []
         if user_preamble:
             content.append({"type": "text", "text": user_preamble})
-        for label, imgs in example_sets:
+        for ci, (label, imgs) in enumerate(example_sets):
             content.append({"type": "text", "text": f"{label}:"})
-            for im in imgs:
+            extras_for_group = (
+                example_extra_texts[ci]
+                if example_extra_texts is not None and ci < len(example_extra_texts)
+                else None
+            )
+            for j, im in enumerate(imgs):
                 content.append({"type": "image", "image": im})
                 all_images.append(im)
+                if extras_for_group is not None and j < len(extras_for_group):
+                    extra = extras_for_group[j]
+                    if extra:
+                        content.append({"type": "text", "text": extra})
         content.append({"type": "text", "text": "Query:"})
         for im in query_images:
             content.append({"type": "image", "image": im})
             all_images.append(im)
+        if query_extra_text:
+            content.append({"type": "text", "text": query_extra_text})
         content.append({"type": "text", "text": user_prompt})
 
         messages: list = []

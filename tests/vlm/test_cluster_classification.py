@@ -16,6 +16,7 @@ import yaml
 from policy_doctor.vlm.backends.mock import MockVLMBackend
 from policy_doctor.vlm.cluster_classification import (
     _centroid_distances,
+    _load_slice_extra_text,
     _opaque_labels,
     build_label_map,
     build_sample_plan,
@@ -93,6 +94,74 @@ def _make_clustering_dir(
 # ---------------------------------------------------------------------------
 # Storyboard
 # ---------------------------------------------------------------------------
+
+class TestLoadSliceExtraText(unittest.TestCase):
+    def _make_eval_with_obs_action(self, td: pathlib.Path) -> pathlib.Path:
+        ep_dir = td / "episodes"
+        ep_dir.mkdir(parents=True)
+        rng = np.random.default_rng(0)
+        for ep_i in range(2):
+            rows = []
+            for t in range(8):
+                rows.append({
+                    "obs": rng.standard_normal((2, 5)).astype(np.float32),
+                    "action": rng.standard_normal((3, 4)).astype(np.float32),
+                    "img": np.zeros((4, 4, 3), dtype=np.uint8),
+                })
+            df = pd.DataFrame(rows)
+            with open(ep_dir / f"ep{ep_i:04d}_succ.pkl", "wb") as f:
+                pickle.dump(df, f)
+        with open(ep_dir / "metadata.yaml", "w") as f:
+            yaml.safe_dump({"episode_lengths": [8, 8]}, f)
+        return td
+
+    def test_returns_none_when_both_flags_off(self):
+        with tempfile.TemporaryDirectory() as td:
+            ed = self._make_eval_with_obs_action(pathlib.Path(td))
+            metadata = [{"rollout_idx": 0, "window_start": 0, "window_end": 3}]
+            out = _load_slice_extra_text(
+                ed, 0, metadata,
+                include_action_text=False, include_state_text=False,
+            )
+            self.assertIsNone(out)
+
+    def test_action_only_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            ed = self._make_eval_with_obs_action(pathlib.Path(td))
+            metadata = [{"rollout_idx": 0, "window_start": 0, "window_end": 3}]
+            out = _load_slice_extra_text(
+                ed, 0, metadata,
+                include_action_text=True, include_state_text=False,
+            )
+            self.assertIsNotNone(out)
+            self.assertIn("action", out)
+            self.assertNotIn("obs=", out)
+            self.assertEqual(out.count("t="), 3)  # 3 timesteps in window
+
+    def test_state_only_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            ed = self._make_eval_with_obs_action(pathlib.Path(td))
+            metadata = [{"rollout_idx": 0, "window_start": 0, "window_end": 3}]
+            out = _load_slice_extra_text(
+                ed, 0, metadata,
+                include_action_text=False, include_state_text=True,
+            )
+            self.assertIsNotNone(out)
+            self.assertIn("obs=", out)
+            self.assertNotIn("action=", out)
+
+    def test_both_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            ed = self._make_eval_with_obs_action(pathlib.Path(td))
+            metadata = [{"rollout_idx": 0, "window_start": 0, "window_end": 3}]
+            out = _load_slice_extra_text(
+                ed, 0, metadata,
+                include_action_text=True, include_state_text=True,
+            )
+            self.assertIsNotNone(out)
+            self.assertIn("obs=", out)
+            self.assertIn("action=", out)
+
 
 class TestMakeStoryboard(unittest.TestCase):
     def test_single_image(self):

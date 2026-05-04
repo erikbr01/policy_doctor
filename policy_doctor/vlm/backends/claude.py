@@ -138,19 +138,34 @@ class ClaudeVLMBackend(VLMBackend):
         system_prompt: Optional[str],
         user_preamble: str,
         user_prompt: str,
+        query_extra_text: Optional[str] = None,
+        example_extra_texts: Optional[
+            Sequence[Optional[Sequence[Optional[str]]]]
+        ] = None,
     ) -> str:
         """Classify query_images into one of the example groups."""
         content: list = []
         if user_preamble:
             content.append({"type": "text", "text": user_preamble + "\n\n"})
-        for label, imgs in example_sets:
+        for ci, (label, imgs) in enumerate(example_sets):
             content.append({"type": "text", "text": f"{label}:\n"})
-            for img in imgs:
+            extras_for_group = (
+                example_extra_texts[ci]
+                if example_extra_texts is not None and ci < len(example_extra_texts)
+                else None
+            )
+            for j, img in enumerate(imgs):
                 content.append(self._image_block(img))
+                if extras_for_group is not None and j < len(extras_for_group):
+                    extra = extras_for_group[j]
+                    if extra:
+                        content.append({"type": "text", "text": "\n" + extra + "\n"})
             content.append({"type": "text", "text": "\n"})
         content.append({"type": "text", "text": "Query:\n"})
         for img in query_images:
             content.append(self._image_block(img))
+        if query_extra_text:
+            content.append({"type": "text", "text": "\n" + query_extra_text})
         content.append({"type": "text", "text": "\n" + user_prompt})
         return self._call(system_prompt, content)
 

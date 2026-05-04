@@ -54,6 +54,39 @@ def main() -> int:
              "on each side without changing the cluster window. Tests whether "
              "longer visual context recovers more accuracy at fixed clustering.",
     )
+    ap.add_argument(
+        "--load_in_4bit",
+        action="store_true",
+        help="Load weights via bitsandbytes NF4. Required for Qwen3-VL-32B on a "
+             "single 24GB GPU (~16GB quantized weights vs 64GB at bf16).",
+    )
+    ap.add_argument(
+        "--load_in_8bit",
+        action="store_true",
+        help="Load weights via bitsandbytes 8-bit. Roughly 32GB for Qwen3-VL-32B "
+             "— needs device_map=auto across two GPUs.",
+    )
+    ap.add_argument(
+        "--device_map",
+        default=None,
+        help="HF/accelerate device_map. Use 'auto' to spread layers across all "
+             "visible GPUs (required for 8-bit Qwen3-VL-32B; optional for 4-bit "
+             "if a single GPU is too tight).",
+    )
+    ap.add_argument(
+        "--include_action_text",
+        action="store_true",
+        help="Append per-timestep executed action vectors as text after each "
+             "slice's storyboard. Adds tokens but gives the VLM access to the "
+             "policy's actual action sequence.",
+    )
+    ap.add_argument(
+        "--include_state_text",
+        action="store_true",
+        help="Append per-timestep current-frame observation vectors as text "
+             "after each slice's storyboard. Adds tokens; complements the "
+             "image with the same numeric state the policy receives.",
+    )
     args = ap.parse_args()
 
     import policy_doctor as _pd
@@ -79,7 +112,7 @@ def main() -> int:
         run_cluster_coherence_classification,
     )
 
-    backend = build_qwen2_vl_backend({
+    backend_params = {
         "model_id": args.model_id,
         "device": args.device,
         "torch_dtype": "bfloat16",
@@ -87,7 +120,12 @@ def main() -> int:
         "image_max_pixels": args.image_max_pixels,
         # default image input mode (separate image tokens, not video)
         "qwen_frame_input": "images",
-    })
+        "load_in_4bit": args.load_in_4bit,
+        "load_in_8bit": args.load_in_8bit,
+    }
+    if args.device_map is not None:
+        backend_params["device_map"] = args.device_map
+    backend = build_qwen2_vl_backend(backend_params)
 
     out = pathlib.Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -116,6 +154,8 @@ def main() -> int:
         dry_run=False,
         global_episode_disjoint=args.global_episode_disjoint,
         view_window_extension=args.view_window_extension,
+        include_action_text=args.include_action_text,
+        include_state_text=args.include_state_text,
     )
 
     print("\n=== Summary ===")
