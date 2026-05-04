@@ -106,6 +106,25 @@ Combining F5 and F6:
 
 The current configuration (mf=4 ext=0 at composite 512², image_max_pixels=1024²) appears close to a local optimum given the storyboard format. To break past 48% clean, the next moves are: (a) raise composite resolution so 3×3 / 4×4 grids stay readable, (b) feed numeric per-timestep state/action alongside images (implemented; see commit `6391f0c`, untested), and/or (c) revisit the clustering itself (representation, window width — see Q4/Q5 below).
 
+### F8 — Visual context format sweep at K=10: bigger cells help, asymmetric formatting hurts
+
+Tested three storyboard formats against the K=10 v2 baseline (composite mf=4 target=512², cells=256²), each holding sample plan, model, and seed fixed.
+
+| Config | Headline | Clean (n=27) | p (vs 1/10) | Notes |
+|---|---|---|---|---|
+| baseline (composite 512², cells 256²) | 0.533 | 0.481 | 5.2e-7 | reference |
+| **(C) larger composite (768², cells 384²)** | **0.567** | **0.519** | **5.6e-8** | +1 correct vs baseline; same image count |
+| (A) hybrid (composite ex + frames query, mf=4) | 0.200 | 0.222 | 4.7e-2 | drops by half — VLM treats query frames as more examples |
+| (B) pure frames (mf=4, image_max_pixels=147k) | OOM | — | — | 124 images per call exceeds 24GB activation memory |
+
+**F8a — Larger composites give a small but consistent improvement.** Config (C) is the new best at K=10 v2, +0.04 clean accuracy over baseline at zero token cost. Confirms F6b (per-cell resolution matters) but the magnitude of the gain is modest — the gap to ceiling is mostly elsewhere.
+
+**F8b — Asymmetric multimodal formatting causes major regression.** Config (A) drops clean accuracy to 0.222 (almost halving from 0.481). Same image content as (B) at the visual level but split across formats: 30 example *composites* (one per example slice) followed by 4 query *frames* (one per timestep). The "Query:" text label between them isn't a strong enough boundary — the VLM apparently reads the 4 query frames as 4 more example images, fitting into whichever group's visual style they best match. Even the same-episode bucket goes 0/3 (vs baseline's 3/3 — episode cues stop helping when the prompt structure is broken).
+
+Methodological consequence: when introducing per-slice multi-image variants in the future, **all slices** should be in the same format. Mixed formats break VLM grouping inference.
+
+**F8c — Pure frames mode doesn't fit at K=10 on a single 24GB GPU.** At K=10/n_example=3/mf=4, frames mode produces 124 images per call. Even with `image_max_pixels=147456` (≈384²/frame), the vision encoder's per-image position-embedding allocations cumulatively overflow 24GB. To test pure frames cleanly we have to drop to K=5 (max ~75 frames per call) — see Q1''.
+
 ---
 
 ## Open methodological questions (informing the next sweep batch)
@@ -116,9 +135,9 @@ Of the original six confounds, two are now substantially settled:
 |---|---|---|
 | 1 | Slice length / temporal context | **Partially answered (F6a)** — naive extension at fixed frame count *worsens* accuracy due to sampling-position artifacts. Density-matched extension helps slightly (F6c) but is bottlenecked by per-cell resolution (F6b). The clean test (raise composite resolution) hasn't been run yet. |
 | 2 | VLM capacity | **Answered (F5)** — Qwen3-VL-32B-NF4 is identical to 8B. Not the bottleneck. |
-| 3 | Image budget per storyboard | **Now the leading candidate** — F6b suggests per-cell resolution is the operative variable. Composite resolution is fixed at 512² in `make_storyboard`; needs to be configurable. |
-| 4 | Clustering hyperparameters | Not yet swept. Window width / stride / aggregation / prescale / UMAP dim. Sweep harness is built (see "Architecture"). |
-| 5 | Representation choice | Not yet swept. State-only and state-action baselines are built (see `slice_representations.py`). |
+| 3 | Image budget per storyboard | **Largely answered (F8a)** — composite resolution is now configurable (`--composite_target_size`), and going from 512² → 768² (cells 256² → 384²) gives +0.04 clean. Real but small. Hybrid format (F8b) is *worse*; pure frames doesn't fit at K=10 (F8c). |
+| 4 | Clustering hyperparameters | Not yet swept on real data. Sweep harness built (`scripts/run_clustering_sweep.py`); spec at `sweep_specs/transport_r512_alt_clustering.yaml` (108 combos). |
+| 5 | Representation choice | **Partial** — abstraction + state/state_action concretes implemented and tested. K=10 state and state_action clusterings BUILT on real data; E1 evaluation not yet run. |
 | 6 | Stronger frontier VLM | Pending. F5 makes this a lower-priority lever. |
 
 ---
@@ -129,7 +148,19 @@ The next implementation phase (in flight, see "Architecture" below) targets ques
 
 ### Q1 — Extended visual context (DONE — see F6)
 
-`view_window_extension` is implemented and swept at K=10. Result: not the right knob in isolation. The follow-up is composite-resolution sweep at fixed mf=9 (or mf=16) — that requires `make_storyboard` to accept a `target_size` override, which is not yet wired through the runner script.
+`view_window_extension` is implemented and swept at K=10. Result: not the right knob in isolation. Composite-resolution scaling has been wired (`--composite_target_size`) and tested at K=10 mf=4 768² (config (C) in F8) — modest gain, not a breakthrough.
+
+### Q1' — Storyboard-mode sweep at K=10 (DONE — see F8)
+
+`--storyboard_mode {composite,frames}` and `--query_storyboard_mode` flags are implemented (commit pending). Results show larger composites help slightly; hybrid hurts; pure frames doesn't fit at K=10. Pure-frames testing has to drop to K=5.
+
+### Q1'' — Pure frames at K=5 (PENDING — running now)
+
+K=5 clustering built at `/tmp/transport_mh_seed0_r512_clustering_k5`. Two configs running on GPU 0:
+- K=5 baseline (composite mf=4 target=512²) — to establish a fresh K=5 reference point
+- K=5 pure frames (mf=4, frames at native 512² each — 64 images per call ≈ 86k tokens, fits)
+
+Together these tell us whether the pure-frames format itself is informative once it actually fits in context. Note this *also* changes K, so direct comparison to K=10 results requires care — clean accuracy may rise simply from K=10 → K=5 (chance goes 0.10 → 0.20), as F1 already showed for K=20 → K=10.
 
 ### Q4 — Clustering hyperparameter sweeps
 
@@ -142,14 +173,23 @@ Beyond K, sweep:
 
 This is a lot of clusterings (each a few minutes of CPU). The sweep harness lets us run them in batch and evaluate any subset through E1.
 
-### Q5 — Baseline representations
+### Q5 — Baseline representations (PARTIAL — clusterings built, evaluation pending)
 
 Two new representations cluster the same rollout slices using non-influence features:
 
 - **State** — concatenated proprioceptive observations across the window (sum/mean/concat aggregation).
 - **State+action** — same as state, with action vectors concatenated to obs at each timestep.
 
-If InfEmbed-clustered slices are more visually-recoverable than state-clustered slices at matched K, that's evidence influence captures behaviorally meaningful structure beyond what raw observations encode.
+Status:
+- `policy_doctor/data/slice_representations.py` — abstraction + 3 concretes (`infembed`, `state`, `state_action`) tested and committed (commit `c9d69ff`).
+- `scripts/build_alt_clustering.py` — single-config CLI tested and committed.
+- `scripts/run_clustering_sweep.py` — sweep harness built and committed.
+- **K=10 clusterings built (CPU, 20 s each):**
+  - `/tmp/transport_r512_state_k10/` — features (8086, 59) → 100D UMAP → kmeans K=10
+  - `/tmp/transport_r512_state_action_k10/` — features (8086, 79) → 100D UMAP → kmeans K=10
+- **E1 evaluation: NOT yet run** (queued behind K=5 visual sweep currently on GPU 0).
+
+If InfEmbed-clustered slices are more visually-recoverable than state-clustered slices at matched K, that's evidence influence captures behaviorally meaningful structure beyond what raw observations encode. Clean comparison is `state K=10 clean acc` vs `state_action K=10 clean acc` vs InfEmbed K=10 v2's 0.481.
 
 ---
 
@@ -314,8 +354,12 @@ Most informative single-axis slices to evaluate first:
 
 ## Findings to write up after the next batch
 
-- Does state-only clustering recover *any* visually-coherent structure at K=10? (If clean acc near chance, that's evidence influence carries unique signal.)
-- Does state_action clustering match or beat InfEmbed at K=10?
-- Does **composite-resolution scaling** (e.g. 1536² with mf=9 → 512px cells) close the K=10 → ceiling gap? F6 makes this the next-most-informative single experiment.
+- Does **state-only clustering** recover any visually-coherent structure at K=10? (If clean acc near chance, that's evidence influence carries unique signal beyond raw obs.) Clusterings built; E1 eval pending.
+- Does **state_action** clustering match or beat InfEmbed at K=10? Clusterings built; E1 eval pending.
+- Does **K=5 pure frames** mode (currently running) outperform K=5 composite baseline? Tells us whether the mode itself matters once context allows.
 - Does **per-slice numeric obs/action text** (`--include_action_text` / `--include_state_text`, commit `6391f0c`) help on top of the visual baseline? Runs both ways at K=10 to isolate.
 - Does window_width=10 with the InfEmbed representation give cleaner clusters than width=5?
+
+## Operational note
+
+Going forward, only **GPU 0** is in scope for E1 work — GPU 1 is reserved for sander tonkens' streamlit. All sweep scripts pin via `CUDA_VISIBLE_DEVICES=0` accordingly.
