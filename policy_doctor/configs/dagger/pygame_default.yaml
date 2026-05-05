@@ -1,0 +1,38 @@
+# Pygame controller intervention (Xbox / DualSense via SDL)
+# Usage: python scripts/run_dagger.py ... dagger_config=pygame_default
+# Requires: pip install pygame
+
+device: pygame
+
+pygame:
+  controller_index: 0
+  deadzone: 0.15
+  scale_position: 0.1
+  scale_rotation: 0.1
+  # auto: name-based preset for raw-index fallback only. Prefer SDL GameController
+  # mapping when pygame supports it (reliable LB/RB + R3 on macOS/PS4).
+  controller_layout: auto
+
+  axis_left_x: 0
+  axis_left_y: 1
+  axis_right_x: 2
+  axis_right_y: 3
+  axis_left_trigger: 4
+  axis_right_trigger: 5
+  # Preset: bumpers = gripper, R3 = reset, Start/Options = toggle. Override if needed:
+  # button_gripper_close: 4
+  # button_gripper_open: 5
+  # button_reset: 11
+  # button_toggle: 9
+
+intervention:
+  rule: node_value_threshold
+  node_value_threshold: 0.0
+
+visualization:
+  enabled: true
+  camera_names: ["agentview"]
+
+recording:
+  enabled: false
+  save_format: hdf5

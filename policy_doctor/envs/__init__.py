@@ -5,6 +5,7 @@ from policy_doctor.envs.intervention_device import (
     InterventionDevice,
     KeyboardInterventionDevice,
     PassthroughInterventionDevice,
+    PygameControllerInterventionDevice,
     RandomInterventionDevice,
     SpaceMouseInterventionDevice,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "InterventionDevice",
     "KeyboardInterventionDevice",
     "PassthroughInterventionDevice",
+    "PygameControllerInterventionDevice",
     "RandomInterventionDevice",
     "SpaceMouseInterventionDevice",
     "RobomimicDAggerRunner",

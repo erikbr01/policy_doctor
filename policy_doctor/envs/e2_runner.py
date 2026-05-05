@@ -222,14 +222,39 @@ def run_e2_session(
         rotation_transformer = RotationTransformer("axis_angle", "rotation_6d")
 
     def convert_action(action_10d):
-        if rotation_transformer is not None:
-            pos = action_10d[..., :3]
-            rot = action_10d[..., 3:9]
-            gripper = action_10d[..., [9]]
-            return np.concatenate(
-                [pos, rotation_transformer.inverse(rot), gripper], axis=-1
-            )
-        return action_10d[..., :7]
+        arr = np.asarray(action_10d)
+        target_dim = int(lowdim_wrapper.action_space.shape[0])
+
+        if rotation_transformer is not None and arr.shape[-1] in (10, 20):
+            if arr.shape[-1] == 20:
+                shaped = arr.reshape(*arr.shape[:-1], 2, 10)
+                pos = shaped[..., :3]
+                rot = shaped[..., 3:9]
+                gripper = shaped[..., [9]]
+                out = np.concatenate(
+                    [pos, rotation_transformer.inverse(rot), gripper], axis=-1
+                ).reshape(*arr.shape[:-1], 14)
+            else:
+                pos = arr[..., :3]
+                rot = arr[..., 3:9]
+                gripper = arr[..., [9]]
+                out = np.concatenate(
+                    [pos, rotation_transformer.inverse(rot), gripper], axis=-1
+                )
+        else:
+            out = arr
+
+        if out.shape[-1] == target_dim:
+            return out
+        if arr.shape[-1] == 10 and target_dim == 14:
+            padded = np.zeros((*arr.shape[:-1], 14), dtype=arr.dtype)
+            padded[..., :7] = arr[..., :7]
+            return padded
+        if target_dim in (7, 10, 14) and arr.shape[-1] >= target_dim:
+            return arr[..., :target_dim]
+        raise ValueError(
+            f"Cannot adapt action dimension {arr.shape[-1]} to env action dimension {target_dim}"
+        )
 
     # Build env once — we'll mutate init_state per request.
     from robomimic.utils.env_utils import EnvUtils
@@ -306,7 +331,11 @@ def run_e2_session(
             )
 
         env = RobomimicDAggerEnv(
-            inner_env=lowdim_wrapper, obs_keys=obs_keys, output_dir=per_req_dir
+            inner_env=lowdim_wrapper,
+            obs_keys=obs_keys,
+            output_dir=per_req_dir,
+            env_meta=env_meta,
+            save_format=dagger_cfg.get("recording", {}).get("save_format", "hdf5"),
         )
 
         runner = RobomimicDAggerRunner(
@@ -334,12 +363,12 @@ def run_e2_session(
             continue
         success = bool(records[0].success)
 
-        demo_pkl = per_req_dir / "ep0000.pkl"
-        if not demo_pkl.exists():
-            cands = sorted(per_req_dir.glob("ep*.pkl"))
-            demo_pkl = cands[-1] if cands else demo_pkl
+        demo_path = env.last_save_path or (per_req_dir / "demo.hdf5")
+        if not demo_path.exists():
+            cands = sorted(per_req_dir.glob("demo*.hdf5")) or sorted(per_req_dir.glob("ep*.pkl"))
+            demo_path = cands[-1] if cands else demo_path
 
-        result = client.post_result(rid, demo_pkl=demo_pkl, success=success)
+        result = client.post_result(rid, demo_pkl=demo_path, success=success)
         n_done += 1
         # Operator-visible feedback only: success + overall, never per-axis breakdown.
         print(

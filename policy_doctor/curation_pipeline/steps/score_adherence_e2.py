@@ -88,13 +88,14 @@ class ScoreAdherenceE2Step(PipelineStep[Dict[str, Any]]):
                 selected = json.load(f)
             for entry in selected.get("requests", []):
                 req = DemonstrationRequest.from_dict(entry)
-                demo_pkl = e2_run_dir / "demonstrations" / req.request_id / "ep0000.pkl"
-                if not demo_pkl.exists():
-                    cands = sorted((e2_run_dir / "demonstrations" / req.request_id).glob("ep*.pkl"))
+                demo_dir = e2_run_dir / "demonstrations" / req.request_id
+                demo_path = demo_dir / "demo.hdf5"
+                if not demo_path.exists():
+                    cands = sorted(demo_dir.glob("*.hdf5")) or sorted(demo_dir.glob("ep*.pkl"))
                     if cands:
-                        demo_pkl = cands[-1]
-                if demo_pkl.exists():
-                    pairs.append((req, demo_pkl))
+                        demo_path = cands[-1]
+                if demo_path.exists():
+                    pairs.append((req, demo_path))
 
         # Per-rollout cluster path lookup for alternative_strategy scoring
         cp_path = e2_run_dir / "build_rollout_pool" / "cluster_paths.json"
@@ -113,7 +114,7 @@ class ScoreAdherenceE2Step(PipelineStep[Dict[str, Any]]):
             infembed_fit_path=infembed_fit,
             infembed_embeddings_path=infembed_npz,
             clustering_dir=str(clustering_dir),
-            mode="rollout",
+            mode="demo",
             episodes_dir=str(episodes_dir),
         )
 

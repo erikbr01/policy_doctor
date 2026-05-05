@@ -7,6 +7,12 @@ The DAgger runner sends frames via HTTP POST; this process owns the cv2
 window on its own main thread — no macOS main-thread constraint from the
 simulation process.
 
+On macOS, opencv-python and pygame may each load ``libSDL2``; ``serve()`` installs
+a stderr line filter for the noisy ObjC duplicate-class messages, and suppresses
+pygame's ``pkg_resources`` warning. OpenCV is imported after the pygame controller
+when ``--device pygame``; the pygame device uses ``SDL_VIDEODRIVER=dummy``
+(joystick-only).
+
 Wire format (POST /frame):
     First 4 bytes : uint32 big-endian — length of JSON metadata header
     Next N bytes  : UTF-8 JSON  {"node_name": ..., "node_value": ...,
@@ -23,12 +29,26 @@ import json
 import struct
 import sys
 import threading
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-import cv2
 import numpy as np
 from flask import Flask, request
+
+from policy_doctor.envs.macos_quiet import install_macos_sdl_noise_suppression
+
+_OPENCV: Any = None
+
+
+def _opencv():
+    """Lazily import cv2 after optional pygame/SDL init to reduce duplicate-libSDL2 issues on macOS."""
+    global _OPENCV
+    if _OPENCV is None:
+        import cv2
+
+        _OPENCV = cv2
+    return _OPENCV
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +100,8 @@ _KEY_ACTIONS = {
 }
 
 _key_lock = threading.Lock()
-_key_state = {"is_intervening": False, "action": None}
+_key_state = {"is_intervening": False, "action": None, "reset_requested": False}
+_pygame_device = None
 
 
 def _handle_key(key: int) -> None:
@@ -88,10 +109,46 @@ def _handle_key(key: int) -> None:
     with _key_lock:
         if key == ord(" "):
             _key_state["is_intervening"] = not _key_state["is_intervening"]
+        if key == ord("r"):
+            _key_state["reset_requested"] = True
         if key in _KEY_ACTIONS:
             _key_state["action"] = _KEY_ACTIONS[key]
         else:
             _key_state["action"] = None
+
+
+def _start_pygame_controller() -> bool:
+    """Open a pygame controller in the viz process.
+
+    The controller is polled from the main display loop and merged into the
+    same /intervention state as keyboard and SpaceMouse input.
+    """
+    global _pygame_device
+    try:
+        from policy_doctor.envs.intervention_device import PygameControllerInterventionDevice
+        _pygame_device = PygameControllerInterventionDevice()
+    except Exception as e:
+        print(f"[viz server] pygame controller unavailable: {e}", flush=True)
+        _pygame_device = None
+        return False
+    print("[viz server] Input: pygame controller + keyboard", flush=True)
+    return True
+
+
+def _poll_pygame_controller() -> None:
+    if _pygame_device is None:
+        return
+    try:
+        action = _pygame_device.get_action()
+        intervening = bool(_pygame_device.is_intervening)
+        reset_requested = bool(_pygame_device.consume_reset_request())
+    except Exception as e:
+        print(f"[viz server] pygame controller poll failed: {e}", flush=True)
+        return
+    with _key_lock:
+        _key_state["is_intervening"] = intervening
+        _key_state["action"] = action.tolist() if action is not None else None
+        _key_state["reset_requested"] = _key_state["reset_requested"] or reset_requested
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +253,14 @@ app.logger.disabled = True
 @app.get("/intervention")
 def get_intervention():
     with _key_lock:
-        return dict(_key_state)
+        state = dict(_key_state)
+        _key_state["reset_requested"] = False
+        return state
 
 
 @app.post("/frame")
 def receive_frame():
+    cv2 = _opencv()
     data = request.data
     if len(data) < 4:
         return "bad request", 400
@@ -237,6 +297,7 @@ def health():
 
 
 def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
+    cv2 = _opencv()
     node_value = meta.get("node_value")
     val_str = f"{node_value:.3f}" if node_value is not None else "?"
     acting_agent = meta.get("acting_agent", "robot")
@@ -263,11 +324,15 @@ def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
+def serve(port: int = 5002, fps: int = 30, device: str = "pygame") -> None:
+    install_macos_sdl_noise_suppression()
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
-    # Optional SpaceMouse
-    if device in ("spacemouse", "auto"):
+    # Optional input devices. The viz process owns all user input whenever the
+    # runner is launched with viz_url.
+    if device == "pygame":
+        _start_pygame_controller()
+    elif device in ("spacemouse", "auto"):
         found = _start_spacemouse()
         if not found and device == "spacemouse":
             print("[viz server] WARNING: SpaceMouse not found", flush=True)
@@ -278,6 +343,9 @@ def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
     else:
         print("[viz server] Input: keyboard only", flush=True)
 
+    # Import OpenCV after pygame (when used) so SDL2 is not initialized twice before pygame.
+    cv2 = _opencv()
+
     # Flask in a daemon thread
     flask_thread = threading.Thread(
         target=lambda: app.run(host="127.0.0.1", port=port,
@@ -287,7 +355,7 @@ def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
     flask_thread.start()
     print(f"[viz server] listening on http://127.0.0.1:{port}", flush=True)
 
-    # cv2 display loop on the main thread
+    # cv2 display loop on the main thread (cv2 imported above after input backends)
     window = "DAgger"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window, 640, 480)
@@ -296,7 +364,7 @@ def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
     blank = np.zeros((480, 640, 3), dtype=np.uint8)
     for i, line in enumerate([
         "Waiting for frames...",
-        "Keys: Space=toggle  W/S/A/D/Q/E=arm  G/H=gripper  Q=quit",
+        "Keys: Space=toggle  R=reset  W/S/A/D/Q/E=arm  G/H=gripper  Q=quit",
     ]):
         cv2.putText(blank, line, (20, 220 + i * 35),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
@@ -311,6 +379,7 @@ def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
         if key == ord("q") or cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
             break
         _handle_key(key)  # 255 = no key pressed → clears action
+        _poll_pygame_controller()
 
     cv2.destroyAllWindows()
 
@@ -325,8 +394,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DAgger visualization server")
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--device", default="auto",
-                        choices=["auto", "keyboard", "spacemouse"],
-                        help="auto: try SpaceMouse, fall back to keyboard")
+    parser.add_argument("--device", default="pygame",
+                        choices=["auto", "keyboard", "spacemouse", "pygame"],
+                        help="pygame: game controller (default); auto: SpaceMouse if present else keyboard")
     args = parser.parse_args()
     serve(args.port, args.fps, args.device)

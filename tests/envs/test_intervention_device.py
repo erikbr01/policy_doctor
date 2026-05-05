@@ -9,6 +9,7 @@ import pytest
 from policy_doctor.envs.intervention_device import (
     KeyboardInterventionDevice,
     PassthroughInterventionDevice,
+    PygameControllerInterventionDevice,
     RandomInterventionDevice,
     XboxControllerInterventionDevice,
 )
@@ -33,6 +34,68 @@ def mock_inputs(monkeypatch):
     mock_mod.get_gamepad.return_value = []
 
     monkeypatch.setitem(sys.modules, "inputs", mock_mod)
+    return mock_mod
+
+
+@pytest.fixture()
+def mock_pygame(monkeypatch):
+    """Stub pygame joystick APIs so tests run without controller hardware."""
+
+    class Event:
+        def __init__(self, type_, button=None, instance_id=7):
+            self.type = type_
+            self.button = button
+            self.instance_id = instance_id
+
+    class MockJoystick:
+        def __init__(self, index):
+            self.index = index
+            self.axes = [0.0, 0.0, 0.0, 0.0, -1.0, -1.0]
+            self.buttons = [0] * 12
+
+        def init(self):
+            pass
+
+        def quit(self):
+            pass
+
+        def get_name(self):
+            return "Mock Pygame Controller"
+
+        def get_instance_id(self):
+            return 7
+
+        def get_numaxes(self):
+            return len(self.axes)
+
+        def get_axis(self, index):
+            return self.axes[index]
+
+        def get_numbuttons(self):
+            return len(self.buttons)
+
+        def get_button(self, index):
+            return self.buttons[index]
+
+    joystick = MockJoystick(0)
+    events = []
+    mock_mod = MagicMock()
+    mock_mod.JOYBUTTONDOWN = 10
+    mock_mod.init = MagicMock()
+    mock_mod.joystick.init = MagicMock()
+    mock_mod.joystick.get_count.return_value = 1
+    mock_mod.joystick.Joystick.return_value = joystick
+    mock_mod.event.get.side_effect = lambda: list(events)
+    mock_mod._mock_joystick = joystick
+    mock_mod._mock_events = events
+    mock_mod._Event = Event
+    monkeypatch.setitem(sys.modules, "pygame", mock_mod)
+    # Avoid real pygame._sdl2.controller (would bypass mocked joystick).
+    mock_sdl2_ctrl = MagicMock()
+    mock_sdl2_ctrl.init = MagicMock()
+    mock_sdl2_ctrl.is_controller = MagicMock(return_value=False)
+    monkeypatch.setitem(sys.modules, "pygame._sdl2", MagicMock())
+    monkeypatch.setitem(sys.modules, "pygame._sdl2.controller", mock_sdl2_ctrl)
     return mock_mod
 
 
@@ -77,6 +140,61 @@ def test_random_device_samples_action_space_shape_and_bounds():
     assert action.dtype == np.float32
     assert np.all(action >= BoxLike.low)
     assert np.all(action <= BoxLike.high)
+
+
+def test_pygame_controller_maps_axes_buttons(mock_pygame):
+    device = PygameControllerInterventionDevice(deadzone=0.0)
+    joystick = mock_pygame._mock_joystick
+    joystick.axes[0] = 1.0       # arm +x
+    joystick.axes[1] = -1.0      # arm +y after inversion
+    joystick.axes[3] = -0.5      # arm +z after inversion
+    joystick.axes[5] = 1.0       # RT fully pressed -> pitch +1
+    joystick.buttons[4] = 1      # LB / L1 = close gripper (xbox preset)
+
+    action = device.get_action()
+    assert action is not None
+    assert action.shape == (10,)
+    assert action[0] == pytest.approx(1.0)
+    assert action[1] == pytest.approx(1.0)
+    assert action[2] == pytest.approx(0.5)
+    assert action[4] == pytest.approx(1.0)
+    assert action[6] == pytest.approx(-1.0)
+    device.close()
+
+
+def test_pygame_controller_toggle_intervention(mock_pygame):
+    device = PygameControllerInterventionDevice()
+    mock_pygame._mock_events.append(mock_pygame._Event(mock_pygame.JOYBUTTONDOWN, button=7))
+
+    assert device.is_intervening is True
+    device.close()
+
+
+def test_pygame_controller_reset_button(mock_pygame):
+    device = PygameControllerInterventionDevice()
+    mock_pygame._mock_events.append(mock_pygame._Event(mock_pygame.JOYBUTTONDOWN, button=9))
+
+    assert device.consume_reset_request() is True
+    assert device.consume_reset_request() is False
+    device.close()
+
+
+def test_pygame_auto_layout_playstation_name(mock_pygame):
+    """PS4 raw indices differ from Xbox; auto should pick ps4 preset from the name."""
+    mock_pygame._mock_joystick.get_name = lambda: "PS4 Controller"
+    device = PygameControllerInterventionDevice()
+    assert device.button_gripper_close == 4
+    assert device.button_gripper_open == 5
+    assert device.button_reset == 11
+    assert device.button_toggle == 9
+    device.close()
+
+
+def test_pygame_explicit_ps4_reset_button(mock_pygame):
+    device = PygameControllerInterventionDevice(controller_layout="ps4")
+    mock_pygame._mock_events.append(mock_pygame._Event(mock_pygame.JOYBUTTONDOWN, button=11))
+    assert device.consume_reset_request() is True
+    device.close()
 
 
 def test_keyboard_device_init():

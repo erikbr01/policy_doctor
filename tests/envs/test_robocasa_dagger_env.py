@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import gym
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -79,6 +80,9 @@ class MockMultiStepWrapper(gym.Env):
         info = {}
         return np.stack(self._obs_history), reward, self._done, info
 
+    def render(self, mode="rgb_array"):
+        return self.env.render(mode=mode)
+
     def close(self):
         pass
 
@@ -126,12 +130,14 @@ def test_dagger_env_step_records_data():
 
     assert "timestep" in record
     assert "obs" in record
+    assert "next_obs" in record
     assert "stacked_obs" in record
     assert "action" in record
     assert "reward" in record
     assert "done" in record
     assert "acting_agent" in record
     assert "sim_state" in record
+    assert "next_sim_state" in record
 
     assert record["acting_agent"] == "robot"
     assert record["action"].shape == (10,)
@@ -163,14 +169,14 @@ def test_dagger_env_save_episode():
         inner_env = MockMultiStepWrapper()
         obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
         output_dir = Path(tmpdir)
-        env = RobomimicDAggerEnv(inner_env, obs_keys=obs_keys, output_dir=output_dir)
+        env = RobomimicDAggerEnv(
+            inner_env, obs_keys=obs_keys, output_dir=output_dir, save_format="pkl"
+        )
 
         env.reset()
         for _ in range(5):
             action = np.random.randn(10)
-            obs, reward, done, info = env.step(action)
-            if done:
-                break
+            env.step(action)
 
         path = env.save_episode()
 
@@ -183,6 +189,43 @@ def test_dagger_env_save_episode():
         assert len(df) == 5
         assert "acting_agent" in df.columns
         assert all(df["acting_agent"] == "robot")
+
+
+def test_dagger_env_save_episode_hdf5():
+    """Test saving episode in robomimic-compatible HDF5 format."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        inner_env = MockMultiStepWrapper()
+        obs_keys = ["object", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
+        output_dir = Path(tmpdir)
+        env = RobomimicDAggerEnv(
+            inner_env,
+            obs_keys=obs_keys,
+            output_dir=output_dir,
+            env_meta={"env_name": "MockEnv", "env_type": 1, "env_kwargs": {}},
+            save_format="hdf5",
+        )
+
+        env.reset()
+        for _ in range(5):
+            env.step(np.random.randn(10))
+
+        path = env.save_episode()
+
+        assert path.exists()
+        assert path.name == "demo.hdf5"
+        with h5py.File(path, "r") as f:
+            data = f["data"]
+            assert data.attrs["total"] == 5
+            assert "env_args" in data.attrs
+            demo = data["demo_0"]
+            assert demo.attrs["num_samples"] == 5
+            assert demo["actions"].shape == (5, 10)
+            assert demo["states"].shape[0] == 5
+            assert demo["rewards"].shape == (5,)
+            assert demo["dones"].shape == (5,)
+            assert demo["obs/object"].shape[0] == 5
+            assert demo["next_obs/object"].shape[0] == 5
+            assert demo["acting_agent"].shape == (5,)
 
 
 def test_dagger_env_acting_agent_labels():

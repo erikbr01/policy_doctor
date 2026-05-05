@@ -1,7 +1,7 @@
 # Default DAgger configuration for interactive rollouts
 # Usage: python scripts/run_dagger.py ... +dagger_config=defaults
 
-device: keyboard  # or 'spacemouse', 'passthrough'
+device: keyboard  # or 'spacemouse', 'xbox', 'pygame', 'passthrough', 'random'
 
 # Device-specific parameters
 keyboard:
@@ -13,6 +13,19 @@ spacemouse:
   deadzone: 0.1       # Ignore inputs below this magnitude
   scale_position: 125.0  # Scaling for translational movements
   scale_rotation: 50.0   # Scaling for rotational movements
+
+pygame:
+  controller_index: 0
+  deadzone: 0.15
+  scale_position: 1.0
+  scale_rotation: 1.0
+  controller_layout: auto  # xbox | ps4 | auto (from joystick name)
+  axis_left_x: 0
+  axis_left_y: 1
+  axis_right_x: 2
+  axis_right_y: 3
+  axis_left_trigger: 4
+  axis_right_trigger: 5
 
 # Intervention strategy parameters
 intervention:
@@ -29,4 +42,4 @@ visualization:
 # Episode recording
 recording:
   enabled: true
-  save_format: pkl  # pandas DataFrame format
+  save_format: hdf5  # hdf5 | pkl | both

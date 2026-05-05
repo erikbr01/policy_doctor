@@ -72,15 +72,31 @@ def classify_demo_pkl(
     classifier: "TrajectoryClassifier",
     pkl_path: Path,
 ) -> List[int]:
-    """Classify an eval-format demo pkl and return the collapsed cluster path.
+    """Classify a demo trajectory file and return the collapsed cluster path.
 
+    Supports eval / DAgger pkl files and robomimic-compatible HDF5 files.
     Per-timestep cluster ids are pulled from
     ``MonitorResult.assignment.cluster_id``; ``-1`` (HDBSCAN noise) and rows
     whose assignment is ``None`` are excluded before the run-length collapse.
     """
-    df = pd.read_pickle(str(pkl_path))
-    results = classifier.classify_episode_from_pkl(df)
+    pkl_path = Path(pkl_path)
+    if pkl_path.suffix in {".hdf5", ".h5"}:
+        import h5py
+
+        with h5py.File(pkl_path, "r") as f:
+            demo = _first_hdf5_demo_group(f)
+            results = classifier.classify_demo_from_hdf5(demo)
+    else:
+        df = pd.read_pickle(str(pkl_path))
+        results = classifier.classify_episode_from_pkl(df)
     return _collapse_to_path(results)
+
+
+def _first_hdf5_demo_group(hdf5_file):
+    keys = sorted(k for k in hdf5_file["data"].keys() if k.startswith("demo_"))
+    if not keys:
+        raise KeyError("HDF5 file contains no data/demo_* groups")
+    return hdf5_file["data"][keys[0]]
 
 
 def _collapse_to_path(results: List[Tuple[int, Any]]) -> List[int]:
@@ -126,8 +142,14 @@ def _score_initial_condition(
             evidence={"reference_rollout_id": request.initial_conditions.reference_rollout_id},
         )
 
-    demo_df = pd.read_pickle(str(demo_pkl))
-    demo_first_state = np.asarray(demo_df.iloc[0]["sim_state"], dtype=np.float64)
+    if Path(demo_pkl).suffix in {".hdf5", ".h5"}:
+        import h5py
+
+        with h5py.File(demo_pkl, "r") as f:
+            demo_first_state = np.asarray(_first_hdf5_demo_group(f)["states"][0], dtype=np.float64)
+    else:
+        demo_df = pd.read_pickle(str(demo_pkl))
+        demo_first_state = np.asarray(demo_df.iloc[0]["sim_state"], dtype=np.float64)
     expected_frame = int(request.initial_conditions.reference_frame)
 
     try:
@@ -269,6 +291,16 @@ def _resolve_success(
 ) -> Tuple[bool, str]:
     if success_arg is not None:
         return bool(success_arg), "from caller"
+    demo_pkl = Path(demo_pkl)
+    if demo_pkl.suffix in {".hdf5", ".h5"}:
+        import h5py
+
+        with h5py.File(demo_pkl, "r") as f:
+            demo = _first_hdf5_demo_group(f)
+            if "success" in demo.attrs:
+                return bool(demo.attrs["success"]), "from HDF5 demo attr 'success'"
+            if "dones" in demo and len(demo["dones"]) > 0:
+                return bool(demo["dones"][-1]), "from HDF5 final done"
     df = pd.read_pickle(str(demo_pkl))
     if "success" in df.columns:
         return bool(df["success"].iloc[-1]), "from demo_pkl 'success' column"

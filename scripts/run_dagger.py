@@ -106,6 +106,9 @@ def main(cfg: DictConfig) -> None:
     dataset_path = cfg.dataset_path
     output_dir = cfg.output_dir
     num_episodes = cfg.num_episodes
+    max_steps = OmegaConf.select(cfg, "max_steps", default=500)
+    record_episodes = bool(OmegaConf.select(cfg, "record_episodes", default=True))
+    auto_reset_on_done = bool(OmegaConf.select(cfg, "auto_reset_on_done", default=False))
     intervention_threshold = cfg.intervention_threshold
     device = cfg.device
     no_monitor = cfg.no_monitor
@@ -148,8 +151,9 @@ def main(cfg: DictConfig) -> None:
         device = auto_device()
     print(f"Using device: {device}")
 
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(output_dir) if output_dir is not None else None
+    if record_episodes and output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     if "robocasa" in task.lower():
         ensure_robocasa_on_path()
@@ -192,7 +196,7 @@ def main(cfg: DictConfig) -> None:
             payload = _torch.load(open(str(checkpoint), "rb"), pickle_module=_dill)
             cfg_ckpt = payload["cfg"]
             cls = _hydra.utils.get_class(cfg_ckpt._target_)
-            workspace = cls(cfg_ckpt, output_dir=str(output_dir))
+            workspace = cls(cfg_ckpt, output_dir=str(output_dir or "/tmp/policy_doctor_demo"))
             workspace.load_payload(payload, exclude_keys=None, include_keys=None)
             raw_policy = workspace.ema_model if getattr(cfg_ckpt.training, "use_ema", False) else workspace.model
             raw_policy.to(device)
@@ -249,29 +253,64 @@ def main(cfg: DictConfig) -> None:
 
     def convert_action(action_10d):
         import numpy as _np
-        if rotation_transformer is not None:
-            # abs_action policy: [pos(3), rot_6d(6), gripper(1)] → axis_angle 7-dim
-            pos = action_10d[..., :3]
-            rot = action_10d[..., 3:9]
-            gripper = action_10d[..., [9]]
-            return _np.concatenate([pos, rotation_transformer.inverse(rot), gripper], axis=-1)
+        arr = _np.asarray(action_10d)
+        target_dim = int(lowdim_wrapper.action_space.shape[0])
+
+        if rotation_transformer is not None and arr.shape[-1] in (10, 20):
+            if arr.shape[-1] == 20:
+                shaped = arr.reshape(*arr.shape[:-1], 2, 10)
+                pos = shaped[..., :3]
+                rot = shaped[..., 3:9]
+                gripper = shaped[..., [9]]
+                out = _np.concatenate(
+                    [pos, rotation_transformer.inverse(rot), gripper], axis=-1
+                ).reshape(*arr.shape[:-1], 14)
+            else:
+                pos = arr[..., :3]
+                rot = arr[..., 3:9]
+                gripper = arr[..., [9]]
+                out = _np.concatenate([pos, rotation_transformer.inverse(rot), gripper], axis=-1)
         else:
-            # keyboard / delta policy: [pos(3), aa(3), gripper(1), base(3)] → strip base
-            return action_10d[..., :7]
+            out = arr
+
+        if out.shape[-1] == target_dim:
+            return out
+        if arr.shape[-1] == 10 and target_dim == 14:
+            padded = _np.zeros((*arr.shape[:-1], 14), dtype=arr.dtype)
+            padded[..., :7] = arr[..., :7]
+            return padded
+        if target_dim in (7, 10, 14) and arr.shape[-1] >= target_dim:
+            return arr[..., :target_dim]
+        raise ValueError(
+            f"Cannot adapt action dimension {arr.shape[-1]} to env action dimension {target_dim}"
+        )
 
     robomimic_env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta, render=False, render_offscreen=True, use_image_obs=False,
     )
+    recording_cfg = dagger_cfg.get("recording", {})
+    record_episodes = record_episodes and bool(recording_cfg.get("enabled", True))
+    save_format = recording_cfg.get("save_format", "hdf5")
     lowdim_wrapper = RobomimicLowdimWrapper(env=robomimic_env, obs_keys=obs_keys, init_state=None)
-    env = RobomimicDAggerEnv(inner_env=lowdim_wrapper, obs_keys=obs_keys, output_dir=output_dir)
+    env = RobomimicDAggerEnv(
+        inner_env=lowdim_wrapper,
+        obs_keys=obs_keys,
+        output_dir=output_dir if record_episodes else None,
+        env_meta=env_meta,
+        save_format=save_format,
+        record_data=record_episodes,
+    )
 
     # --- Intervention device ---
+    # When a viz server is used, it owns all human I/O (keyboard / SpaceMouse /
+    # pygame controller) and exposes actions over HTTP. Without viz_url, devices
+    # are read locally as a direct fallback.
     if viz_url:
         from policy_doctor.envs.intervention_device import HTTPInterventionDevice
         intervention_device = HTTPInterventionDevice(server_url=viz_url)
         device_type = "http"
         print(f"Intervention via viz server ({viz_url})")
-        print("  Space: toggle  W/S/A/D/Q/E: arm  G/H: gripper")
+        print("  Start the viz server with --device keyboard|spacemouse|pygame")
     else:
         device_type = dagger_cfg.get("device", "keyboard")
         print(f"Initializing {device_type} intervention device...")
@@ -281,6 +320,8 @@ def main(cfg: DictConfig) -> None:
         print("  Space: toggle human/robot  W/S/A/D/Q/E: arm  G/H: gripper  I/K/J/L: base")
     elif device_type == "spacemouse":
         print("  SpaceMouse: 6-DOF  Left btn: gripper  Right btn: toggle")
+    elif device_type == "pygame":
+        print("  Pygame controller: Start/Options toggles intervention; LB/RB gripper")
 
     # --- Visualizer ---
     visualizer = None
@@ -307,10 +348,11 @@ def main(cfg: DictConfig) -> None:
         intervention_device=intervention_device,
         n_obs_steps=classifier_n_obs_steps,
         n_action_steps=classifier_n_action_steps,
-        max_steps=500,
-        output_dir=output_dir,
+        max_steps=max_steps,
+        output_dir=output_dir if record_episodes else None,
         visualizer=visualizer,
         action_transform=convert_action,
+        auto_reset_on_done=auto_reset_on_done,
     )
 
     try:
@@ -319,9 +361,14 @@ def main(cfg: DictConfig) -> None:
         print("\nInterrupted by user")
 
     print("\n" + "=" * 60)
-    print(f"Episodes saved to: {output_dir}")
-    print(f"Convert to HDF5:  python scripts/build_dagger_dataset.py "
-          f"--episodes_dir {output_dir} --output_hdf5 data/{task}_dagger.hdf5 --filter_human_only")
+    if record_episodes:
+        print(f"Episodes saved to: {output_dir}")
+        if save_format in {"hdf5", "both"}:
+            print(f"HDF5 dataset: {output_dir / 'demo.hdf5'}")
+        if save_format in {"pkl", "both"}:
+            print(f"PKL episodes: {output_dir}")
+    else:
+        print("Demo mode: episode recording disabled; no HDF5/pkl data was saved.")
     print("=" * 60)
 
 

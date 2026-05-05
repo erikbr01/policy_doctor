@@ -64,10 +64,11 @@ class RobomimicDAggerRunner:
         intervention_device: InterventionDevice,
         n_obs_steps: int = 2,
         n_action_steps: int = 8,
-        max_steps: int = 500,
+        max_steps: Optional[int] = 500,
         output_dir: Optional[Path | str] = None,
         visualizer: Optional[DAggerVisualizer] = None,
         action_transform=None,
+        auto_reset_on_done: bool = False,
     ) -> None:
         self.monitored_policy = monitored_policy
         self.env = env
@@ -78,6 +79,7 @@ class RobomimicDAggerRunner:
         self.output_dir = Path(output_dir) if output_dir else None
         self.visualizer = visualizer
         self._action_transform = action_transform
+        self.auto_reset_on_done = auto_reset_on_done
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -158,16 +160,6 @@ class RobomimicDAggerRunner:
         _human_only = self.monitored_policy is None
         _async = not _human_only and isinstance(self.monitored_policy, PolicyClient)
 
-        reset_out = self.env.reset()
-        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-        if not _human_only:
-            self.monitored_policy.reset()
-        self.intervention_device.reset()
-
-        obs_queue = deque([obs] * self.n_obs_steps, maxlen=self.n_obs_steps)
-        acting_agent = "human" if _human_only else "robot"
-        self.env.set_acting_agent(acting_agent)
-
         n_robot_steps = n_human_steps = n_auto_interventions = manual_overrides = 0
         step = 0
         done = False
@@ -176,11 +168,47 @@ class RobomimicDAggerRunner:
         chunk: Optional[np.ndarray] = None
         chunk_idx = 0
 
+        def reset_scene(reason: str):
+            nonlocal obs, obs_queue, acting_agent, done, info, chunk, chunk_idx
+            print(f"[DAgger] Resetting scene ({reason})", flush=True)
+            reset_out = self.env.reset()
+            obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+            if not _human_only:
+                self.monitored_policy.reset()
+            self.intervention_device.reset()
+            obs_queue = deque([obs] * self.n_obs_steps, maxlen=self.n_obs_steps)
+            acting_agent = "human" if _human_only else "robot"
+            self.env.set_acting_agent(acting_agent)
+            done = False
+            info = {}
+            chunk, chunk_idx = None, 0
+            if _async:
+                self.monitored_policy.submit(self._make_obs_dict(obs, obs_queue))
+
+        def has_step_budget() -> bool:
+            return self.max_steps is None or step < self.max_steps
+
+        obs = None
+        obs_queue = None
+        acting_agent = "human" if _human_only else "robot"
+        reset_scene("start")
+
         if _async:
-            self.monitored_policy.submit(self._make_obs_dict(obs, obs_queue))
+            pass
 
         try:
-            while not done and step < self.max_steps:
+            while has_step_budget():
+                if self.intervention_device.consume_reset_request():
+                    reset_scene("requested")
+                    self._update_viz(step)
+                    continue
+
+                if done:
+                    if self.auto_reset_on_done:
+                        reset_scene("env done")
+                        self._update_viz(step)
+                        continue
+                    break
 
                 # ── ROBOT MODE ────────────────────────────────────────────
                 if acting_agent == "robot":

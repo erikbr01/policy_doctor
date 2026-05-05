@@ -59,6 +59,7 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
     from policy_doctor.envs.intervention_device import (
         KeyboardInterventionDevice,
         PassthroughInterventionDevice,
+        PygameControllerInterventionDevice,
         RandomInterventionDevice,
         SpaceMouseInterventionDevice,
         XboxControllerInterventionDevice,
@@ -89,6 +90,33 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
             deadzone=params.get("deadzone", 0.15),
             scale_position=params.get("scale_position", 1.0),
             scale_rotation=params.get("scale_rotation", 1.0),
+        )
+
+    elif device_type == "pygame":
+        params = config.get("pygame", {})
+        btn_kw = {
+            k: params[k]
+            for k in (
+                "button_gripper_close",
+                "button_gripper_open",
+                "button_reset",
+                "button_toggle",
+            )
+            if k in params
+        }
+        return PygameControllerInterventionDevice(
+            controller_index=params.get("controller_index", 0),
+            deadzone=params.get("deadzone", 0.15),
+            scale_position=params.get("scale_position", 1.0),
+            scale_rotation=params.get("scale_rotation", 1.0),
+            axis_left_x=params.get("axis_left_x", 0),
+            axis_left_y=params.get("axis_left_y", 1),
+            axis_right_x=params.get("axis_right_x", 2),
+            axis_right_y=params.get("axis_right_y", 3),
+            axis_left_trigger=params.get("axis_left_trigger", 4),
+            axis_right_trigger=params.get("axis_right_trigger", 5),
+            controller_layout=params.get("controller_layout", "auto"),
+            **btn_kw,
         )
 
     elif device_type == "passthrough":
