@@ -59,6 +59,7 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
     from policy_doctor.envs.intervention_device import (
         KeyboardInterventionDevice,
         PassthroughInterventionDevice,
+        PygameControllerInterventionDevice,
         SpaceMouseInterventionDevice,
         XboxControllerInterventionDevice,
     )
@@ -88,6 +89,25 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
             deadzone=params.get("deadzone", 0.15),
             scale_position=params.get("scale_position", 1.0),
             scale_rotation=params.get("scale_rotation", 1.0),
+        )
+
+    elif device_type == "pygame":
+        params = config.get("pygame", {})
+        return PygameControllerInterventionDevice(
+            controller_index=params.get("controller_index", 0),
+            deadzone=params.get("deadzone", 0.15),
+            scale_position=params.get("scale_position", 1.0),
+            scale_rotation=params.get("scale_rotation", 1.0),
+            left_x_axis=params.get("left_x_axis", 0),
+            left_y_axis=params.get("left_y_axis", 1),
+            right_x_axis=params.get("right_x_axis", 2),
+            right_y_axis=params.get("right_y_axis", 3),
+            lt_axis=params.get("lt_axis", 4),
+            rt_axis=params.get("rt_axis", 5),
+            close_button=params.get("close_button", 4),
+            open_button=params.get("open_button", 5),
+            toggle_button=params.get("toggle_button", 9),
+            reset_button=params.get("reset_button", 8),
         )
 
     elif device_type == "passthrough":

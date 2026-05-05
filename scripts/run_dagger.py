@@ -125,6 +125,9 @@ def main(cfg: DictConfig) -> None:
     dataset_path = cfg.dataset_path
     output_dir = cfg.output_dir
     num_episodes = cfg.num_episodes
+    max_steps = OmegaConf.select(cfg, "max_steps", default=500)
+    record_episodes = bool(OmegaConf.select(cfg, "record_episodes", default=True))
+    auto_reset_on_done = bool(OmegaConf.select(cfg, "auto_reset_on_done", default=False))
     intervention_threshold = cfg.intervention_threshold
     device = cfg.device
     no_monitor = cfg.no_monitor
@@ -163,8 +166,9 @@ def main(cfg: DictConfig) -> None:
         device = auto_device()
     print(f"Using device: {device}")
 
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(output_dir) if output_dir is not None else None
+    if record_episodes and output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     if "robocasa" in task.lower():
         ensure_robocasa_on_path()
@@ -207,7 +211,7 @@ def main(cfg: DictConfig) -> None:
             payload = _torch.load(open(str(checkpoint), "rb"), pickle_module=_dill)
             cfg_ckpt = payload["cfg"]
             cls = _hydra.utils.get_class(cfg_ckpt._target_)
-            workspace = cls(cfg_ckpt, output_dir=str(output_dir))
+            workspace = cls(cfg_ckpt, output_dir=str(output_dir or "/tmp/policy_doctor_demo"))
             workspace.load_payload(payload, exclude_keys=None, include_keys=None)
             raw_policy = workspace.ema_model if getattr(cfg_ckpt.training, "use_ema", False) else workspace.model
             raw_policy.to(device)
@@ -281,7 +285,12 @@ def main(cfg: DictConfig) -> None:
         env_meta=env_meta, render=False, render_offscreen=True, use_image_obs=False,
     )
     lowdim_wrapper = RobomimicLowdimWrapper(env=robomimic_env, obs_keys=obs_keys, init_state=None)
-    env = RobomimicDAggerEnv(inner_env=lowdim_wrapper, obs_keys=obs_keys, output_dir=output_dir)
+    env = RobomimicDAggerEnv(
+        inner_env=lowdim_wrapper,
+        obs_keys=obs_keys,
+        output_dir=output_dir if record_episodes else None,
+        record_data=record_episodes,
+    )
 
     # --- Intervention device ---
     if viz_url:
@@ -296,9 +305,11 @@ def main(cfg: DictConfig) -> None:
         intervention_device = create_intervention_device(dagger_cfg)
 
     if device_type == "keyboard":
-        print("  Space: toggle human/robot  W/S/A/D/Q/E: arm  G/H: gripper  I/K/J/L: base")
+        print("  Space: toggle human/robot  R: reset scene  W/S/A/D/Q/E: arm  G/H: gripper  I/K/J/L: base")
     elif device_type == "spacemouse":
         print("  SpaceMouse: 6-DOF  Left btn: gripper  Right btn: toggle")
+    elif device_type in ("pygame", "http"):
+        print("  Gamepad: Options/Start toggles intervention, Share/Select resets scene")
 
     # --- Visualizer ---
     visualizer = None
@@ -325,10 +336,11 @@ def main(cfg: DictConfig) -> None:
         intervention_device=intervention_device,
         n_obs_steps=classifier_n_obs_steps,
         n_action_steps=classifier_n_action_steps,
-        max_steps=500,
-        output_dir=output_dir,
+        max_steps=max_steps,
+        output_dir=output_dir if record_episodes else None,
         visualizer=visualizer,
         action_transform=convert_action,
+        auto_reset_on_done=auto_reset_on_done,
     )
 
     try:
@@ -337,9 +349,12 @@ def main(cfg: DictConfig) -> None:
         print("\nInterrupted by user")
 
     print("\n" + "=" * 60)
-    print(f"Episodes saved to: {output_dir}")
-    print(f"Convert to HDF5:  python scripts/build_dagger_dataset.py "
-          f"--episodes_dir {output_dir} --output_hdf5 data/{task}_dagger.hdf5 --filter_human_only")
+    if record_episodes:
+        print(f"Episodes saved to: {output_dir}")
+        print(f"Convert to HDF5:  python scripts/build_dagger_dataset.py "
+              f"--episodes_dir {output_dir} --output_hdf5 data/{task}_dagger.hdf5 --filter_human_only")
+    else:
+        print("Demo mode: episode recording disabled; no HDF5/pkl data was saved.")
     print("=" * 60)
 
 
