@@ -720,17 +720,15 @@ class XboxControllerInterventionDevice(InterventionDevice):
 
 
 class PygameControllerInterventionDevice(InterventionDevice):
-    """Gamepad intervention device backed by pygame.
+    """Gamepad intervention device backed by pygame ``Joystick`` (raw button indices).
 
-    When available, **SDL Game Controller** mapping (``pygame._sdl2.controller``)
-    is used for bumpers, Start, and R3 so LB/RB and reset work across Xbox /
-    PlayStation despite different raw ``joystick`` button indices (especially on
-    macOS). Sticks and triggers still use ``pygame.joystick`` axis indices from
-    config.
+    Uses ``controller_layout`` presets (``ps4`` / ``xbox`` / ``auto`` from name) or
+    explicit ``button_*`` YAML overrides. Toggle and scene reset use **polled**
+    rising edges on ``get_button`` so stick clicks still register when
+    ``JOYBUTTONDOWN`` is missing (e.g. ``SDL_VIDEODRIVER=dummy`` on macOS).
 
-    If the SDL controller API is unavailable or you set any ``button_*`` in YAML,
-    the code falls back to raw ``joystick`` indices using the ``xbox`` / ``ps4``
-    name presets.
+    Run ``scripts/experiments/calibrate_pygame_controller.py`` if indices don't match
+    your OS/driver.
     """
 
     ACTION_DIM = 10
@@ -779,11 +777,8 @@ class PygameControllerInterventionDevice(InterventionDevice):
         self._is_intervening = False
         self._reset_requested = False
         self._closed = False
-        self._sdl_controller = None
-        self._ctrl_mod = None
-        self._use_sdl_gamecontroller = False
-        self._prev_sdl_start = False
-        self._prev_sdl_rstick = False
+        self._prev_toggle_btn = False
+        self._prev_reset_btn = False
 
         pygame.init()
         pygame.joystick.init()
@@ -800,10 +795,6 @@ class PygameControllerInterventionDevice(InterventionDevice):
         joy_name = self._joystick.get_name()
         layout = self._resolve_controller_layout(controller_layout, joy_name)
         preset = _PYGAME_BUTTON_PRESETS[layout]
-        force_raw = any(
-            x is not None
-            for x in (button_gripper_close, button_gripper_open, button_reset, button_toggle)
-        )
         self.button_gripper_close = (
             button_gripper_close if button_gripper_close is not None else preset["close"]
         )
@@ -813,69 +804,27 @@ class PygameControllerInterventionDevice(InterventionDevice):
         self.button_reset = button_reset if button_reset is not None else preset["reset"]
         self.button_toggle = button_toggle if button_toggle is not None else preset["toggle"]
 
-        if not force_raw:
-            try:
-                import pygame._sdl2.controller as ctrl_mod
-
-                ctrl_mod.init()
-                self._ctrl_mod = ctrl_mod
-                if ctrl_mod.is_controller(controller_index):
-                    self._sdl_controller = ctrl_mod.Controller.from_joystick(self._joystick)
-                    self._use_sdl_gamecontroller = self._sdl_controller is not None
-            except Exception:
-                self._sdl_controller = None
-                self._use_sdl_gamecontroller = False
-
         print(f"[PygameController] opened {joy_name!r}  (layout preset: {layout})", flush=True)
-        if self._use_sdl_gamecontroller:
-            print(
-                "[PygameController]  SDL GameController mapping — bumpers / R3 / Start "
-                "(raw joystick indices differ by OS; this mode is reliable on macOS + PS4).",
-                flush=True,
-            )
-            print(
-                "[PygameController]  Gripper close:  left bumper (LB / L1)",
-                flush=True,
-            )
-            print(
-                "[PygameController]  Gripper open:   right bumper (RB / R1)",
-                flush=True,
-            )
-            print(
-                "[PygameController]  Scene reset:    press right stick (R3)",
-                flush=True,
-            )
-            print(
-                "[PygameController]  Human/robot:    Start / Options",
-                flush=True,
-            )
-        else:
-            print(
-                "[PygameController]  Raw joystick button indices (fallback). "
-                "Set explicit button_* in YAML if wrong; SDL GameController "
-                "unavailable or button overrides are set.",
-                flush=True,
-            )
-            print(
-                "[PygameController]  Gripper close:  "
-                + _pygame_joystick_button_caption(layout, self.button_gripper_close),
-                flush=True,
-            )
-            print(
-                "[PygameController]  Gripper open:   "
-                + _pygame_joystick_button_caption(layout, self.button_gripper_open),
-                flush=True,
-            )
-            print(
-                "[PygameController]  Scene reset:     "
-                + _pygame_joystick_button_caption(layout, self.button_reset),
-                flush=True,
-            )
-            print(
-                "[PygameController]  Human/robot:    "
-                + _pygame_joystick_button_caption(layout, self.button_toggle),
-                flush=True,
-            )
+        print(
+            "[PygameController]  Gripper close:  "
+            + _pygame_joystick_button_caption(layout, self.button_gripper_close),
+            flush=True,
+        )
+        print(
+            "[PygameController]  Gripper open:   "
+            + _pygame_joystick_button_caption(layout, self.button_gripper_open),
+            flush=True,
+        )
+        print(
+            "[PygameController]  Scene reset:     "
+            + _pygame_joystick_button_caption(layout, self.button_reset),
+            flush=True,
+        )
+        print(
+            "[PygameController]  Human/robot:    "
+            + _pygame_joystick_button_caption(layout, self.button_toggle),
+            flush=True,
+        )
 
     @staticmethod
     def _resolve_controller_layout(controller_layout: str, joystick_name: str) -> str:
@@ -895,47 +844,21 @@ class PygameControllerInterventionDevice(InterventionDevice):
         return self._is_intervening
 
     def _pump_events(self) -> None:
-        for event in self.pygame.event.get():
-            if event.type == self.pygame.JOYBUTTONDOWN:
-                if self._use_sdl_gamecontroller:
-                    continue
-                if getattr(event, "instance_id", None) not in (None, self._joystick.get_instance_id()):
-                    continue
-                b = int(event.button)
-                if b == self.button_toggle:
-                    self._is_intervening = not self._is_intervening
-                elif b == self.button_reset:
-                    self._reset_requested = True
-        self._poll_sdl_controller_edges()
+        self.pygame.event.pump()
+        self.pygame.event.get()
+        self._poll_toggle_reset_edges()
 
-    def _poll_sdl_controller_edges(self) -> None:
-        """Start / R3 via polled edges — JOYBUTTONDOWN can be missing (e.g. SDL dummy video)."""
-        if not self._use_sdl_gamecontroller or self._sdl_controller is None or self._ctrl_mod is None:
-            return
-        c = self._sdl_controller
-        m = self._ctrl_mod
-        start_down = bool(c.get_button(m.CONTROLLER_BUTTON_START))
-        rstick_down = bool(c.get_button(m.CONTROLLER_BUTTON_RIGHTSTICK))
-        if start_down and not self._prev_sdl_start:
+    def _poll_toggle_reset_edges(self) -> None:
+        """Polled rising edges — some backends omit JOYBUTTONDOWN for stick clicks / dummy video."""
+        toggle_down = self._button(self.button_toggle)
+        if toggle_down and not self._prev_toggle_btn:
             self._is_intervening = not self._is_intervening
-        if rstick_down and not self._prev_sdl_rstick:
+        self._prev_toggle_btn = toggle_down
+
+        reset_down = self._button(self.button_reset)
+        if reset_down and not self._prev_reset_btn:
             self._reset_requested = True
-        self._prev_sdl_start = start_down
-        self._prev_sdl_rstick = rstick_down
-
-    def _gripper_close_held(self) -> bool:
-        if self._use_sdl_gamecontroller and self._sdl_controller is not None and self._ctrl_mod is not None:
-            return bool(
-                self._sdl_controller.get_button(self._ctrl_mod.CONTROLLER_BUTTON_LEFTSHOULDER)
-            )
-        return self._button(self.button_gripper_close)
-
-    def _gripper_open_held(self) -> bool:
-        if self._use_sdl_gamecontroller and self._sdl_controller is not None and self._ctrl_mod is not None:
-            return bool(
-                self._sdl_controller.get_button(self._ctrl_mod.CONTROLLER_BUTTON_RIGHTSHOULDER)
-            )
-        return self._button(self.button_gripper_open)
+        self._prev_reset_btn = reset_down
 
     def _apply_deadzone(self, value: float) -> float:
         if abs(value) < self.deadzone:
@@ -966,8 +889,8 @@ class PygameControllerInterventionDevice(InterventionDevice):
         ry = self._apply_deadzone(-self._axis(self.axis_right_y))
         lt = self._trigger(self.axis_left_trigger)
         rt = self._trigger(self.axis_right_trigger)
-        close = self._gripper_close_held()
-        open_ = self._gripper_open_held()
+        close = self._button(self.button_gripper_close)
+        open_ = self._button(self.button_gripper_open)
 
         pitch = rt - lt
         gripper = -1.0 if close else (1.0 if open_ else 0.0)
@@ -989,8 +912,8 @@ class PygameControllerInterventionDevice(InterventionDevice):
     def reset(self) -> None:
         self._is_intervening = False
         self._reset_requested = False
-        self._prev_sdl_start = False
-        self._prev_sdl_rstick = False
+        self._prev_toggle_btn = False
+        self._prev_reset_btn = False
         self._pump_events()
 
     def consume_reset_request(self) -> bool:
@@ -1004,12 +927,6 @@ class PygameControllerInterventionDevice(InterventionDevice):
         if self._closed:
             return
         self._closed = True
-        try:
-            if self._sdl_controller is not None:
-                self._sdl_controller.quit()
-                self._sdl_controller = None
-        except Exception:
-            pass
         try:
             self._joystick.quit()
         except Exception:

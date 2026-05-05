@@ -7,11 +7,10 @@ device: pygame
 pygame:
   controller_index: 0
   deadzone: 0.15
-  scale_position: 0.1
-  scale_rotation: 0.1
-  # auto: name-based preset for raw-index fallback only. Prefer SDL GameController
-  # mapping when pygame supports it (reliable LB/RB + R3 on macOS/PS4).
-  controller_layout: auto
+  scale_position: 0.06    # 3× vs prior 0.02 calibration gain
+  scale_rotation: 0.06
+  # Layout labels startup hints only when button_* below are set (driver-specific indices win).
+  controller_layout: ps4
 
   axis_left_x: 0
   axis_left_y: 1
@@ -19,11 +18,12 @@ pygame:
   axis_right_y: 3
   axis_left_trigger: 4
   axis_right_trigger: 5
-  # Preset: bumpers = gripper, R3 = reset, Start/Options = toggle. Override if needed:
-  # button_gripper_close: 4
-  # button_gripper_open: 5
-  # button_reset: 11
-  # button_toggle: 9
+
+  # Calibrated raw indices (run scripts/experiments/calibrate_pygame_controller.py on other machines).
+  button_gripper_close: 9
+  button_gripper_open: 10
+  button_reset: 8
+  button_toggle: 6
 
 intervention:
   rule: node_value_threshold

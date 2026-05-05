@@ -3,7 +3,7 @@
 # Run this BEFORE starting the DAgger runner.
 #
 # Usage:
-#   ./scripts/experiments/run_viz_server.sh [--port 5002] [--fps 30] [--device pygame|keyboard|spacemouse|auto]
+#   ./scripts/experiments/run_viz_server.sh [--port 5002] [--fps 30] [--device pygame|...] [--dagger-config pygame_default]
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,11 +12,13 @@ source "${SCRIPT_DIR}/_lib.sh"
 PORT=5002
 FPS=30
 DEVICE="pygame"
+DAGGER_CONFIG="${DAGGER_CONFIG:-pygame_default}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --port)   PORT="$2";   shift 2 ;;
         --fps)    FPS="$2";    shift 2 ;;
         --device) DEVICE="$2"; shift 2 ;;
+        --dagger-config) DAGGER_CONFIG="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -25,6 +27,7 @@ echo "=== DAgger Viz Server ==="
 echo "  url : http://127.0.0.1:$PORT"
 echo "  fps : $FPS"
 echo "  input: $DEVICE"
+echo "  dagger_config: $DAGGER_CONFIG (pygame button map / sensitivity)"
 echo ""
 echo "Then in another terminal:"
 echo "  conda run -n cupid python scripts/run_dagger.py"
@@ -36,4 +39,5 @@ exec "$CONDA_PYTHON" \
     -m policy_doctor.envs.viz_server \
     --port "$PORT" \
     --fps "$FPS" \
-    --device "$DEVICE"
+    --device "$DEVICE" \
+    --dagger-config "$DAGGER_CONFIG"

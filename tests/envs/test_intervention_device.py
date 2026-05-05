@@ -85,17 +85,12 @@ def mock_pygame(monkeypatch):
     mock_mod.joystick.init = MagicMock()
     mock_mod.joystick.get_count.return_value = 1
     mock_mod.joystick.Joystick.return_value = joystick
+    mock_mod.event.pump = MagicMock()
     mock_mod.event.get.side_effect = lambda: list(events)
     mock_mod._mock_joystick = joystick
     mock_mod._mock_events = events
     mock_mod._Event = Event
     monkeypatch.setitem(sys.modules, "pygame", mock_mod)
-    # Avoid real pygame._sdl2.controller (would bypass mocked joystick).
-    mock_sdl2_ctrl = MagicMock()
-    mock_sdl2_ctrl.init = MagicMock()
-    mock_sdl2_ctrl.is_controller = MagicMock(return_value=False)
-    monkeypatch.setitem(sys.modules, "pygame._sdl2", MagicMock())
-    monkeypatch.setitem(sys.modules, "pygame._sdl2.controller", mock_sdl2_ctrl)
     return mock_mod
 
 
@@ -164,17 +159,17 @@ def test_pygame_controller_maps_axes_buttons(mock_pygame):
 
 def test_pygame_controller_toggle_intervention(mock_pygame):
     device = PygameControllerInterventionDevice()
-    mock_pygame._mock_events.append(mock_pygame._Event(mock_pygame.JOYBUTTONDOWN, button=7))
-
+    # Xbox preset: toggle = Start (index 7); polled rising edge on get_button.
+    mock_pygame._mock_joystick.buttons[7] = 1
     assert device.is_intervening is True
     device.close()
 
 
 def test_pygame_controller_reset_button(mock_pygame):
     device = PygameControllerInterventionDevice()
-    mock_pygame._mock_events.append(mock_pygame._Event(mock_pygame.JOYBUTTONDOWN, button=9))
-
+    mock_pygame._mock_joystick.buttons[9] = 1
     assert device.consume_reset_request() is True
+    mock_pygame._mock_joystick.buttons[9] = 0
     assert device.consume_reset_request() is False
     device.close()
 
@@ -192,7 +187,7 @@ def test_pygame_auto_layout_playstation_name(mock_pygame):
 
 def test_pygame_explicit_ps4_reset_button(mock_pygame):
     device = PygameControllerInterventionDevice(controller_layout="ps4")
-    mock_pygame._mock_events.append(mock_pygame._Event(mock_pygame.JOYBUTTONDOWN, button=11))
+    mock_pygame._mock_joystick.buttons[11] = 1
     assert device.consume_reset_request() is True
     device.close()
 

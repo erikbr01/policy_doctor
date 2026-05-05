@@ -43,6 +43,35 @@ def load_dagger_config(config_name: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def build_pygame_controller_kwargs(dagger_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Keyword args for ``PygameControllerInterventionDevice`` from ``pygame:`` in dagger YAML."""
+    params = dagger_cfg.get("pygame", {})
+    btn_kw = {
+        k: params[k]
+        for k in (
+            "button_gripper_close",
+            "button_gripper_open",
+            "button_reset",
+            "button_toggle",
+        )
+        if k in params
+    }
+    return {
+        "controller_index": params.get("controller_index", 0),
+        "deadzone": params.get("deadzone", 0.15),
+        "scale_position": params.get("scale_position", 1.0),
+        "scale_rotation": params.get("scale_rotation", 1.0),
+        "axis_left_x": params.get("axis_left_x", 0),
+        "axis_left_y": params.get("axis_left_y", 1),
+        "axis_right_x": params.get("axis_right_x", 2),
+        "axis_right_y": params.get("axis_right_y", 3),
+        "axis_left_trigger": params.get("axis_left_trigger", 4),
+        "axis_right_trigger": params.get("axis_right_trigger", 5),
+        "controller_layout": params.get("controller_layout", "auto"),
+        **btn_kw,
+    }
+
+
 def create_intervention_device(config: dict[str, Any]) -> Any:
     """Create an InterventionDevice from config.
 
@@ -93,31 +122,7 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
         )
 
     elif device_type == "pygame":
-        params = config.get("pygame", {})
-        btn_kw = {
-            k: params[k]
-            for k in (
-                "button_gripper_close",
-                "button_gripper_open",
-                "button_reset",
-                "button_toggle",
-            )
-            if k in params
-        }
-        return PygameControllerInterventionDevice(
-            controller_index=params.get("controller_index", 0),
-            deadzone=params.get("deadzone", 0.15),
-            scale_position=params.get("scale_position", 1.0),
-            scale_rotation=params.get("scale_rotation", 1.0),
-            axis_left_x=params.get("axis_left_x", 0),
-            axis_left_y=params.get("axis_left_y", 1),
-            axis_right_x=params.get("axis_right_x", 2),
-            axis_right_y=params.get("axis_right_y", 3),
-            axis_left_trigger=params.get("axis_left_trigger", 4),
-            axis_right_trigger=params.get("axis_right_trigger", 5),
-            controller_layout=params.get("controller_layout", "auto"),
-            **btn_kw,
-        )
+        return PygameControllerInterventionDevice(**build_pygame_controller_kwargs(config))
 
     elif device_type == "passthrough":
         return PassthroughInterventionDevice()

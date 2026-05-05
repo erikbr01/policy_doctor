@@ -117,21 +117,31 @@ def _handle_key(key: int) -> None:
             _key_state["action"] = None
 
 
-def _start_pygame_controller() -> bool:
-    """Open a pygame controller in the viz process.
+def _start_pygame_controller(dagger_config_name: str) -> bool:
+    """Open a pygame controller in the viz process (same ``pygame:`` YAML as ``run_dagger``).
 
-    The controller is polled from the main display loop and merged into the
-    same /intervention state as keyboard and SpaceMouse input.
+    When using ``viz_url``, input runs here — button maps and sensitivity must load from YAML,
+    not from the runner process.
     """
     global _pygame_device
     try:
+        from policy_doctor.envs.dagger_config import (
+            build_pygame_controller_kwargs,
+            load_dagger_config,
+        )
         from policy_doctor.envs.intervention_device import PygameControllerInterventionDevice
-        _pygame_device = PygameControllerInterventionDevice()
+
+        dagger_cfg = load_dagger_config(dagger_config_name)
+        kw = build_pygame_controller_kwargs(dagger_cfg)
+        _pygame_device = PygameControllerInterventionDevice(**kw)
     except Exception as e:
         print(f"[viz server] pygame controller unavailable: {e}", flush=True)
         _pygame_device = None
         return False
-    print("[viz server] Input: pygame controller + keyboard", flush=True)
+    print(
+        f"[viz server] Input: pygame controller + keyboard (dagger_config={dagger_config_name})",
+        flush=True,
+    )
     return True
 
 
@@ -324,14 +334,19 @@ def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def serve(port: int = 5002, fps: int = 30, device: str = "pygame") -> None:
+def serve(
+    port: int = 5002,
+    fps: int = 30,
+    device: str = "pygame",
+    dagger_config_name: str = "pygame_default",
+) -> None:
     install_macos_sdl_noise_suppression()
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
     # Optional input devices. The viz process owns all user input whenever the
     # runner is launched with viz_url.
     if device == "pygame":
-        _start_pygame_controller()
+        _start_pygame_controller(dagger_config_name)
     elif device in ("spacemouse", "auto"):
         found = _start_spacemouse()
         if not found and device == "spacemouse":
@@ -397,5 +412,11 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="pygame",
                         choices=["auto", "keyboard", "spacemouse", "pygame"],
                         help="pygame: game controller (default); auto: SpaceMouse if present else keyboard")
+    parser.add_argument(
+        "--dagger-config",
+        default="pygame_default",
+        metavar="NAME",
+        help="Hydra dagger YAML stem (no .yaml), e.g. pygame_default — used for pygame bindings when --device pygame",
+    )
     args = parser.parse_args()
-    serve(args.port, args.fps, args.device)
+    serve(args.port, args.fps, args.device, args.dagger_config)
