@@ -328,7 +328,9 @@ def main(cfg: DictConfig) -> None:
     viz_cfg = dagger_cfg.get("visualization", {})
     if not no_visualization and (viz_url or viz_cfg.get("enabled", True)):
         try:
-            kw = dict(camera_names=viz_cfg.get("camera_names", ["agentview"]),
+            kw = dict(camera_names=viz_cfg.get(
+                "camera_names", ["agentview", "robot0_eye_in_hand"]
+            ),
                       figsize=tuple(viz_cfg.get("figsize", [8, 5])))
             if viz_url:
                 kw["server_url"] = viz_url

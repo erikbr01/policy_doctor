@@ -34,6 +34,10 @@ class MockRobomimicEnv:
         """Return MuJoCo state."""
         return {"states": np.random.randn(30).astype(np.float32)}
 
+    def render(self, mode="rgb_array", height=256, width=256, camera_name="agentview"):
+        del mode, camera_name
+        return np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+
 
 class MockRobomimicWrapper(gym.Env):
     """Mock RobomimicLowdimWrapper."""
@@ -50,8 +54,8 @@ class MockRobomimicWrapper(gym.Env):
         )
         return obs
 
-    def render(self, mode="rgb_array", height=256, width=256):
-        return np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+    def render(self, mode="rgb_array", height=256, width=256, camera_name="agentview"):
+        return self.env.render(mode=mode, height=height, width=width, camera_name=camera_name)
 
 
 class MockMultiStepWrapper(gym.Env):

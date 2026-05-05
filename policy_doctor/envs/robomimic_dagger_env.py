@@ -10,6 +10,7 @@ robocasa, libero, blockpush, mimicgen, etc.).
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -163,6 +164,30 @@ class RobomimicDAggerEnv(gym.Env):
         self._acting_agent = "robot"
         return self.inner_env.reset()
 
+    @staticmethod
+    def _render_supports_camera_name(obj: Any) -> bool:
+        fn = getattr(obj, "render", None)
+        if fn is None or not callable(fn):
+            return False
+        try:
+            return "camera_name" in inspect.signature(fn).parameters
+        except (ValueError, TypeError):
+            return False
+
+    def _robomimic_base_env_for_render(self) -> Any:
+        """Walk ``inner_env.env -> ...`` to the robomimic sim env ``render(..., camera_name=...)``."""
+        cur: Any = self.inner_env
+        seen: set[int] = set()
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            child = getattr(cur, "env", None)
+            if child is not None and self._render_supports_camera_name(child):
+                return child
+            cur = child
+        raise AttributeError(
+            "Could not find a nested env with render(..., camera_name=...) in inner_env chain"
+        )
+
     def render_camera(
         self,
         camera_name: str = "agentview",
@@ -182,8 +207,9 @@ class RobomimicDAggerEnv(gym.Env):
         img : np.ndarray
             RGB image of shape (height, width, 3).
         """
-        # inner_env is RobomimicLowdimWrapper; it uses self.render_hw internally
-        return self.inner_env.render(mode="rgb_array")
+        h, w = hw
+        base = self._robomimic_base_env_for_render()
+        return base.render(mode="rgb_array", height=h, width=w, camera_name=camera_name)
 
     def save_episode(self, path: Optional[Path | str] = None) -> Path:
         """Save current episode data in pkl, HDF5, or both formats.

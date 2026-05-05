@@ -140,7 +140,7 @@ def main(
         create_intervention_device,
         get_intervention_threshold,
         load_dagger_config,
-        merge_task_pygame_into_dagger_cfg,
+        merge_data_collection_task_into_dagger_cfg,
     )
     from policy_doctor.gym_util.multistep_wrapper import MultiStepWrapper
     from policy_doctor.monitoring.intervention import NodeValueThresholdRule
@@ -177,7 +177,7 @@ def main(
     # Load DAgger config
     print(f"Loading DAgger config: {dagger_config}")
     dagger_cfg = load_dagger_config(dagger_config)
-    merge_task_pygame_into_dagger_cfg(
+    merge_data_collection_task_into_dagger_cfg(
         dagger_cfg, load_data_collection_task_config("robocasa_layout_lowdim")
     )
 
@@ -260,7 +260,9 @@ def main(
     if not no_visualization and viz_cfg.get("enabled", True):
         try:
             visualizer = DAggerVisualizer(
-                camera_names=viz_cfg.get("camera_names", ["agentview"]),
+                camera_names=viz_cfg.get(
+                    "camera_names", ["agentview", "robot0_eye_in_hand"]
+                ),
                 figsize=tuple(viz_cfg.get("figsize", [8, 5])),
             )
             print("Visualization enabled")

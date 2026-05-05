@@ -9,6 +9,11 @@ recording:
     - robot0_eef_quat
     - robot0_gripper_qpos
 
+visualization:
+  camera_names:
+    - agentview
+    - robot0_eye_in_hand
+
 pygame:
   spatial_mapping:
     left_stick_xy_mix:

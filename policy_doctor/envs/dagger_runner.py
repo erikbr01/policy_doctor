@@ -123,8 +123,9 @@ class RobomimicDAggerRunner:
         if self.visualizer is None:
             return
         try:
+            hw = self.visualizer.render_hw
             camera_imgs = {
-                name: self.env.render_camera(camera_name=name)
+                name: self.env.render_camera(camera_name=name, hw=hw)
                 for name in self.visualizer.camera_names
             }
             node_name, node_value, intervention_reason = "unknown", None, ""

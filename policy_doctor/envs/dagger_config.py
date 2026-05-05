@@ -54,19 +54,20 @@ def deep_merge_dict(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
     return dst
 
 
-def merge_task_pygame_into_dagger_cfg(
+def merge_data_collection_task_into_dagger_cfg(
     dagger_cfg: dict[str, Any], task_cfg: Optional[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Overlay ``task_cfg['pygame']`` onto ``dagger_cfg['pygame']`` (task wins per-key).
+    """Overlay task YAML sections onto a dagger preset (task wins per-key).
 
-    Task YAMLs live under ``configs/data_collection/tasks/*.yaml``.
+    Reads ``configs/data_collection/tasks/<task>.yaml``. Merged top-level keys:
+    ``pygame``, ``visualization`` (nested dicts are deep-merged).
     """
     if not task_cfg:
         return dagger_cfg
-    overlay = task_cfg.get("pygame")
-    if not overlay:
-        return dagger_cfg
-    deep_merge_dict(dagger_cfg.setdefault("pygame", {}), overlay)
+    for key in ("pygame", "visualization"):
+        overlay = task_cfg.get(key)
+        if overlay:
+            deep_merge_dict(dagger_cfg.setdefault(key, {}), overlay)
     return dagger_cfg
 
 
@@ -74,7 +75,7 @@ def resolve_dagger_config_with_task(
     dagger_config_name: str, task_cfg: Optional[dict[str, Any]]
 ) -> dict[str, Any]:
     cfg = load_dagger_config(dagger_config_name)
-    merge_task_pygame_into_dagger_cfg(cfg, task_cfg)
+    merge_data_collection_task_into_dagger_cfg(cfg, task_cfg)
     return cfg
 
 

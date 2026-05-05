@@ -49,12 +49,12 @@ class DAggerVisualizer:
     def __init__(
         self,
         server_url: str = _DEFAULT_URL,
-        camera_names: list[str] = ["agentview"],
+        camera_names: list[str] | None = None,
         figsize: tuple = (8, 5),
         hw: tuple[int, int] = (256, 256),
     ) -> None:
         self._url = server_url.rstrip("/") + "/frame"
-        self.camera_names = camera_names
+        self.camera_names = camera_names or ["agentview", "robot0_eye_in_hand"]
         self._hw = hw
 
         # Single-slot queue: newest frame wins
@@ -64,6 +64,11 @@ class DAggerVisualizer:
             target=self._send_loop, name="dagger-viz-sender", daemon=True
         )
         self._thread.start()
+
+    @property
+    def render_hw(self) -> tuple[int, int]:
+        """(height, width) used when encoding frames for the viz server."""
+        return self._hw
 
     # ------------------------------------------------------------------
     # Main-thread API

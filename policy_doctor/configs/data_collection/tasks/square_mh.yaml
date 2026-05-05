@@ -9,7 +9,14 @@ recording:
     - robot0_eef_quat
     - robot0_gripper_qpos
 
-# Merged into dagger YAML ``pygame:`` when running ``task=square_mh`` (and viz_server ``--task square_mh``).
+# Merged into dagger preset when running ``task=square_mh`` / ``viz_server --task square_mh``
+# (see ``merge_data_collection_task_into_dagger_cfg``): ``pygame``, ``visualization``.
+visualization:
+  camera_names:
+    - agentview
+    - robot0_eye_in_hand
+
+# Gamepad mapping — ``pygame`` block below.
 # ``left_stick_xy_mix`` maps [lx, ly] into [arm delta x, arm delta y] (same indices as keyboard A/D and Q/E).
 # Tune the 2×2 if stick directions still disagree with the live camera.
 pygame:

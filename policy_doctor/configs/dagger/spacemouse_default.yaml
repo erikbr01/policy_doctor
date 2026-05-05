@@ -16,4 +16,4 @@ intervention:
 
 visualization:
   enabled: true
-  camera_names: ["agentview"]
+  camera_names: ["agentview", "robot0_eye_in_hand"]

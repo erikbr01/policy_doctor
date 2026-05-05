@@ -17,7 +17,7 @@ Wire format (POST /frame):
     First 4 bytes : uint32 big-endian — length of JSON metadata header
     Next N bytes  : UTF-8 JSON  {"node_name": ..., "node_value": ...,
                                  "acting_agent": ..., "step": ...,
-                                 "reason": ..., "cameras": ["agentview"]}
+                                 "reason": ..., "cameras": ["agentview", "robot0_eye_in_hand"]}
     Remaining     : concatenated raw RGB uint8 frames, each (H, W, 3)
                     in the order listed in "cameras"
 """
@@ -129,13 +129,15 @@ def _start_pygame_controller(dagger_config_name: str, task: Optional[str] = None
         from policy_doctor.envs.dagger_config import (
             build_pygame_controller_kwargs,
             load_dagger_config,
-            merge_task_pygame_into_dagger_cfg,
+            merge_data_collection_task_into_dagger_cfg,
         )
         from policy_doctor.envs.intervention_device import PygameControllerInterventionDevice
 
         dagger_cfg = load_dagger_config(dagger_config_name)
         if task:
-            merge_task_pygame_into_dagger_cfg(dagger_cfg, load_data_collection_task_config(task))
+            merge_data_collection_task_into_dagger_cfg(
+                dagger_cfg, load_data_collection_task_config(task)
+            )
         kw = build_pygame_controller_kwargs(dagger_cfg)
         _pygame_device = PygameControllerInterventionDevice(**kw)
     except Exception as e:
@@ -335,6 +337,19 @@ def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
         cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, color, 1, cv2.LINE_AA)
         y += 26
+
+    cameras = meta.get("cameras") or ["agentview"]
+    ch, cw = canvas.shape[:2]
+    ncam = len(cameras)
+    if ncam > 1:
+        col_w = cw // ncam
+        for i, cam_name in enumerate(cameras):
+            x0 = i * col_w + 8
+            label = str(cam_name)
+            cv2.putText(canvas, label, (x0, ch - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(canvas, label, (x0, ch - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45, (200, 200, 200), 1, cv2.LINE_AA)
     return canvas
 
 

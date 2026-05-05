@@ -156,7 +156,7 @@ def run_e2_session(
     from policy_doctor.envs.dagger_config import (
         create_intervention_device,
         load_dagger_config,
-        merge_task_pygame_into_dagger_cfg,
+        merge_data_collection_task_into_dagger_cfg,
     )
     from policy_doctor.envs.policy_wrappers import BarePolicy
     from policy_doctor.envs.intervention_device import (
@@ -273,7 +273,7 @@ def run_e2_session(
     lowdim_wrapper = RobomimicLowdimWrapper(env=robomimic_env, obs_keys=obs_keys, init_state=None)
 
     dagger_cfg = load_dagger_config(dagger_config)
-    merge_task_pygame_into_dagger_cfg(dagger_cfg, task_cfg)
+    merge_data_collection_task_into_dagger_cfg(dagger_cfg, task_cfg)
     if random_actions:
         intervention_device = RandomInterventionDevice(
             action_space=lowdim_wrapper.action_space,
@@ -295,7 +295,9 @@ def run_e2_session(
     if visualization_enabled:
         try:
             kw = dict(
-                camera_names=viz_cfg.get("camera_names", ["agentview"]),
+                camera_names=viz_cfg.get(
+                    "camera_names", ["agentview", "robot0_eye_in_hand"]
+                ),
                 figsize=tuple(viz_cfg.get("figsize", [8, 5])),
             )
             if viz_url:

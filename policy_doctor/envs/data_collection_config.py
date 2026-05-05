@@ -24,6 +24,9 @@ def available_data_collection_tasks() -> list[str]:
 def load_data_collection_task_config(task: str) -> dict[str, Any]:
     """Load task-specific environment and recording config.
 
+    Optional top-level keys ``pygame`` and ``visualization`` (e.g. ``camera_names``)
+    are merged into the active dagger preset by ``merge_data_collection_task_into_dagger_cfg``.
+
     Relative ``dataset_path`` values are resolved under ``REPO_ROOT`` so callers
     can run from either the project root or ``third_party/cupid``.
     """
