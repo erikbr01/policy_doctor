@@ -1,7 +1,7 @@
 """Visualization server: receives camera frames + metadata over HTTP, displays with cv2.
 
 Run in a separate terminal:
-    python -m policy_doctor.envs.viz_server [--port 5002] [--fps 30]
+    python -m policy_doctor.envs.viz_server [--port 5002] [--fps 30] [--task square_mh]
 
 The DAgger runner sends frames via HTTP POST; this process owns the cv2
 window on its own main thread — no macOS main-thread constraint from the
@@ -117,7 +117,7 @@ def _handle_key(key: int) -> None:
             _key_state["action"] = None
 
 
-def _start_pygame_controller(dagger_config_name: str) -> bool:
+def _start_pygame_controller(dagger_config_name: str, task: Optional[str] = None) -> bool:
     """Open a pygame controller in the viz process (same ``pygame:`` YAML as ``run_dagger``).
 
     When using ``viz_url``, input runs here — button maps and sensitivity must load from YAML,
@@ -125,23 +125,31 @@ def _start_pygame_controller(dagger_config_name: str) -> bool:
     """
     global _pygame_device
     try:
+        from policy_doctor.envs.data_collection_config import load_data_collection_task_config
         from policy_doctor.envs.dagger_config import (
             build_pygame_controller_kwargs,
             load_dagger_config,
+            merge_task_pygame_into_dagger_cfg,
         )
         from policy_doctor.envs.intervention_device import PygameControllerInterventionDevice
 
         dagger_cfg = load_dagger_config(dagger_config_name)
+        if task:
+            merge_task_pygame_into_dagger_cfg(dagger_cfg, load_data_collection_task_config(task))
         kw = build_pygame_controller_kwargs(dagger_cfg)
         _pygame_device = PygameControllerInterventionDevice(**kw)
     except Exception as e:
         print(f"[viz server] pygame controller unavailable: {e}", flush=True)
         _pygame_device = None
         return False
-    print(
-        f"[viz server] Input: pygame controller + keyboard (dagger_config={dagger_config_name})",
-        flush=True,
+    msg = (
+        f"[viz server] Input: pygame controller + keyboard "
+        f"(dagger_config={dagger_config_name}"
     )
+    if task:
+        msg += f", task={task}"
+    msg += ")"
+    print(msg, flush=True)
     return True
 
 
@@ -339,6 +347,7 @@ def serve(
     fps: int = 30,
     device: str = "pygame",
     dagger_config_name: str = "pygame_default",
+    task: Optional[str] = None,
 ) -> None:
     install_macos_sdl_noise_suppression()
     import logging
@@ -346,7 +355,7 @@ def serve(
     # Optional input devices. The viz process owns all user input whenever the
     # runner is launched with viz_url.
     if device == "pygame":
-        _start_pygame_controller(dagger_config_name)
+        _start_pygame_controller(dagger_config_name, task=task)
     elif device in ("spacemouse", "auto"):
         found = _start_spacemouse()
         if not found and device == "spacemouse":
@@ -418,5 +427,12 @@ if __name__ == "__main__":
         metavar="NAME",
         help="Hydra dagger YAML stem (no .yaml), e.g. pygame_default — used for pygame bindings when --device pygame",
     )
+    parser.add_argument(
+        "--task",
+        default=None,
+        metavar="NAME",
+        help="Optional data_collection task stem (e.g. square_mh, robocasa_layout_lowdim) "
+        "to merge pygame.spatial_mapping / rotation_mapping overrides into dagger-config.",
+    )
     args = parser.parse_args()
-    serve(args.port, args.fps, args.device, args.dagger_config)
+    serve(args.port, args.fps, args.device, args.dagger_config, task=args.task)

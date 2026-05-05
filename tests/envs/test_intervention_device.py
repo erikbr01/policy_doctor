@@ -157,6 +157,30 @@ def test_pygame_controller_maps_axes_buttons(mock_pygame):
     device.close()
 
 
+def test_pygame_controller_trigger_yaw_xy_mix(mock_pygame):
+    mix = np.array([[0.0, -1.0], [1.0, 0.0]])
+    device = PygameControllerInterventionDevice(
+        deadzone=0.0,
+        left_stick_xy_mix=mix,
+        yaw_source="trigger_diff",
+        pitch_source="right_stick_x",
+    )
+    joystick = mock_pygame._mock_joystick
+    joystick.axes[0] = 0.0
+    joystick.axes[1] = -1.0       # stick forward -> ly +1
+    joystick.axes[2] = 0.5      # pitch from right stick horizontal
+    joystick.axes[3] = 0.0
+    joystick.axes[5] = 1.0        # RT full -> positive yaw differential
+
+    action = device.get_action()
+    assert action is not None
+    assert action[0] == pytest.approx(-1.0)
+    assert action[1] == pytest.approx(0.0)
+    assert action[4] == pytest.approx(0.5)
+    assert action[5] == pytest.approx(1.0)
+    device.close()
+
+
 def test_pygame_controller_toggle_intervention(mock_pygame):
     device = PygameControllerInterventionDevice()
     # Xbox preset: toggle = Start (index 7); polled rising edge on get_button.

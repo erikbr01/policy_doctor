@@ -8,3 +8,15 @@ recording:
     - robot0_eef_pos
     - robot0_eef_quat
     - robot0_gripper_qpos
+
+# Merged into dagger YAML ``pygame:`` when running ``task=square_mh`` (and viz_server ``--task square_mh``).
+# ``left_stick_xy_mix`` maps [lx, ly] into [arm delta x, arm delta y] (same indices as keyboard A/D and Q/E).
+# Tune the 2×2 if stick directions still disagree with the live camera.
+pygame:
+  spatial_mapping:
+    left_stick_xy_mix:
+      - [0.0, -1.0]
+      - [1.0, 0.0]
+  rotation_mapping:
+    yaw_source: trigger_diff
+    pitch_source: right_stick_x

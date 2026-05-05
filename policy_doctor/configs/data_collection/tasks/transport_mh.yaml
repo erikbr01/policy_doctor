@@ -11,3 +11,12 @@ recording:
     - robot1_eef_pos
     - robot1_eef_quat
     - robot1_gripper_qpos
+
+pygame:
+  spatial_mapping:
+    left_stick_xy_mix:
+      - [0.0, -1.0]
+      - [1.0, 0.0]
+  rotation_mapping:
+    yaw_source: trigger_diff
+    pitch_source: right_stick_x

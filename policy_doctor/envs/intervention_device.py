@@ -727,6 +727,10 @@ class PygameControllerInterventionDevice(InterventionDevice):
     rising edges on ``get_button`` so stick clicks still register when
     ``JOYBUTTONDOWN`` is missing (e.g. ``SDL_VIDEODRIVER=dummy`` on macOS).
 
+    Spatial / rotation mapping is configured under ``pygame.spatial_mapping`` and
+    ``pygame.rotation_mapping`` in dagger YAML; data-collection task YAMLs can
+    overlay the same keys (merged when running ``run_dagger.py task=...``).
+
     Run ``scripts/experiments/calibrate_pygame_controller.py`` if indices don't match
     your OS/driver.
     """
@@ -750,6 +754,9 @@ class PygameControllerInterventionDevice(InterventionDevice):
         button_gripper_open: Optional[int] = None,
         button_reset: Optional[int] = None,
         button_toggle: Optional[int] = None,
+        left_stick_xy_mix: Optional[np.ndarray] = None,
+        yaw_source: str = "right_stick_x",
+        pitch_source: str = "trigger_diff",
     ) -> None:
         from policy_doctor.envs.macos_quiet import install_macos_sdl_noise_suppression
 
@@ -774,6 +781,12 @@ class PygameControllerInterventionDevice(InterventionDevice):
         self.axis_right_y = axis_right_y
         self.axis_left_trigger = axis_left_trigger
         self.axis_right_trigger = axis_right_trigger
+        mix = np.asarray(left_stick_xy_mix if left_stick_xy_mix is not None else np.eye(2), dtype=np.float64)
+        if mix.shape != (2, 2):
+            raise ValueError("left_stick_xy_mix must have shape (2, 2)")
+        self._left_stick_xy_mix = mix
+        self.yaw_source = yaw_source.strip().lower()
+        self.pitch_source = pitch_source.strip().lower()
         self._is_intervening = False
         self._reset_requested = False
         self._closed = False
@@ -881,6 +894,19 @@ class PygameControllerInterventionDevice(InterventionDevice):
             self._joystick.get_button(button_idx)
         )
 
+    def _pitch_yaw_from_sources(self, rx: float, trigger_diff: float) -> tuple[float, float]:
+        pitch = 0.0
+        yaw = 0.0
+        if self.pitch_source == "trigger_diff":
+            pitch = trigger_diff
+        elif self.pitch_source == "right_stick_x":
+            pitch = rx
+        if self.yaw_source == "trigger_diff":
+            yaw = trigger_diff
+        elif self.yaw_source == "right_stick_x":
+            yaw = rx
+        return pitch, yaw
+
     def get_action(self) -> Optional[np.ndarray]:
         self._pump_events()
         lx = self._apply_deadzone(self._axis(self.axis_left_x))
@@ -889,20 +915,36 @@ class PygameControllerInterventionDevice(InterventionDevice):
         ry = self._apply_deadzone(-self._axis(self.axis_right_y))
         lt = self._trigger(self.axis_left_trigger)
         rt = self._trigger(self.axis_right_trigger)
+        trigger_diff = rt - lt
         close = self._button(self.button_gripper_close)
         open_ = self._button(self.button_gripper_open)
 
-        pitch = rt - lt
+        pitch, yaw = self._pitch_yaw_from_sources(rx, trigger_diff)
         gripper = -1.0 if close else (1.0 if open_ else 0.0)
-        if not any([lx, ly, rx, ry, abs(pitch) > 0.01, close, open_]):
+
+        xy = self._left_stick_xy_mix @ np.array([lx, ly], dtype=np.float64)
+        ax = float(xy[0])
+        ay = float(xy[1])
+
+        pos_tol = 1e-5
+        rot_tol = 1e-3
+        if (
+            abs(ax * self.scale_position) < pos_tol
+            and abs(ay * self.scale_position) < pos_tol
+            and abs(ry * self.scale_position) < pos_tol
+            and abs(pitch * self.scale_rotation) < rot_tol
+            and abs(yaw * self.scale_rotation) < rot_tol
+            and not close
+            and not open_
+        ):
             return None
 
         action = np.zeros(self.ACTION_DIM, dtype=np.float32)
-        action[0] = np.clip(lx * self.scale_position, -1, 1)
-        action[1] = np.clip(ly * self.scale_position, -1, 1)
+        action[0] = np.clip(ax * self.scale_position, -1, 1)
+        action[1] = np.clip(ay * self.scale_position, -1, 1)
         action[2] = np.clip(ry * self.scale_position, -1, 1)
         action[4] = np.clip(pitch * self.scale_rotation, -1, 1)
-        action[5] = np.clip(rx * self.scale_rotation, -1, 1)
+        action[5] = np.clip(yaw * self.scale_rotation, -1, 1)
         action[6] = gripper
         return action
 

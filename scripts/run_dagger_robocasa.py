@@ -135,10 +135,12 @@ def main(
         RobomimicDAggerEnv,
         RobomimicDAggerRunner,
     )
+    from policy_doctor.envs.data_collection_config import load_data_collection_task_config
     from policy_doctor.envs.dagger_config import (
         create_intervention_device,
         get_intervention_threshold,
         load_dagger_config,
+        merge_task_pygame_into_dagger_cfg,
     )
     from policy_doctor.gym_util.multistep_wrapper import MultiStepWrapper
     from policy_doctor.monitoring.intervention import NodeValueThresholdRule
@@ -175,6 +177,9 @@ def main(
     # Load DAgger config
     print(f"Loading DAgger config: {dagger_config}")
     dagger_cfg = load_dagger_config(dagger_config)
+    merge_task_pygame_into_dagger_cfg(
+        dagger_cfg, load_data_collection_task_config("robocasa_layout_lowdim")
+    )
 
     # Use config threshold if not overridden via CLI
     if intervention_threshold == 0.0:  # default value

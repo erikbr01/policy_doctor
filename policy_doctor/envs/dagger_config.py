@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import yaml
 
 
@@ -43,6 +44,57 @@ def load_dagger_config(config_name: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def deep_merge_dict(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``src`` into ``dst`` (in-place). Non-dict values replace."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            deep_merge_dict(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
+def merge_task_pygame_into_dagger_cfg(
+    dagger_cfg: dict[str, Any], task_cfg: Optional[dict[str, Any]]
+) -> dict[str, Any]:
+    """Overlay ``task_cfg['pygame']`` onto ``dagger_cfg['pygame']`` (task wins per-key).
+
+    Task YAMLs live under ``configs/data_collection/tasks/*.yaml``.
+    """
+    if not task_cfg:
+        return dagger_cfg
+    overlay = task_cfg.get("pygame")
+    if not overlay:
+        return dagger_cfg
+    deep_merge_dict(dagger_cfg.setdefault("pygame", {}), overlay)
+    return dagger_cfg
+
+
+def resolve_dagger_config_with_task(
+    dagger_config_name: str, task_cfg: Optional[dict[str, Any]]
+) -> dict[str, Any]:
+    cfg = load_dagger_config(dagger_config_name)
+    merge_task_pygame_into_dagger_cfg(cfg, task_cfg)
+    return cfg
+
+
+def _parse_pygame_rotation_sources(params: dict[str, Any]) -> tuple[str, str]:
+    rm = params.get("rotation_mapping") or {}
+    yaw = str(rm.get("yaw_source", "right_stick_x")).strip().lower()
+    pitch = str(rm.get("pitch_source", "trigger_diff")).strip().lower()
+    allowed_rot = frozenset({"right_stick_x", "trigger_diff"})
+    if yaw not in allowed_rot:
+        raise ValueError(f"pygame.rotation_mapping.yaw_source must be one of {sorted(allowed_rot)}")
+    if pitch not in allowed_rot | {"none"}:
+        raise ValueError(
+            "pygame.rotation_mapping.pitch_source must be "
+            "right_stick_x | trigger_diff | none"
+        )
+    if yaw == pitch and yaw != "none":
+        raise ValueError("pygame.rotation_mapping: yaw_source and pitch_source must differ")
+    return yaw, pitch
+
+
 def build_pygame_controller_kwargs(dagger_cfg: dict[str, Any]) -> dict[str, Any]:
     """Keyword args for ``PygameControllerInterventionDevice`` from ``pygame:`` in dagger YAML."""
     params = dagger_cfg.get("pygame", {})
@@ -56,6 +108,20 @@ def build_pygame_controller_kwargs(dagger_cfg: dict[str, Any]) -> dict[str, Any]
         )
         if k in params
     }
+    spatial = params.get("spatial_mapping") or {}
+    mix = spatial.get("left_stick_xy_mix")
+    if mix is None:
+        mix_arr = np.eye(2, dtype=np.float64)
+    else:
+        mix_arr = np.asarray(mix, dtype=np.float64)
+        if mix_arr.shape != (2, 2):
+            raise ValueError(
+                "pygame.spatial_mapping.left_stick_xy_mix must be a 2×2 array "
+                "(rows map [lx, ly] into [action_x, action_y])"
+            )
+
+    yaw_src, pitch_src = _parse_pygame_rotation_sources(params)
+
     return {
         "controller_index": params.get("controller_index", 0),
         "deadzone": params.get("deadzone", 0.15),
@@ -68,6 +134,9 @@ def build_pygame_controller_kwargs(dagger_cfg: dict[str, Any]) -> dict[str, Any]
         "axis_left_trigger": params.get("axis_left_trigger", 4),
         "axis_right_trigger": params.get("axis_right_trigger", 5),
         "controller_layout": params.get("controller_layout", "auto"),
+        "left_stick_xy_mix": mix_arr,
+        "yaw_source": yaw_src,
+        "pitch_source": pitch_src,
         **btn_kw,
     }
 

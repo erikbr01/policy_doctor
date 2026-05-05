@@ -90,7 +90,7 @@ def main(cfg: DictConfig) -> None:
     from policy_doctor.envs.dagger_config import (
         create_intervention_device,
         get_intervention_threshold,
-        load_dagger_config,
+        resolve_dagger_config_with_task,
     )
     from policy_doctor.monitoring.intervention import NodeValueThresholdRule
     from policy_doctor.monitoring.monitored_policy import MonitoredPolicy
@@ -178,10 +178,10 @@ def main(cfg: DictConfig) -> None:
 
         monitored_policy = PolicyClient(url=server_url)
         monitored_policy.start()
-        dagger_cfg = load_dagger_config(dagger_config)
+        dagger_cfg = resolve_dagger_config_with_task(dagger_config, task_cfg)
 
     elif no_monitor:
-        dagger_cfg = load_dagger_config(dagger_config)
+        dagger_cfg = resolve_dagger_config_with_task(dagger_config, task_cfg)
         if train_dir is None:
             print("No checkpoint — keyboard-only teleoperation (human drives entire episode)")
             monitored_policy = None
@@ -226,7 +226,7 @@ def main(cfg: DictConfig) -> None:
             cluster_labels=cluster_labels,
             metadata=cluster_metadata,
         )
-        dagger_cfg = load_dagger_config(dagger_config)
+        dagger_cfg = resolve_dagger_config_with_task(dagger_config, task_cfg)
         if intervention_threshold == 0.0:
             intervention_threshold = get_intervention_threshold(dagger_cfg)
         print(f"Intervention threshold: {intervention_threshold}")
