@@ -58,6 +58,13 @@ def _parse_args() -> argparse.Namespace:
                     choices=["current", "full_history"])
     ap.add_argument("--action_strategy", default="executed",
                     choices=["executed", "full_plan"])
+    ap.add_argument("--layer", default="bottleneck",
+                    help="For policy_emb: which embedding file to load (e.g. bottleneck, "
+                         "bottleneck_t0, bottleneck_plan_t0).")
+    ap.add_argument("--n_svd_components", type=int, default=200,
+                    help="For trak: TruncatedSVD output dim (full matrix → SVD → UMAP).")
+    ap.add_argument("--svd_seed", type=int, default=42,
+                    help="For trak: random state for TruncatedSVD.")
     ap.add_argument("--normalize", default="none", choices=["none", "standard", "l2"])
     ap.add_argument("--prescale", default="standard", choices=["none", "standard", "l2"])
     ap.add_argument("--reducer", default="umap", choices=["umap", "pca", "none"])
@@ -80,6 +87,11 @@ def _rep_kwargs(representation: str, args: argparse.Namespace) -> Dict[str, Any]
         return {"obs_strategy": args.obs_strategy}
     if representation == "state_action":
         return {"obs_strategy": args.obs_strategy, "action_strategy": args.action_strategy}
+    if representation == "policy_emb":
+        return {"layer": args.layer}
+    if representation == "trak":
+        return {"n_svd_components": args.n_svd_components,
+                "svd_seed": args.svd_seed}
     return {}
 
 

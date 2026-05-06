@@ -8,7 +8,9 @@ Last updated: 2026-05-04 (F10, F11 added)
 
 ## Headline numbers
 
-All runs use Qwen3-VL-8B-Instruct (local, GPU-1 or GPU-0, bf16, greedy decoding) on clusterings of `transport_mh_seed0_r512` (8086 slices, 5-frame sliding windows, stride 2, 100D UMAP, kmeans). Default representation is InfEmbed unless noted.
+All runs use Qwen3-VL-8B-Instruct (local, GPU-1 or GPU-0, bf16, greedy decoding) on clusterings of `transport_mh_seed0_r512` (8086 slices, 5-frame sliding windows, stride 2, kmeans). Default representation is InfEmbed unless noted.
+
+⚠️ **UMAP dimension inconsistency** — F1–F10 and the original representation comparisons (F10, F13, F14 headline numbers) use **100D UMAP**. The policy_emb sweep (F14 variants), TRAK sweep, and window sweep (`run_window_sweep.py`) all use **50D UMAP** (set to stay below the 59D state feature ceiling). The within-sweep comparisons are self-consistent; cross-group comparisons (e.g. policy_emb vs original InfEmbed baseline) have this confound. A fresh **InfEmbed 50D UMAP baseline** is being run to anchor the comparison — see F15.
 
 The E1 protocol classifies held-out rollout slices into K opaque cluster labels using K · n_example example storyboards in one prompt.
 
@@ -21,8 +23,13 @@ The E1 protocol classifies held-out rollout slices into K opaque cluster labels 
 | K=10 + 768² | InfEmbed | 10 | 3 | 3 | 3 | centroid-proximal | yes | 56.7% (17/30) | 51.9% (14/27) | 5.6e-8 |
 | state K=10 + 768² | state | 10 | 3 | 3 | 3 | centroid-proximal | yes | 46.7% (14/30) | 46.7% (14/30)† | 3.1e-7 |
 | state_action K=10 + 768² | state_action | 10 | 3 | 3 | 3 | centroid-proximal | yes | 40.0% (12/30) | 33.3% (9/27) | 8.7e-4 |
+| policy_emb avg-t K=10 | policy_emb | 10 | 3 | 3 | 3 | centroid-proximal | yes | 46.7% (14/30) | 46.7% (14/30)† | 3.1e-7 |
+| policy_emb t0 K=10 | policy_emb | 10 | 3 | 3 | 3 | centroid-proximal | yes | 40.0% (12/30) | 40.0% (12/30)† | 1.5e-5 |
+| **policy_emb plan@t0 K=10** | **policy_emb** | **10** | 3 | 3 | 3 | centroid-proximal | yes | **63.3% (19/30)** | **59.3% (16/27)** | **4.4e-10** |
 
-† state K=10 sample plan has all 30 queries in tier1_global (no cross-cluster episode contamination), so headline = clean.
+† All queries are tier1_global (no cross-cluster episode contamination), headline = clean.
+
+Note: policy_emb uses w=5,s=2 (matching InfEmbed baseline). Clustering uses 50D UMAP on per-timestep features (window_first architecture). The `plan@t0` variant feeds the actual rollout action plan into the UNet at denoising step t=0; other variants use random noise.
 
 "Clean" = queries in the `tier1_global` bucket — episode appears in NO cluster's example pool. This is the proper test; episode-confounded queries are excluded.
 
@@ -496,6 +503,102 @@ Run under two pipeline architectures:
 
 **F12d — At K=15/20, the two architectures converge.** Both give 0.28–0.36 at K=20 for their respective best configs. The architecture choice matters less at high K where cluster separability is the binding constraint.
 
+### F13 — Policy bottleneck embedding ≈ state: obs-dominated when averaged over noise levels
+
+New representation `policy_emb` (layer=bottleneck): per-timestep UNet mid-module output
+(512D, global-avg-pooled) averaged over all 100 denoising timesteps, using random noise
+for the action input. Computed in ~9s for 16,956 timesteps on a 4090 (batch_size=128,
+128×100=12,800 samples per forward pass). Saved to `eval_dir/policy_embeddings/bottleneck.npz`.
+
+| Repr | Clean acc (K=10) | Ratio | p |
+|---|---|---|---|
+| InfEmbed | 0.519 (14/27) | 5.2× | 5.6e-8 |
+| state | 0.467 (14/30) | 4.7× | 3.1e-7 |
+| **policy_emb** | **0.467 (14/30)** | **4.7×** | **3.1e-7** |
+| state_action | 0.333 (9/27) | 3.3× | 8.7e-4 |
+
+`policy_emb` ties `state` exactly (same absolute count, same ratio). The bottleneck is
+obs-dominated when averaged over 100 noise levels: averaging washes out the action-specific
+signal, leaving the obs conditioning as the effective input. The result is a learned nonlinear
+transform of the obs, which UMAP then treats similarly to raw obs.
+
+**Full sweep results (all K=10, w=5,s=2, 50D UMAP, 512² or 768² composite):**
+
+| Variant | Action input | t | Hook | Clean | Ratio | p |
+|---|---|---|---|---|---|---|
+| **encoder_plan_t0** | **actual plan** | **0** | **encoder** | **0.625 (15/24)** | **6.2×** | **5.4e-10** |
+| bottleneck_plan_t0 | actual plan | 0 | bottleneck | 0.593 (16/27) | 5.9× | 4.4e-10 |
+| bottleneck_plan_t5 | actual plan | 5 | bottleneck | 0.533 (16/30) | 5.3× | 3.7e-9 |
+| bottleneck_exec_t0 | action[0]×16 | 0 | bottleneck | 0.519 (14/27) | 5.2× | 5.6e-8 |
+| bottleneck_plan_t25 | actual plan | 25 | bottleneck | 0.519 (14/27) | 5.2× | 5.6e-8 |
+| InfEmbed (100D) [ref] | — | — | — | 0.519 (14/27) | 5.2× | 5.6e-8 |
+| decoder_plan_t0 | actual plan | 0 | decoder | 0.500 (15/30) | 5.0× | 3.6e-8 |
+| bottleneck_plan_t10 | actual plan | 10 | bottleneck | 0.500 (12/24) | 5.0× | 8.5e-7 |
+| InfEmbed (50D) [ref] | — | — | — | 0.444 (12/27) | 4.4× | 4.1e-6 |
+| bottleneck (avg t) | random noise | avg | bottleneck | 0.467 (14/30) | 4.7× | 3.1e-7 |
+| bottleneck_t0 | random noise | 0 | bottleneck | 0.400 (12/30) | 4.0× | 1.5e-5 |
+| bottleneck_plan8_t0 | plan[:8]+zeros | 0 | bottleneck | 0.300 (9/30) | 3.0× | 2.0e-3 |
+
+**F14a — encoder hook (up_modules[-1][1]) is the best policy embedding.** 0.625 clean (6.2×), beating bottleneck (0.593) and the InfEmbed 100D baseline (0.519). The encoder hook captures the most discriminative layer for behavioral clustering — it's the decoder's final synthesis before projecting to action space.
+
+**F14b — actual rollout action is critical; zero-padding destroys signal.** plan_t0 (0.593) > exec_t0 (0.519) >> plan8_t0 (0.300). The zero-padded 8-step variant is dramatically worse — the zeros actively mislead the network. Using only action[0] tiled (exec) is fine (ties InfEmbed).
+
+**F14c — Timestep sensitivity is non-monotonic.** t=0 (0.593) > t=5 (0.533) > t=10 (0.500) ≈ t=25 (0.519). Small noise levels (t=5) are slightly better than t=0 — a small amount of noise may regularise the representation. The network processes the action most sharply near t=0 but is not uniquely sharp there.
+
+**F14d — Window params have little effect on policy_emb.** (w=3,s=2) = (w=5,s=2) = 0.467; (w=1,s=1) = (w=2,s=2) = 0.433. Slightly weaker at single-timestep windows; no strong preference above w=3.
+
+**F14e — K sweep (bottleneck_plan_t0).** K=20: 0.429 (8.6×!), K=10: 0.467 (4.7×), K=15: 0.333 (5.0×), K=5: 0.400 (NS). The very high ratio at K=20 is notable — policy_emb maintains above-chance clustering at fine granularity where InfEmbed weakens (InfEmbed K=20 was 0.241).
+
+### F14 — Policy action at t=0 is the best representation tested: 0.593 clean at K=10
+
+Three `policy_emb` variants at K=10 (w=5,s=2, 768², n_example=3, n_query=3, seed=42):
+
+| Repr | Action input | Noise levels | Clean | Ratio | p |
+|---|---|---|---|---|---|
+| InfEmbed | — | — | 0.519 (14/27) | 5.2× | 5.6e-8 |
+| state | raw obs | — | 0.467 (14/30) | 4.7× | 3.1e-7 |
+| policy_emb (avg t) | random noise | avg over 100 | 0.467 (14/30) | 4.7× | 3.1e-7 |
+| bottleneck_t0 | random noise | t=0 only | 0.400 (12/30) | 4.0× | 1.5e-5 |
+| **bottleneck_plan_t0** | **actual rollout plan** | **t=0** | **0.593 (16/27)** | **5.9×** | **4.4e-10** |
+
+**F14a — `bottleneck_plan_t0` beats InfEmbed by +7pt clean (0.593 vs 0.519).** Using the actual
+rollout action plan at the final denoising step (t=0, near-clean limit) gives the strongest
+representation tested so far. The key ingredient is the **action**: without it (random noise,
+avg-t) the bottleneck ≈ state; with it, the bottleneck captures how the policy processes a
+specific (obs, action) pair.
+
+**F14b — t=0-only with random noise (bottleneck_t0) is *worse* than avg-t (0.400 vs 0.467).**
+At t=0 alone, the random noise action is nearly absent (sigma≈0.01), so the bottleneck mostly
+sees the obs — but with less averaging-induced smoothing. The avg-t version is better because
+averaging over 100 noise levels stabilises the representation.
+
+**F14c — The action plan is the critical signal, not t=0 alone.** Comparing bottleneck_t0
+(0.400, random noise at t=0) vs bottleneck_plan_t0 (0.593, actual plan at t=0): same noise
+level, 19pt gap purely from using the actual action. The policy's processing of the actual
+executed plan is highly discriminative for clustering.
+
+**Implication:** The policy bottleneck with actual action encodes richer behavioral information
+than either raw observations (state) or influence gradients (InfEmbed) at K=10. This is the
+first representation tested that exceeds InfEmbed at the sweet-spot K. Whether this advantage
+holds across K and window widths is the next question.
+
+### F15 — InfEmbed 50D UMAP is weaker than 100D; TRAK clustering fails
+
+**F15a — InfEmbed 50D UMAP baseline.** Running InfEmbed with 50D instead of 100D UMAP (matching the policy_emb sweep pipeline) gives 0.444 clean at K=10 vs 0.519 with 100D. The UMAP dimensionality matters for InfEmbed — 7.5pt drop. This means that policy_emb comparisons within the 50D sweep moderately understate InfEmbed's advantage. The InfEmbed 100D reference (0.519) remains the strongest InfEmbed result.
+
+**F15b — TRAK clustering (full 186k → SVD(200D) → UMAP(50D)) is at chance.** Raw TRAK score profiles produce no useful cluster structure:
+
+| K | TRAK clean | Ratio | p |
+|---|---|---|---|
+| 5 | 0.200 (3/15) | 1.0× | 0.60 (NS) |
+| 10 | 0.133 (4/30) | 1.3× | 0.35 (NS) |
+| 15 | 0.044 (2/45) | 0.7× | 0.81 (NS) |
+| 20 | 0.083 (5/60) | 1.7× | 0.18 (NS) |
+
+All results are at or below chance level. TRAK clustering is a complete negative result. Raw per-timestep TRAK score rows are too noisy for behavioral clustering: each timestep's 186k-dim attribution vector contains gradient similarity noise that doesn't align with behaviorally meaningful segments. SVD(200D) cannot recover useful structure from this. This contrasts sharply with InfEmbed which applies the Arnoldi method to find the principal gradient directions — a more principled compression that preserves the behaviorally-relevant variance that TRAK scores spread across 186k dimensions.
+
+---
+
 **F12e — No simple "higher K → smaller window" rule.** Best window per K: K=5→(3,2), K=10→(3,2), K=15→(5,5), K=20→(3,2). The K=15 exception breaks any monotonic story, and by K=15/20 the differences between window configs are within noise anyway (except `(1,1)` which remains slightly worse).
 
 The practical rules that do hold:
@@ -508,11 +611,11 @@ The practical rules that do hold:
 
 ## Findings to write up after the next batch
 
-- **State-only K=10**: clean acc = 0.467, ratio 4.7× above chance — state clusters do recover visual structure, but InfEmbed's 0.519 is notably higher. Influence carries unique signal beyond raw obs. (F10)
-- **State_action K=10**: clean acc = 0.333, ratio 3.3× — adding raw actions to state *hurts* cluster coherence. (F10)
-- Does **K=5 pure frames** mode (currently running) outperform K=5 composite baseline? Tells us whether the mode itself matters once context allows.
-- Does **per-slice numeric obs/action text** (`--include_action_text` / `--include_state_text`, commit `6391f0c`) help on top of the visual baseline? Runs both ways at K=10 to isolate.
-- Does window_width=10 with the InfEmbed representation give cleaner clusters than width=5?
+- **State-only K=10**: 0.467 clean, 4.7× — state recovers visual structure, InfEmbed still better (F10)
+- **State_action K=10**: 0.333 clean, 3.3× — adding raw actions to state hurts (F10)
+- **policy_emb plan@t0 K=10**: 0.593 clean, 5.9× — new best, beats InfEmbed by +7pt (F14)
+- **Pending (tier 1)**: UNet layer sweep (bottleneck vs decoder vs encoder), action scope (full plan vs executed vs first 8 steps), timestep sensitivity (t=5,10,25 with actual plan)
+- **Pending (tier 2)**: policy_emb plan@t0 across K=5,10,15,20; window param sweep for policy_emb
 
 ## Operational note
 

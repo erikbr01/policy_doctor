@@ -361,6 +361,92 @@ class StateActionRepresentation(SliceRepresentation):
         return per_ts, ep_lens, ep_succ
 
 
+class TRAKRepresentation(SliceRepresentation):
+    """Per-timestep TRAK score profiles, sliding-windowed.
+
+    Loads the full raw TRAK score matrix from
+        <eval_dir>/default_trak_results-*/scores/all_episodes.mmap
+
+    Shape: (N_rollout_timesteps, N_train_timesteps).  Each row is the
+    attribution profile of one rollout timestep over all training samples.
+
+    Because the full matrix is very high-dimensional (~186k), a
+    TruncatedSVD (randomised PCA) is applied **before** windowing to
+    reduce to ``n_svd_components`` dimensions while retaining the
+    principal variance across the full attribution space.  No columns
+    are dropped; every training sample contributes to the SVD.
+
+    Method kwargs:
+      - ``n_svd_components`` (int, default 200): TruncatedSVD output dim.
+        This is the intermediate representation fed into the standard
+        normalize → UMAP → kmeans pipeline.
+      - ``svd_seed`` (int, default 42): random state for TruncatedSVD.
+    """
+
+    name = "trak"
+
+    def _load_full(self, eval_dir: pathlib.Path) -> np.ndarray:
+        """Load the full TRAK score mmap into RAM as float32."""
+        import json as _json
+        trak_dirs = sorted(eval_dir.glob("default_trak_results-*"))
+        if not trak_dirs:
+            raise FileNotFoundError(f"No TRAK results in {eval_dir}")
+        mmap_path = trak_dirs[-1] / "scores" / "all_episodes.mmap"
+        if not mmap_path.exists():
+            raise FileNotFoundError(f"TRAK mmap not found: {mmap_path}")
+        meta = _json.load(open(trak_dirs[-1] / "metadata.json"))
+        n_train = int(meta["train set size"])
+        n_rollout = mmap_path.stat().st_size // (n_train * 4)
+        print(f"  Loading TRAK mmap ({n_rollout} × {n_train}) …", flush=True)
+        arr = np.memmap(str(mmap_path), dtype="float32", mode="r",
+                        shape=(n_rollout, n_train))
+        return np.array(arr)  # materialise full matrix into RAM
+
+    def extract_per_timestep(
+        self,
+        eval_dir: pathlib.Path,
+        *,
+        n_svd_components: int = 200,
+        svd_seed: int = 42,
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[int], List]:
+        from sklearn.decomposition import TruncatedSVD
+        import yaml as _yaml
+
+        full = self._load_full(eval_dir)
+        print(f"  TruncatedSVD {full.shape[1]}D → {n_svd_components}D …", flush=True)
+        svd = TruncatedSVD(n_components=n_svd_components, random_state=svd_seed)
+        features = svd.fit_transform(full).astype(np.float32)
+        explained = svd.explained_variance_ratio_.sum()
+        print(f"  SVD explained variance: {explained:.3f}", flush=True)
+
+        meta_path = eval_dir / "episodes" / "metadata.yaml"
+        with open(meta_path) as f:
+            meta = _yaml.safe_load(f)
+        ep_lens = meta["episode_lengths"]
+        ep_succ = meta.get("episode_successes", [None] * len(ep_lens))
+        return features, ep_lens, ep_succ
+
+    def extract(
+        self,
+        eval_dir: pathlib.Path,
+        params: SliceWindowParams,
+        *,
+        n_svd_components: int = 200,
+        svd_seed: int = 42,
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        features, ep_lens, ep_succ = self.extract_per_timestep(
+            eval_dir,
+            n_svd_components=n_svd_components,
+            svd_seed=svd_seed,
+        )
+        return build_windows_from_rollout_timestep_embeddings(
+            features, ep_lens, ep_succ,
+            params.window_width, params.stride, params.aggregation,
+        )
+
+
 class PolicyEmbeddingRepresentation(SliceRepresentation):
     """Pre-computed policy embeddings loaded from disk, sliding-windowed.
 
@@ -447,6 +533,7 @@ def list_slice_representations() -> List[str]:
 register_slice_representation(InfEmbedRepresentation())
 register_slice_representation(StateRepresentation())
 register_slice_representation(StateActionRepresentation())
+register_slice_representation(TRAKRepresentation())
 register_slice_representation(PolicyEmbeddingRepresentation())
 
 
