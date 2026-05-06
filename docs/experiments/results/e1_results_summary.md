@@ -549,6 +549,19 @@ transform of the obs, which UMAP then treats similarly to raw obs.
 
 **F14e — K sweep (bottleneck_plan_t0).** K=20: 0.429 (8.6×!), K=10: 0.467 (4.7×), K=15: 0.333 (5.0×), K=5: 0.400 (NS). The very high ratio at K=20 is notable — policy_emb maintains above-chance clustering at fine granularity where InfEmbed weakens (InfEmbed K=20 was 0.241).
 
+**F14f — K sweep (encoder_plan_t0).** encoder_plan_t0 sweeps K=5–20 (w=5,s=2, 512² at K≥15):
+
+| K | encoder_plan_t0 | Ratio | p | bottleneck_plan_t0 (ref) |
+|---|---|---|---|---|
+| 5 | 0.533 (8/15) | 2.7× | 4.2e-3 | 0.400 (NS) |
+| 10 | 0.625 (15/24) | 6.2× | 5.4e-10 | 0.593 (16/27) |
+| 15 | 0.444 (16/36) | 6.7× | 3.1e-10 | 0.333 (15/45) |
+| 20 | 0.359 (14/39) | 7.2× | 2.8e-9 | 0.429 (17/40) |
+
+encoder_plan_t0 beats bottleneck at every K except K=20 where bottleneck is +7pt. All four encoder results are statistically significant (bottleneck K=5 was not). The ratio increases monotonically with K (2.7× → 7.2×), meaning encoder maintains a growing discrimination advantage over chance as the problem gets harder. Raw accuracy peaks at K=10 (0.625) — the best single E1 result across all representations tested.
+
+**F14f interpretation:** encoder_plan_t0 at K=10 is the recommended operating point. The encoder hook appears more discriminative for behavioral clustering than the bottleneck at all but the finest granularity (K=20). Both representations degrade gracefully at high K (unlike InfEmbed which drops sharply at K=20).
+
 ### F14 — Policy action at t=0 is the best representation tested: 0.593 clean at K=10
 
 Three `policy_emb` variants at K=10 (w=5,s=2, 768², n_example=3, n_query=3, seed=42):
@@ -614,8 +627,7 @@ The practical rules that do hold:
 - **State-only K=10**: 0.467 clean, 4.7× — state recovers visual structure, InfEmbed still better (F10)
 - **State_action K=10**: 0.333 clean, 3.3× — adding raw actions to state hurts (F10)
 - **policy_emb plan@t0 K=10**: 0.593 clean, 5.9× — new best, beats InfEmbed by +7pt (F14)
-- **Pending (tier 1)**: UNet layer sweep (bottleneck vs decoder vs encoder), action scope (full plan vs executed vs first 8 steps), timestep sensitivity (t=5,10,25 with actual plan)
-- **Pending (tier 2)**: policy_emb plan@t0 across K=5,10,15,20; window param sweep for policy_emb
+- **encoder_plan_t0 K sweep (F14f)**: K=5→0.533, K=10→0.625, K=15→0.444, K=20→0.359; all significant; encoder beats bottleneck at K=5/10/15
 
 ## Operational note
 
