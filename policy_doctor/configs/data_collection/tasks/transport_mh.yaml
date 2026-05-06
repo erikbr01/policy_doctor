@@ -26,3 +26,14 @@ pygame:
   rotation_mapping:
     yaw_source: trigger_diff
     pitch_source: right_stick_x
+
+spacemouse:
+  spatial_mapping:
+    translation_mix:
+      - [0.0, 1.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0]
+    rotation_mix:
+      - [0.0, 1.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [0.0, 0.0, -1.0]

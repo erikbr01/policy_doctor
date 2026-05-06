@@ -37,6 +37,18 @@ import numpy as np
 from flask import Flask, request
 
 from policy_doctor.envs.macos_quiet import install_macos_sdl_noise_suppression
+from policy_doctor.envs.dagger_config import (
+    build_spacemouse_spatial_matrices,
+    load_merged_dagger_config,
+)
+from policy_doctor.spacemouse_hid import (
+    SPACEMOUSE_USB_PAIRS_DEFAULT,
+    apply_spacemouse_spatial_mapping,
+    dedupe_usb_pairs,
+    decode_spacemouse_motion_report,
+    spacemouse_usb_pairs_with_override,
+    try_open_first_spacemouse,
+)
 
 _OPENCV: Any = None
 
@@ -175,56 +187,109 @@ def _poll_pygame_controller() -> None:
 # SpaceMouse reader (optional — started only when device is found)
 # ---------------------------------------------------------------------------
 
-def _start_spacemouse(vendor_id: int = 9583, product_id: int = 50741,
-                      deadzone: float = 0.1,
-                      scale_pos: float = 0.05,
-                      scale_rot: float = 0.3) -> bool:
-    """Try to open the SpaceMouse and start a reader thread.
-
-    Returns True if the device was found, False otherwise.
-    SpaceMouse state is merged into _key_state so /intervention covers both.
-    """
+def _log_spacemouse_hid_probe() -> None:
+    """Print 3Dconnexion HID devices seen by hidapi (helps debug wireless PIDs)."""
     try:
         import hid
     except ImportError:
-        return False
+        return
+    hits: list[str] = []
+    for d in hid.enumerate():
+        vid = int(d.get("vendor_id", 0))
+        pid = int(d.get("product_id", 0))
+        man = (d.get("manufacturer_string") or "") or ""
+        prod = (d.get("product_string") or "") or ""
+        if vid == 0x256F or "3dconnexion" in man.lower() or "space" in prod.lower():
+            hits.append(
+                f"    vid=0x{vid:04x} pid=0x{pid:04x}  ({vid},{pid})  {prod!r}"
+            )
+    if hits:
+        print("[viz server] HID devices matching 3Dconnexion / SpaceMouse:", flush=True)
+        print("\n".join(hits), flush=True)
+        print(
+            "[viz server] Pass matching pair: "
+            "--spacemouse-vid 0x256f --spacemouse-pid 0x....",
+            flush=True,
+        )
+    else:
+        print(
+            "[viz server] hidapi enumerated no 3Dconnexion devices — "
+            "plug the receiver/USB cable and check System Settings → Privacy.",
+            flush=True,
+        )
 
+
+def _start_spacemouse(
+    usb_pairs: Optional[list[tuple[int, int]]] = None,
+    deadzone: float = 0.1,
+    scale_pos: float = 0.15,
+    scale_rot: float = 0.1,
+    translation_mix: Optional[np.ndarray] = None,
+    rotation_mix: Optional[np.ndarray] = None,
+) -> bool:
+    """Try to open a SpaceMouse on one of ``usb_pairs`` and start a reader thread.
+
+    Returns True if the device was found, False otherwise.
+    SpaceMouse state is merged into _key_state so /intervention covers both.
+
+    ``translation_mix`` / ``rotation_mix`` are 3×3 from merged dagger YAML
+    (``spacemouse.spatial_mapping``); default identity if omitted.
+    """
+    trans_m = np.asarray(
+        translation_mix if translation_mix is not None else np.eye(3),
+        dtype=np.float64,
+    )
+    rot_m = np.asarray(
+        rotation_mix if rotation_mix is not None else np.eye(3),
+        dtype=np.float64,
+    )
     try:
-        dev = hid.device()
-        dev.open(vendor_id, product_id)
-        dev.set_nonblocking(True)
-    except Exception:
+        opened = try_open_first_spacemouse(usb_pairs)
+    except ImportError:
+        print(
+            "[viz server] SpaceMouse requires hidapi:  pip install hidapi",
+            flush=True,
+        )
         return False
 
-    print("[viz server] SpaceMouse connected", flush=True)
+    pairs = dedupe_usb_pairs(list(usb_pairs or list(SPACEMOUSE_USB_PAIRS_DEFAULT)))
+    if opened is None:
+        tried = ", ".join(f"0x{v:04x}:0x{p:04x}" for v, p in pairs)
+        print(f"[viz server] SpaceMouse not found (tried {tried})", flush=True)
+        _log_spacemouse_hid_probe()
+        return False
+
+    dev, opened_vid, opened_pid = opened
+    print(
+        f"[viz server] SpaceMouse connected  usb 0x{opened_vid:04x}:0x{opened_pid:04x}",
+        flush=True,
+    )
 
     _sm_pose = [0.0] * 6          # x y z roll pitch yaw
     _sm_gripper_close = [False]
-    _sm_last_btn_time = [0.0]
-
-    def _convert(b1: int, b2: int) -> float:
-        v = (b2 << 8) | b1
-        if v >= 32768:
-            v -= 65536
-        return float(v) / 350.0
+    _sm_last_left_toggle = [0.0]
+    _sm_prev_btn_bits = [0]  # previous data[1] for report id 3 (bitmask)
 
     def _reader():
         while True:
             try:
-                data = dev.read(13)
+                # Motion reports are 13 bytes; button reports are often shorter — read a full buffer.
+                data = dev.read(64)
             except Exception:
                 break
-            if not data or len(data) < 13:
+            if not data:
                 time.sleep(0.001)
                 continue
 
-            if data[0] == 1:
-                y  = _convert(data[1], data[2])
-                x  = _convert(data[3], data[4])
-                z  = -_convert(data[5], data[6])
-                ro = _convert(data[7], data[8])
-                pi = _convert(data[9], data[10])
-                ya = _convert(data[11], data[12])
+            rid = data[0]
+            if rid == 1 and len(data) >= 13:
+                try:
+                    tx, ty, tz, r0, r1, r2 = decode_spacemouse_motion_report(data)
+                    x, y, z, ro, pi, ya = apply_spacemouse_spatial_mapping(
+                        tx, ty, tz, r0, r1, r2, trans_m, rot_m
+                    )
+                except ValueError:
+                    continue
                 _sm_pose[:] = [
                     x if abs(x) >= deadzone else 0.0,
                     y if abs(y) >= deadzone else 0.0,
@@ -234,14 +299,19 @@ def _start_spacemouse(vendor_id: int = 9583, product_id: int = 50741,
                     ya if abs(ya) >= deadzone else 0.0,
                 ]
 
-            elif data[0] == 3:
+            elif rid == 3 and len(data) >= 2:
+                # data[1] is a bitmask on most firmware (1=left, 2=right, 3=both).
+                b = int(data[1])
+                prev = int(_sm_prev_btn_bits[0])
                 now = time.time()
-                if data[1] == 1 and now - _sm_last_btn_time[0] > 0.2:
-                    _sm_gripper_close[0] = not _sm_gripper_close[0]
-                    _sm_last_btn_time[0] = now
-                if data[1] == 2:
+                if (b & 1) and not (prev & 1):
+                    if now - _sm_last_left_toggle[0] > 0.2:
+                        _sm_gripper_close[0] = not _sm_gripper_close[0]
+                        _sm_last_left_toggle[0] = now
+                if (b & 2) and not (prev & 2):
                     with _key_lock:
                         _key_state["is_intervening"] = not _key_state["is_intervening"]
+                _sm_prev_btn_bits[0] = b
 
             # Build 10-dim action from SpaceMouse pose
             x, y, z, ro, pi, ya = _sm_pose
@@ -361,8 +431,10 @@ def serve(
     port: int = 5002,
     fps: int = 30,
     device: str = "pygame",
-    dagger_config_name: str = "pygame_default",
+    dagger_config_name: str = "spacemouse_default",
     task: Optional[str] = None,
+    spacemouse_vendor_id: Optional[int] = None,
+    spacemouse_product_id: Optional[int] = None,
 ) -> None:
     install_macos_sdl_noise_suppression()
     import logging
@@ -372,7 +444,14 @@ def serve(
     if device == "pygame":
         _start_pygame_controller(dagger_config_name, task=task)
     elif device in ("spacemouse", "auto"):
-        found = _start_spacemouse()
+        merged = load_merged_dagger_config(dagger_config_name, task)
+        trans_mix, rot_mix = build_spacemouse_spatial_matrices(merged)
+        sm_pairs = spacemouse_usb_pairs_with_override(spacemouse_vendor_id, spacemouse_product_id)
+        found = _start_spacemouse(
+            usb_pairs=sm_pairs,
+            translation_mix=trans_mix,
+            rotation_mix=rot_mix,
+        )
         if not found and device == "spacemouse":
             print("[viz server] WARNING: SpaceMouse not found", flush=True)
         elif found:
@@ -433,21 +512,45 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DAgger visualization server")
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--device", default="pygame",
+    parser.add_argument("--device", default="spacemouse",
                         choices=["auto", "keyboard", "spacemouse", "pygame"],
-                        help="pygame: game controller (default); auto: SpaceMouse if present else keyboard")
+                        help="spacemouse (default); pygame: game controller; auto: SpaceMouse if present else keyboard")
     parser.add_argument(
         "--dagger-config",
-        default="pygame_default",
+        default="spacemouse_default",
         metavar="NAME",
-        help="Hydra dagger YAML stem (no .yaml), e.g. pygame_default — used for pygame bindings when --device pygame",
+        help="Hydra dagger YAML stem — SpaceMouse spatial_mapping when --device spacemouse|auto; pygame when --device pygame.",
     )
     parser.add_argument(
         "--task",
         default=None,
         metavar="NAME",
-        help="Optional data_collection task stem (e.g. square_mh, robocasa_layout_lowdim) "
-        "to merge pygame.spatial_mapping / rotation_mapping overrides into dagger-config.",
+        help="Optional data_collection task stem (e.g. square_mh) "
+        "to merge pygame/* and spacemouse.spatial_mapping overrides into dagger-config.",
+    )
+    parser.add_argument(
+        "--spacemouse-vid",
+        type=lambda s: int(s, 0),
+        default=None,
+        metavar="VID",
+        help="USB vendor id for SpaceMouse (decimal or 0x hex), e.g. 0x256f — use with --spacemouse-pid",
+    )
+    parser.add_argument(
+        "--spacemouse-pid",
+        type=lambda s: int(s, 0),
+        default=None,
+        metavar="PID",
+        help="USB product id for SpaceMouse (decimal or 0x hex) — use with --spacemouse-vid",
     )
     args = parser.parse_args()
-    serve(args.port, args.fps, args.device, args.dagger_config, task=args.task)
+    if (args.spacemouse_vid is None) ^ (args.spacemouse_pid is None):
+        parser.error("--spacemouse-vid and --spacemouse-pid must be passed together")
+    serve(
+        args.port,
+        args.fps,
+        args.device,
+        args.dagger_config,
+        task=args.task,
+        spacemouse_vendor_id=args.spacemouse_vid,
+        spacemouse_product_id=args.spacemouse_pid,
+    )

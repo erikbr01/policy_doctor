@@ -60,11 +60,11 @@ def merge_data_collection_task_into_dagger_cfg(
     """Overlay task YAML sections onto a dagger preset (task wins per-key).
 
     Reads ``configs/data_collection/tasks/<task>.yaml``. Merged top-level keys:
-    ``pygame``, ``visualization`` (nested dicts are deep-merged).
+    ``pygame``, ``spacemouse``, ``visualization`` (nested dicts are deep-merged).
     """
     if not task_cfg:
         return dagger_cfg
-    for key in ("pygame", "visualization"):
+    for key in ("pygame", "spacemouse", "visualization"):
         overlay = task_cfg.get(key)
         if overlay:
             deep_merge_dict(dagger_cfg.setdefault(key, {}), overlay)
@@ -77,6 +77,45 @@ def resolve_dagger_config_with_task(
     cfg = load_dagger_config(dagger_config_name)
     merge_data_collection_task_into_dagger_cfg(cfg, task_cfg)
     return cfg
+
+
+def load_merged_dagger_config(
+    dagger_config_name: str, task: Optional[str]
+) -> dict[str, Any]:
+    """Load a dagger preset and overlay optional data_collection task (viz_server / helpers)."""
+    cfg = load_dagger_config(dagger_config_name)
+    if task:
+        from policy_doctor.envs.data_collection_config import load_data_collection_task_config
+
+        merge_data_collection_task_into_dagger_cfg(cfg, load_data_collection_task_config(task))
+    return cfg
+
+
+def build_spacemouse_spatial_matrices(dagger_cfg: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """3×3 translation and rotation mixes from ``spacemouse.spatial_mapping`` (defaults: identity)."""
+    params = dagger_cfg.get("spacemouse", {})
+    spatial = params.get("spatial_mapping") or {}
+    trans = spatial.get("translation_mix")
+    rot = spatial.get("rotation_mix")
+    if trans is None:
+        trans_arr = np.eye(3, dtype=np.float64)
+    else:
+        trans_arr = np.asarray(trans, dtype=np.float64)
+        if trans_arr.shape != (3, 3):
+            raise ValueError(
+                "spacemouse.spatial_mapping.translation_mix must be a 3×3 matrix "
+                "(rows map [tx, ty, tz] desk frame → arm x,y,z)"
+            )
+    if rot is None:
+        rot_arr = np.eye(3, dtype=np.float64)
+    else:
+        rot_arr = np.asarray(rot, dtype=np.float64)
+        if rot_arr.shape != (3, 3):
+            raise ValueError(
+                "spacemouse.spatial_mapping.rotation_mix must be a 3×3 matrix "
+                "(rows map wire-order [r0, r1, r2] from decode → OSC [roll, pitch, yaw])"
+            )
+    return trans_arr, rot_arr
 
 
 def _parse_pygame_rotation_sources(params: dict[str, Any]) -> tuple[str, str]:
@@ -174,12 +213,15 @@ def create_intervention_device(config: dict[str, Any]) -> Any:
 
     elif device_type == "spacemouse":
         params = config.get("spacemouse", {})
+        trans_mix, rot_mix = build_spacemouse_spatial_matrices(config)
         return SpaceMouseInterventionDevice(
             vendor_id=params.get("vendor_id", 9583),
             product_id=params.get("product_id", 50741),
             deadzone=params.get("deadzone", 0.1),
             scale_position=params.get("scale_position", 125.0),
             scale_rotation=params.get("scale_rotation", 50.0),
+            translation_mix=trans_mix,
+            rotation_mix=rot_mix,
         )
 
     elif device_type == "xbox":

@@ -10,7 +10,7 @@ recording:
     - robot0_gripper_qpos
 
 # Merged into dagger preset when running ``task=square_mh`` / ``viz_server --task square_mh``
-# (see ``merge_data_collection_task_into_dagger_cfg``): ``pygame``, ``visualization``.
+# (see ``merge_data_collection_task_into_dagger_cfg``): ``pygame``, ``spacemouse``, ``visualization``.
 visualization:
   camera_names:
     - agentview
@@ -27,3 +27,18 @@ pygame:
   rotation_mapping:
     yaw_source: trigger_diff
     pitch_source: right_stick_x
+
+# SpaceMouse desk frame → arm OSC deltas (same indices as keyboard A/D, Q/E, W/S).
+spacemouse:
+  spatial_mapping:
+    # Desk: +tx = cap toward user's left, +ty = toward monitor, +tz = lift (calibrate_spacemouse).
+    # arm_x from desk forward (ty), arm_y from user-left (tx); ty sign tuned so forward not inverted.
+    translation_mix:
+      - [0.0, 1.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0]
+    # [r0,r1,r2] wire (bytes 7–8, 9–10, 11–12) → OSC roll, pitch, yaw.
+    rotation_mix:
+      - [0.0, 1.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [0.0, 0.0, -1.0]

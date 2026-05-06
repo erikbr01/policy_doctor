@@ -4,11 +4,22 @@
 device: spacemouse
 
 spacemouse:
-  vendor_id: 9583     # 3DConnexion SpaceMouse Compact (Wired)
+  vendor_id: 9583     # 0x256F — all 3Dconnexion USB HID
+  # product_id: 50741 wired Compact / SpaceNavigator; 50746 SpaceMouse Wireless USB;
+  # 50735/50734 some wireless receivers. Confirm with: python -u scripts/experiments/calibrate_spacemouse.py
   product_id: 50741
   deadzone: 0.1       # Reduce noise from stationary sensor
   scale_position: 125.0  # Empirical scaling from reference implementation
   scale_rotation: 50.0
+  spatial_mapping:
+    translation_mix:
+      - [1.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0]
+      - [0.0, 0.0, 1.0]
+    rotation_mix:
+      - [0.0, 1.0, 0.0]
+      - [1.0, 0.0, 0.0]
+      - [0.0, 0.0, -1.0]
 
 intervention:
   rule: node_value_threshold

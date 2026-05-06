@@ -31,6 +31,6 @@ device: auto              # auto | cuda:0 | mps | cpu
 no_monitor: true          # demo default: skip monitor and let human drive
 no_visualization: false
 viz_url: http://127.0.0.1:5002  # start run_viz_server.sh first
-dagger_config: pygame_default   # pygame_default | keyboard_default | spacemouse_default | xbox_default
+dagger_config: spacemouse_default   # spacemouse_default | pygame_default | keyboard_default | xbox_default
 episodes_dir: null        # metadata.yaml dir for window-level NearestCentroidAssigner
 server_url: null          # http://localhost:5001 — delegate inference to policy server

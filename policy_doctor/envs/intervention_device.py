@@ -12,6 +12,11 @@ from typing import Optional
 
 import numpy as np
 
+from policy_doctor.spacemouse_hid import (
+    apply_spacemouse_spatial_mapping,
+    decode_spacemouse_motion_report,
+)
+
 
 def _pygame_joystick_name_is_playstation(name: str) -> bool:
     """Heuristic for SDL/pygame raw *joystick* button order (not Xbox-like)."""
@@ -329,6 +334,10 @@ class SpaceMouseInterventionDevice(InterventionDevice):
         Scale factor for translational movements.
     scale_rotation : float, default 50.0
         Scale factor for rotational movements.
+    translation_mix : ndarray, optional
+        3×3 matrix mapping desk-frame ``[tx, ty, tz]`` → arm deltas (from dagger YAML).
+    rotation_mix : ndarray, optional
+        3×3 matrix mapping wire-order ``[r0, r1, r2]`` from decode → OSC roll/pitch/yaw.
     """
 
     ACTION_DIM = 10
@@ -340,6 +349,8 @@ class SpaceMouseInterventionDevice(InterventionDevice):
         deadzone: float = 0.1,
         scale_position: float = 125.0,
         scale_rotation: float = 50.0,
+        translation_mix: Optional[np.ndarray] = None,
+        rotation_mix: Optional[np.ndarray] = None,
     ) -> None:
         try:
             import hid
@@ -354,6 +365,14 @@ class SpaceMouseInterventionDevice(InterventionDevice):
         self.deadzone = deadzone
         self.scale_position = scale_position
         self.scale_rotation = scale_rotation
+        self._translation_mix = np.asarray(
+            translation_mix if translation_mix is not None else np.eye(3),
+            dtype=np.float64,
+        )
+        self._rotation_mix = np.asarray(
+            rotation_mix if rotation_mix is not None else np.eye(3),
+            dtype=np.float64,
+        )
 
         self._is_intervening = False
         self._device = None
@@ -364,6 +383,7 @@ class SpaceMouseInterventionDevice(InterventionDevice):
         self._pose = np.zeros(6, dtype=np.float32)  # x, y, z, roll, pitch, yaw
         self._gripper_active = False
         self._last_left_button_time = 0.0
+        self._prev_hid_buttons = 0  # bitmask from HID report id 3, byte 1
 
         self._open_device()
         self._start_reading_thread()
@@ -382,32 +402,29 @@ class SpaceMouseInterventionDevice(InterventionDevice):
                 "Check that 3DConnexion drivers are installed and SpaceMouse is connected."
             ) from e
 
-    def _to_int16(self, byte1: int, byte2: int) -> int:
-        """Convert two bytes to signed 16-bit integer."""
-        val = (byte2 << 8) | byte1
-        if val >= 32768:
-            val -= 65536
-        return val
-
-    def _convert(self, byte1: int, byte2: int) -> float:
-        """Convert two bytes to normalized float in [-1, 1]."""
-        val = self._to_int16(byte1, byte2)
-        return float(val) / 350.0  # 350 is empirical max from reference
-
     def _parse_hid_packet(self, data: list[int]) -> None:
-        """Parse a 13-byte HID packet from SpaceMouse."""
-        if not data or len(data) < 13:
+        """Parse HID reports from SpaceMouse (variable-length: motion vs buttons)."""
+        if not data:
             return
 
-        if data[0] == 1:  # 6-DOF sensor reading
-            # Extract raw values (data[1:13])
-            y = self._convert(data[1], data[2])
-            x = self._convert(data[3], data[4])
-            z = -self._convert(data[5], data[6])  # negate Z per reference
-
-            roll = self._convert(data[7], data[8])
-            pitch = self._convert(data[9], data[10])
-            yaw = self._convert(data[11], data[12])
+        rid = data[0]
+        if rid == 1:  # 6-DOF sensor reading
+            if len(data) < 13:
+                return
+            try:
+                tx, ty, tz, r0, r1, r2 = decode_spacemouse_motion_report(data)
+                x, y, z, roll, pitch, yaw = apply_spacemouse_spatial_mapping(
+                    tx,
+                    ty,
+                    tz,
+                    r0,
+                    r1,
+                    r2,
+                    self._translation_mix,
+                    self._rotation_mix,
+                )
+            except ValueError:
+                return
 
             # Apply deadzone
             if abs(x) < self.deadzone:
@@ -425,24 +442,24 @@ class SpaceMouseInterventionDevice(InterventionDevice):
 
             self._pose = np.array([x, y, z, roll, pitch, yaw], dtype=np.float32)
 
-        elif data[0] == 3:  # Button press
-            # Left button (data[1] == 1): gripper control
-            if data[1] == 1:
-                current_time = time.time()
+        elif rid == 3 and len(data) >= 2:  # Buttons (short report; not 13 bytes on many devices)
+            b = int(data[1])
+            prev = self._prev_hid_buttons
+            current_time = time.time()
+            if (b & 1) and not (prev & 1):
                 if current_time - self._last_left_button_time > 0.2:
                     self._gripper_active = not self._gripper_active
                     self._last_left_button_time = current_time
-
-            # Right button (data[1] == 2): toggle is_intervening
-            if data[1] == 2:
+            if (b & 2) and not (prev & 2):
                 self._is_intervening = not self._is_intervening
+            self._prev_hid_buttons = b
 
     def _read_loop(self) -> None:
         """Background thread: continuously read HID packets."""
         while not self._stop_reading:
             try:
                 if self._device is not None:
-                    data = self._device.read(13)
+                    data = self._device.read(64)
                     if data:
                         self._parse_hid_packet(data)
             except Exception as e:
@@ -505,6 +522,7 @@ class SpaceMouseInterventionDevice(InterventionDevice):
         self._pose.fill(0.0)
         self._gripper_active = False
         self._is_intervening = False
+        self._prev_hid_buttons = 0
 
     def close(self) -> None:
         """Stop reading thread and close device."""
