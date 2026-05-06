@@ -503,6 +503,30 @@ Run under two pipeline architectures:
 
 **F12d — At K=15/20, the two architectures converge.** Both give 0.28–0.36 at K=20 for their respective best configs. The architecture choice matters less at high K where cluster separability is the binding constraint.
 
+### Policy embedding naming convention
+
+Layer names follow the pattern `{hook}_{action}_t{T}`:
+
+**Hook** — which module in the diffusion UNet is tapped:
+
+| Hook name | Module | UNet position |
+|---|---|---|
+| `encoder` | `down_modules[-1][1]` | End of the downsampling path |
+| `bottleneck` | `mid_modules[-1]` | Bridge between down/up (most compressed) |
+| `decoder` | `up_modules[-1][1]` | End of the upsampling path |
+
+The naming follows the diffusion policy architecture: `encoder` = downsampling path, `bottleneck` = compressed middle, `decoder` = upsampling path. Somewhat counterintuitively, the `encoder` hook (early in the network) turns out to be the most discriminative for behavioral clustering.
+
+**Action input** — what action is fed into the UNet:
+- `plan` — the full 16-step rollout action plan (what was actually executed)
+- `exec` — `action[0]` tiled across the full horizon (single executed step)
+- `plan8` — first 8 executed steps, zero-padded to full horizon
+- *(omit)* — random noise (action washes out when averaged over t)
+
+**Diffusion timestep `t`** — the noise level at which the UNet is evaluated. The diffusion schedule runs from `t=0` (final denoising step, near-clean, σ≈0.01) up to `t=T-1` (pure noise). So `t=0` = the policy evaluating a nearly-committed action plan. Omitting `_t{N}` means the activation is averaged over 100 uniformly-spaced noise levels.
+
+---
+
 ### F13 — Policy bottleneck embedding ≈ state: obs-dominated when averaged over noise levels
 
 New representation `policy_emb` (layer=bottleneck): per-timestep UNet mid-module output
