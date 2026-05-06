@@ -361,6 +361,63 @@ class StateActionRepresentation(SliceRepresentation):
         return per_ts, ep_lens, ep_succ
 
 
+class PolicyEmbeddingRepresentation(SliceRepresentation):
+    """Pre-computed policy embeddings loaded from disk, sliding-windowed.
+
+    The embeddings are produced by ``compute_policy_embeddings.py`` (cupid_torch2
+    env, GPU) and saved as ``<eval_dir>/policy_embeddings/<layer>.npz`` with
+    key ``rollout_embeddings``, shape ``(N_total_timesteps, D)``.
+
+    Method kwargs:
+      - ``layer``: which embedding to load (default: ``"bottleneck"``).
+        Must match the filename produced by the compute script.
+    """
+
+    name = "policy_emb"
+
+    def _load(
+        self, eval_dir: pathlib.Path, *, layer: str = "bottleneck"
+    ) -> Tuple[np.ndarray, List[int], List]:
+        emb_path = eval_dir / "policy_embeddings" / f"{layer}.npz"
+        if not emb_path.exists():
+            raise FileNotFoundError(
+                f"Policy embeddings not found: {emb_path}\n"
+                f"Run compute_policy_embeddings.py --layer {layer} first."
+            )
+        with np.load(emb_path) as f:
+            embeddings = np.asarray(f["rollout_embeddings"], dtype=np.float32)
+        meta_path = eval_dir / "episodes" / "metadata.yaml"
+        import yaml
+        with open(meta_path) as fh:
+            meta = yaml.safe_load(fh)
+        ep_lens = meta["episode_lengths"]
+        ep_succ = meta.get("episode_successes", [None] * len(ep_lens))
+        return embeddings, ep_lens, ep_succ
+
+    def extract(
+        self,
+        eval_dir: pathlib.Path,
+        params: SliceWindowParams,
+        *,
+        layer: str = "bottleneck",
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        embeddings, ep_lens, ep_succ = self._load(eval_dir, layer=layer)
+        return build_windows_from_rollout_timestep_embeddings(
+            embeddings, ep_lens, ep_succ,
+            params.window_width, params.stride, params.aggregation,
+        )
+
+    def extract_per_timestep(
+        self,
+        eval_dir: pathlib.Path,
+        *,
+        layer: str = "bottleneck",
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[int], List]:
+        return self._load(eval_dir, layer=layer)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -390,6 +447,7 @@ def list_slice_representations() -> List[str]:
 register_slice_representation(InfEmbedRepresentation())
 register_slice_representation(StateRepresentation())
 register_slice_representation(StateActionRepresentation())
+register_slice_representation(PolicyEmbeddingRepresentation())
 
 
 __all__ = [
@@ -397,6 +455,7 @@ __all__ = [
     "SliceRepresentation",
     "InfEmbedRepresentation",
     "StateRepresentation",
+    "PolicyEmbeddingRepresentation",
     "StateActionRepresentation",
     "register_slice_representation",
     "get_slice_representation",

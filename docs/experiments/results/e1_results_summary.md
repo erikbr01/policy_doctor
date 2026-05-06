@@ -496,7 +496,13 @@ Run under two pipeline architectures:
 
 **F12d — At K=15/20, the two architectures converge.** Both give 0.28–0.36 at K=20 for their respective best configs. The architecture choice matters less at high K where cluster separability is the binding constraint.
 
-**Recommendation:** For InfEmbed at K=10, use window_first with (w=3,s=2) or the original (w=5,s=2). For K=15+, either architecture is comparable; window_first (5,5) or timestep_first (5,5) are reasonable choices.
+**F12e — No simple "higher K → smaller window" rule.** Best window per K: K=5→(3,2), K=10→(3,2), K=15→(5,5), K=20→(3,2). The K=15 exception breaks any monotonic story, and by K=15/20 the differences between window configs are within noise anyway (except `(1,1)` which remains slightly worse).
+
+The practical rules that do hold:
+1. **Avoid w=1 at K≤10.** Single-timestep windows are consistently the worst and cost ~2× at K=10 (0.244 vs 0.469).
+2. **Prefer overlapping stride (s < w) at moderate K.** At K=10, `(3,2)` and `(2,2)` both beat non-overlapping `(5,5)`.
+3. **`(w=3, s=2)` is a safe default across all K.** It is best or tied-best at K=5, 10, and 20, and only 7pt below the K=15 winner. The benefit of tuning window width further is small once you're past the single-timestep baseline.
+4. **The original `(w=5, s=2)` default remains the best known at K=10** (0.481 from F1–F10, not tested in the sweep but consistent with the pattern of overlapping medium-width windows).
 
 ---
 
