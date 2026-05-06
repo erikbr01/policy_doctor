@@ -75,6 +75,20 @@ class SliceRepresentation(ABC):
     ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         ...
 
+    @abstractmethod
+    def extract_per_timestep(
+        self,
+        eval_dir: pathlib.Path,
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[int], List]:
+        """Return (per_timestep_features, episode_lengths, episode_successes).
+
+        per_timestep_features: (N_total_timesteps, D) float32 — raw, before
+        windowing.  episode_lengths and episode_successes are needed later by
+        :func:`build_windows_from_rollout_timestep_embeddings`.
+        """
+        ...
+
     def describe(self, params: SliceWindowParams, **method_kwargs: Any) -> Dict[str, Any]:
         """JSON-serializable fingerprint for the clustering manifest."""
         out = {
@@ -233,6 +247,15 @@ class InfEmbedRepresentation(SliceRepresentation):
             params.aggregation,
         )
 
+    def extract_per_timestep(
+        self,
+        eval_dir: pathlib.Path,
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[int], List]:
+        from policy_doctor.data.clustering_embeddings import load_infembed_per_timestep
+
+        return load_infembed_per_timestep(eval_dir)
+
 
 class StateRepresentation(SliceRepresentation):
     """Proprioceptive observation vectors as the per-timestep feature.
@@ -264,6 +287,23 @@ class StateRepresentation(SliceRepresentation):
             per_ts, ep_lens, ep_succ,
             params.window_width, params.stride, params.aggregation,
         )
+
+    def extract_per_timestep(
+        self,
+        eval_dir: pathlib.Path,
+        *,
+        obs_strategy: str = "current",
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[int], List]:
+        ep_lens, ep_succ = _load_eval_episodes_meta(eval_dir)
+
+        def _feat(row):
+            return _flatten_obs_row(row["obs"], obs_strategy=obs_strategy)
+
+        per_ts = _build_per_timestep_matrix(
+            eval_dir, feature_fn=_feat, expected_episode_lengths=ep_lens,
+        )
+        return per_ts, ep_lens, ep_succ
 
 
 class StateActionRepresentation(SliceRepresentation):
@@ -299,6 +339,26 @@ class StateActionRepresentation(SliceRepresentation):
             per_ts, ep_lens, ep_succ,
             params.window_width, params.stride, params.aggregation,
         )
+
+    def extract_per_timestep(
+        self,
+        eval_dir: pathlib.Path,
+        *,
+        obs_strategy: str = "current",
+        action_strategy: str = "executed",
+        **method_kwargs: Any,
+    ) -> Tuple[np.ndarray, List[int], List]:
+        ep_lens, ep_succ = _load_eval_episodes_meta(eval_dir)
+
+        def _feat(row):
+            obs_v = _flatten_obs_row(row["obs"], obs_strategy=obs_strategy)
+            act_v = _flatten_action_row(row["action"], action_strategy=action_strategy)
+            return np.concatenate([obs_v, act_v], axis=0)
+
+        per_ts = _build_per_timestep_matrix(
+            eval_dir, feature_fn=_feat, expected_episode_lengths=ep_lens,
+        )
+        return per_ts, ep_lens, ep_succ
 
 
 # ---------------------------------------------------------------------------

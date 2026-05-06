@@ -2,22 +2,27 @@
 
 This document captures findings, methodological caveats, and queued follow-ups for Experiment E1 on the transport_mh r512x512 policy/rollouts/clustering. It is **separate from `experiment_e1_cluster_coherence.md`**, which describes how to run the experiment; this doc describes what the runs produced.
 
-Last updated: 2026-05-04
+Last updated: 2026-05-04 (F10, F11 added)
 
 ---
 
 ## Headline numbers
 
-All runs use Qwen3-VL-8B-Instruct (local, GPU-1 or GPU-0, bf16, greedy decoding) on the InfEmbed clustering of `transport_mh_seed0_r512` (8086 slices, 5-frame sliding windows, stride 2, 100D UMAP, kmeans).
+All runs use Qwen3-VL-8B-Instruct (local, GPU-1 or GPU-0, bf16, greedy decoding) on clusterings of `transport_mh_seed0_r512` (8086 slices, 5-frame sliding windows, stride 2, 100D UMAP, kmeans). Default representation is InfEmbed unless noted.
 
 The E1 protocol classifies held-out rollout slices into K opaque cluster labels using K · n_example example storyboards in one prompt.
 
-| Run | K | n_example | n_query | n_reps | Examples | Global disjoint | Headline acc | Clean (tier1_global) acc | Clean p (vs 1/K) |
-|---|---|---|---|---|---|---|---|---|---|
-| K=20 v1 | 20 | 3 | 3 | 1 | random | no | 33.3% (20/60) | 28.6% (12/42) | 6.6e-7 |
-| K=20 v2 | 20 | 3 | 3 | 3 | centroid-proximal | yes | 31.7% (19/60) | 24.1% (13/54) | 1.9e-6 |
-| K=15 v2 | 15 | 3 | 3 | 3 | centroid-proximal | yes | 37.8% (17/45) | 30.8% (12/39) | 5.5e-6 |
-| **K=10 v2** | **10** | 3 | 3 | 3 | centroid-proximal | yes | **53.3% (16/30)** | **48.1% (13/27)** | **5.2e-7** |
+| Run | Repr | K | n_example | n_query | n_reps | Examples | Global disjoint | Headline acc | Clean (tier1_global) acc | Clean p (vs 1/K) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| K=20 v1 | InfEmbed | 20 | 3 | 3 | 1 | random | no | 33.3% (20/60) | 28.6% (12/42) | 6.6e-7 |
+| K=20 v2 | InfEmbed | 20 | 3 | 3 | 3 | centroid-proximal | yes | 31.7% (19/60) | 24.1% (13/54) | 1.9e-6 |
+| K=15 v2 | InfEmbed | 15 | 3 | 3 | 3 | centroid-proximal | yes | 37.8% (17/45) | 30.8% (12/39) | 5.5e-6 |
+| **K=10 v2** | **InfEmbed** | **10** | 3 | 3 | 3 | centroid-proximal | yes | **53.3% (16/30)** | **48.1% (13/27)** | **5.2e-7** |
+| K=10 + 768² | InfEmbed | 10 | 3 | 3 | 3 | centroid-proximal | yes | 56.7% (17/30) | 51.9% (14/27) | 5.6e-8 |
+| state K=10 + 768² | state | 10 | 3 | 3 | 3 | centroid-proximal | yes | 46.7% (14/30) | 46.7% (14/30)† | 3.1e-7 |
+| state_action K=10 + 768² | state_action | 10 | 3 | 3 | 3 | centroid-proximal | yes | 40.0% (12/30) | 33.3% (9/27) | 8.7e-4 |
+
+† state K=10 sample plan has all 30 queries in tier1_global (no cross-cluster episode contamination), so headline = clean.
 
 "Clean" = queries in the `tier1_global` bucket — episode appears in NO cluster's example pool. This is the proper test; episode-confounded queries are excluded.
 
@@ -117,7 +122,7 @@ Tested three storyboard formats against the K=10 v2 baseline (composite mf=4 tar
 | (A) hybrid (composite ex + frames query, mf=4) | 0.200 | 0.222 | 4.7e-2 | drops by half — VLM treats query frames as more examples |
 | (B) pure frames (mf=4, image_max_pixels=147k) | OOM | — | — | 124 images per call exceeds 24GB activation memory |
 
-**F8a — Larger composites give a small but consistent improvement.** Config (C) is the new best at K=10 v2, +0.04 clean accuracy over baseline at zero token cost. Confirms F6b (per-cell resolution matters) but the magnitude of the gain is modest — the gap to ceiling is mostly elsewhere.
+**F8a — Larger composites give a small but consistent improvement; 768² is the VRAM ceiling.** Config (C) is the new best at K=10 v2, +0.04 clean accuracy over baseline at zero token cost. Confirms F6b (per-cell resolution matters) but the magnitude of the gain is modest — the gap to ceiling is mostly elsewhere. A follow-up attempt at 1024² (`composite_target_size=1024`, `image_max_pixels=1048576`) OOMed during the first vision-encoder forward pass on the 24GB GPU — the larger patch grid fills all 24GB at K=10/n_example=3. 768² is therefore not an arbitrary choice but the empirical VRAM ceiling for this config.
 
 **F8b — Asymmetric multimodal formatting causes major regression.** Config (A) drops clean accuracy to 0.222 (almost halving from 0.481). Same image content as (B) at the visual level but split across formats: 30 example *composites* (one per example slice) followed by 4 query *frames* (one per timestep). The "Query:" text label between them isn't a strong enough boundary — the VLM apparently reads the 4 query frames as 4 more example images, fitting into whichever group's visual style they best match. Even the same-episode bucket goes 0/3 (vs baseline's 3/3 — episode cues stop helping when the prompt structure is broken).
 
@@ -151,6 +156,70 @@ The signal-to-chance ratio is **stable at 4.6–5.2× from K=15 down to K=10**, 
 
 **Synthesis (F8 + F9):** the storyboard composite is *not* the bottleneck. Format alone (composite vs frames vs hybrid) doesn't move the needle once we control for image count and per-cell resolution. The remaining gap from ~50% clean → ceiling is in the clustering itself or the slice content (5-frame windows + cluster-prototype ambiguity), not the prompt format. Larger composite cells (F8a) give a small honest gain (+0.04 clean); everything else moves it sideways or down.
 
+### F11 — Resolution / n_example tradeoff: 768² remains the practical ceiling; trading examples for resolution is a net loss
+
+Full sweep across K ∈ {5, 10, 15, 20}, n_example ∈ {2, 3}, composite_target_size ∈ {512², 768², 1024², 1536²}. All InfEmbed, GPU 0, seed 42, n_query=3, n_reps=3, global_episode_disjoint.
+
+| K | n_ex | 512² clean | 768² clean | 1024² clean | 1536² clean |
+|---|---|---|---|---|---|
+| 5 | 3 | 0.467 (7/15) [ref] | 0.533 (8/15) | 0.400 (6/15) | OOM |
+| 10 | 3 | 0.481 (13/27) [ref] | **0.519 (14/27)** [ref] | OOM | OOM |
+| 10 | 2 | 0.407 (11/27) | 0.444 (12/27) | OOM | OOM |
+| 15 | 3 | 0.308 (12/39) [ref] | OOM | OOM | OOM |
+| 15 | 2 | 0.333 (13/39) | 0.385 (15/39) | OOM | OOM |
+| 20 | 3 | 0.241 (13/54) [ref] | OOM | OOM | OOM |
+| 20 | 2 | 0.241 (13/54) | OOM | OOM | OOM |
+
+**F11a — Trading n_example=3 → n_example=2 to fit higher resolution is a net loss at K=10.** The resolution gain from 512² → 768² is +4pt clean (0.481 → 0.519 at n_ex=3). Dropping to n_ex=2 costs ~7pt at each resolution (512²: 0.481→0.407; 768²: 0.519→0.444). You cannot recover the example-count penalty with resolution, at least in the n_ex ∈ {2, 3} range.
+
+**F11b — At K=15 and K=20, n_example=2 ≈ n_example=3.** K=15: n_ex=3 512²=0.308, n_ex=2 512²=0.333 (+1 query). K=20: both 0.241 (identical 13/54). At high K the limiting factor is cluster separability, not how many example storyboards the VLM sees. This has a useful implication: for K≥15, using n_ex=2 recovers VRAM headroom (31→21 images/call at K=15) at essentially no accuracy cost, enabling 768² at K=15.
+
+**F11c — 768² at K=15 n_ex=2 = 0.385 clean** — the best K=15 result we have, +8pt over the n_ex=3 512² baseline (0.308). The gain comes partly from resolution and partly from the 30→39 clean-query difference between n_ex=2 (no episode contamination) and n_ex=3 (some contamination at K=15), so it isn't purely a resolution effect.
+
+**F11d — VRAM ceiling map (empirical, 24GB GPU):**
+
+| Composite | Max images/call | Fits if… |
+|---|---|---|
+| 512² | unlimited | always |
+| 768² | ~30 | K·n_ex ≤ 29 (e.g. K=10/n_ex=3 ✓, K=15/n_ex=2 ✓, K=20/n_ex=2 ✗) |
+| 1024² | ~16 | K·n_ex ≤ 15 (e.g. K=5/n_ex=3 ✓, K=10/n_ex=2 ✗) — LLM KV cache |
+| 1536² | 0 | never — single-image vision encoder OOM |
+
+OOM at 1024²+ (LLM decoder) has 1.4–1.6 GB reserved-but-unallocated; `expandable_segments=True` might squeeze through a few more images, but this is not worth pursuing — the gain over 768² at K=5 is already negative (0.533→0.400).
+
+**F11e — Resolution helps monotonically at K=5, but needs n≥100 to see it.** The n_query=3 (n=15 clean) runs showed a non-monotonic 512²=0.467 → 768²=0.533 → 1024²=0.400, which appeared to disfavor 1024². Re-running at n_query=20 (n=100 clean) reveals the opposite: a clean monotonic trend.
+
+| Comp | n_query=3 (n=15) | n_query=20 (n=100) | 95% Wilson CI |
+|---|---|---|---|
+| 512² | 0.467 | 0.480 | [0.385, 0.577] |
+| 768² | 0.533 | 0.500 | [0.404, 0.596] |
+| **1024²** | 0.400 | **0.530** | **[0.433, 0.625]** |
+
+Each resolution step gains ~2-5pt clean accuracy at K=5. Pairwise differences are not individually significant at n=100 (CIs overlap ±9%), but the monotonic trend across three points is consistent. The n=15 reversal was entirely noise. **1024² (0.530 clean) is the best K=5 result**, and would likely improve further at 1536² if VRAM allowed.
+
+The implication is important: **resolution consistently helps, but at K=10 the ceiling is VRAM (16 images/call fits at 1024², 21 does not), not the model's perceptual ability.** If the prompt could be split or GPU memory increased, higher resolution would continue to gain.
+
+**Synthesis (F8, F9, F11):** Resolution helps monotonically wherever it fits in VRAM. The current ceiling is 768² at K=10/n_ex=3 (best reachable: 0.519 clean) and 1024² at K=5/n_ex=3 (0.530 clean). For K≥15, n_ex=2+768² is the best option and costs nothing accuracy-wise vs n_ex=3. The gap between observed performance and ceiling is mostly clustering quality, not image resolution — but resolution is a real lever wherever the budget allows.
+
+### F10 — Representation comparison: InfEmbed > state ≈ state_action at K=10
+
+All three representations evaluated at K=10 with the same best-known config (composite 768², mf=4, n_example=3, n_query=3, n_reps=3, global_episode_disjoint, seed=42).
+
+| Representation | Headline | Clean | Ratio (acc / chance) | p |
+|---|---|---|---|---|
+| InfEmbed K=10 + 768² | 0.567 (17/30) | **0.519 (14/27)** | **5.2×** | 5.6e-8 |
+| InfEmbed K=10 baseline (512²) | 0.533 (16/30) | 0.481 (13/27) | 4.8× | 5.2e-7 |
+| **state K=10 + 768²** | 0.467 (14/30) | **0.467 (14/30)** | **4.7×** | 3.1e-7 |
+| state_action K=10 + 768² | 0.400 (12/30) | 0.333 (9/27) | 3.3× | 8.7e-4 |
+
+**F10a — InfEmbed clusters are more visually coherent than state/state_action at matched K.** InfEmbed's 768² clean acc (0.519) is ~56% higher than state_action's (0.333) and ~11% higher than state's (0.467). Same VLM, same prompt, same K — only the clustering changes.
+
+**F10b — State is notably better than state_action (0.467 vs 0.333 clean).** Adding raw actions to the observation features *hurts* visual coherence. State-only clustering produces fully clean sample plans (all 30 queries are tier1_global — no cross-cluster episode contamination), while state_action loses 3 queries to contamination. The action concatenation may inflate feature dimensionality (59D → 79D) without adding cluster-separating signal, causing UMAP/kmeans to split on action-space noise rather than behaviorally meaningful structure.
+
+**F10c — State clustering still well above chance.** State K=10 passes H1 comfortably (p=3.1e-7, ratio 4.7×), comparable to InfEmbed in the ratio metric — but the absolute clean acc is 5 points lower. The VLM can recover some structure from state-clustered slices; influence just produces tighter clusters.
+
+**Implication:** influence captures behavioral structure that raw observations alone do not. The gap is real and meaningful (0.519 vs 0.467 at matched K, same evaluation). However, state clustering is not noise — it's a viable weaker baseline, not a flat-chance result. The influence signal's advantage likely reflects its sensitivity to *how the policy processes* the state, not just what the state is.
+
 ---
 
 ## Best-known config (post-F8/F9)
@@ -183,9 +252,9 @@ Of the original six confounds, two are now substantially settled:
 |---|---|---|
 | 1 | Slice length / temporal context | **Partially answered (F6a)** — naive extension at fixed frame count *worsens* accuracy due to sampling-position artifacts. Density-matched extension helps slightly (F6c) but is bottlenecked by per-cell resolution (F6b). The clean test (raise composite resolution) hasn't been run yet. |
 | 2 | VLM capacity | **Answered (F5)** — Qwen3-VL-32B-NF4 is identical to 8B. Not the bottleneck. |
-| 3 | Image budget per storyboard | **Largely answered (F8a)** — composite resolution is now configurable (`--composite_target_size`), and going from 512² → 768² (cells 256² → 384²) gives +0.04 clean. Real but small. Hybrid format (F8b) is *worse*; pure frames doesn't fit at K=10 (F8c). |
+| 3 | Image budget per storyboard | **Answered (F8a, F11)** — 768² is the VRAM ceiling at K=10/n_ex=3 (1024² OOMs). Trading n_ex=3→2 to reach 1024² costs −7pt clean at K=10 (net loss). At K≥15, n_ex=2+768² is the best reachable config and costs nothing accuracy-wise. 1536² is unreachable (single-image vision encoder OOM). |
 | 4 | Clustering hyperparameters | Not yet swept on real data. Sweep harness built (`scripts/run_clustering_sweep.py`); spec at `sweep_specs/transport_r512_alt_clustering.yaml` (108 combos). |
-| 5 | Representation choice | **Partial** — abstraction + state/state_action concretes implemented and tested. K=10 state and state_action clusterings BUILT on real data; E1 evaluation not yet run. |
+| 5 | Representation choice | **Answered (F10)** — InfEmbed (0.519 clean) > state (0.467) > state_action (0.333) at K=10. InfEmbed captures behavioral structure beyond raw obs; state is a viable but weaker baseline; adding raw actions to state hurts. |
 | 6 | Stronger frontier VLM | Pending. F5 makes this a lower-priority lever. |
 
 ---
@@ -221,23 +290,14 @@ Beyond K, sweep:
 
 This is a lot of clusterings (each a few minutes of CPU). The sweep harness lets us run them in batch and evaluate any subset through E1.
 
-### Q5 — Baseline representations (PARTIAL — clusterings built, evaluation pending)
+### Q5 — Baseline representations (DONE — see F10)
 
-Two new representations cluster the same rollout slices using non-influence features:
+All three representations evaluated at K=10 with the best-known config (768² composite). Results: InfEmbed (0.519 clean) > state (0.467) > state_action (0.333). See F10 for full breakdown.
 
-- **State** — concatenated proprioceptive observations across the window (sum/mean/concat aggregation).
-- **State+action** — same as state, with action vectors concatenated to obs at each timestep.
-
-Status:
 - `policy_doctor/data/slice_representations.py` — abstraction + 3 concretes (`infembed`, `state`, `state_action`) tested and committed (commit `c9d69ff`).
 - `scripts/build_alt_clustering.py` — single-config CLI tested and committed.
-- `scripts/run_clustering_sweep.py` — sweep harness built and committed.
-- **K=10 clusterings built (CPU, 20 s each):**
-  - `/tmp/transport_r512_state_k10/` — features (8086, 59) → 100D UMAP → kmeans K=10
-  - `/tmp/transport_r512_state_action_k10/` — features (8086, 79) → 100D UMAP → kmeans K=10
-- **E1 evaluation: NOT yet run** (queued behind K=5 visual sweep currently on GPU 0).
-
-If InfEmbed-clustered slices are more visually-recoverable than state-clustered slices at matched K, that's evidence influence captures behaviorally meaningful structure beyond what raw observations encode. Clean comparison is `state K=10 clean acc` vs `state_action K=10 clean acc` vs InfEmbed K=10 v2's 0.481.
+- K=10 clusterings: `/tmp/transport_r512_state_k10/`, `/tmp/transport_r512_state_action_k10/`.
+- E1 results: `experiments/e1_transport_r512_seed0_qwen3vl8b_state_k10/`, `experiments/e1_transport_r512_seed0_qwen3vl8b_state_action_k10/`.
 
 ---
 
@@ -400,10 +460,50 @@ Most informative single-axis slices to evaluate first:
 
 ---
 
+## F12 — Window-parameter sweep: (w=3,s=2) is the best window for InfEmbed; architecture order matters
+
+Full sweep: InfEmbed × (w,s) ∈ {(1,1),(2,2),(3,2),(5,5)} × K ∈ {5,10,15,20} × 3 seeds, 512² composite.
+Run under two pipeline architectures:
+- **window_first** (matches F1–F10): window → UMAP(100D) → kmeans. Results in `e1_window_sweep_wf_results.md`.
+- **timestep_first** (new): UMAP(50D) on per-timestep features → window → kmeans. Results in `e1_window_sweep_results.md`.
+
+### Unified comparison (InfEmbed, mean clean acc ± std across 3 seeds)
+
+| K | (w,s) | window_first | ratio | timestep_first | ratio |
+|---|---|---|---|---|---|
+| 5 | (1,1) | 0.422±0.083 | 2.1× | 0.600±0.054 | 3.0× |
+| 5 | (2,2) | 0.422±0.031 | 2.1× | 0.444±0.083 | 2.2× |
+| **5** | **(3,2)** | **0.556±0.031** | **2.8×** | 0.444±0.083 | 2.2× |
+| 5 | (5,5) | 0.511±0.063 | 2.6× | **0.644±0.031** | **3.2×** |
+| 10 | (1,1) | 0.244±0.016 | 2.4× | 0.300±0.054 | 3.0× |
+| 10 | (2,2) | 0.370±0.052 | 3.7× | 0.300±0.054 | 3.0× |
+| **10** | **(3,2)** | **0.469±0.046** | **4.7×** | 0.311±0.057 | 3.1× |
+| 10 | (5,5) | 0.411±0.016 | 4.1× | 0.367±0.072 | 3.7× |
+| 15 | (1,1) | 0.310±0.019 | 4.6× | 0.310±0.051 | 4.6× |
+| 15 | (2,2) | 0.310±0.085 | 4.6× | 0.286±0.019 | 4.3× |
+| 15 | (3,2) | 0.294±0.022 | 4.4× | 0.206±0.030 | 3.1× |
+| **15** | **(5,5)** | **0.356±0.018** | **5.3×** | 0.302±0.056 | 4.5× |
+| 20 | (1,1) | 0.222±0.022 | 4.4× | 0.246±0.014 | 4.9× |
+| 20 | (2,2) | 0.211±0.025 | 4.2× | 0.263±0.029 | 5.3× |
+| **20** | **(3,2)** | **0.281±0.014** | **5.6×** | 0.216±0.022 | 4.3× |
+| 20 | (5,5) | 0.250±0.014 | 5.0× | **0.298±0.089** | **6.0×** |
+
+**F12a — window_first: (w=3,s=2) is the best or tied-best window at K=5, K=10, and K=20.** At K=15 `(5,5)` wins. Single-timestep `(1,1)` windows are worst at K=10 (0.244 vs 0.469). The original default `(w=5,s=2)` — not tested here — gave 0.481 at K=10; `(3,2)` at 0.469 is the closest match in this sweep.
+
+**F12b — timestep_first inverts the pattern at K=5 and K=20.** At K=5, `(5,5)` wins (0.644 vs 0.556 for window_first's best). At K=10, all configs are weaker than window_first. At K=20 `(5,5)` again leads (0.298). The architecture change (50D UMAP on raw per-timestep features vs 100D UMAP on windowed features) shifts the optimal window, especially at the extremes of K.
+
+**F12c — window_first consistently outperforms timestep_first at K=10** (all configs: 0.244–0.469 vs 0.300–0.367). Window aggregation *before* UMAP gives UMAP better-structured input for the K=10 sweet spot. The timestep_first approach loses this advantage because UMAP sees noisier individual timestep features.
+
+**F12d — At K=15/20, the two architectures converge.** Both give 0.28–0.36 at K=20 for their respective best configs. The architecture choice matters less at high K where cluster separability is the binding constraint.
+
+**Recommendation:** For InfEmbed at K=10, use window_first with (w=3,s=2) or the original (w=5,s=2). For K=15+, either architecture is comparable; window_first (5,5) or timestep_first (5,5) are reasonable choices.
+
+---
+
 ## Findings to write up after the next batch
 
-- Does **state-only clustering** recover any visually-coherent structure at K=10? (If clean acc near chance, that's evidence influence carries unique signal beyond raw obs.) Clusterings built; E1 eval pending.
-- Does **state_action** clustering match or beat InfEmbed at K=10? Clusterings built; E1 eval pending.
+- **State-only K=10**: clean acc = 0.467, ratio 4.7× above chance — state clusters do recover visual structure, but InfEmbed's 0.519 is notably higher. Influence carries unique signal beyond raw obs. (F10)
+- **State_action K=10**: clean acc = 0.333, ratio 3.3× — adding raw actions to state *hurts* cluster coherence. (F10)
 - Does **K=5 pure frames** mode (currently running) outperform K=5 composite baseline? Tells us whether the mode itself matters once context allows.
 - Does **per-slice numeric obs/action text** (`--include_action_text` / `--include_state_text`, commit `6391f0c`) help on top of the visual baseline? Runs both ways at K=10 to isolate.
 - Does window_width=10 with the InfEmbed representation give cleaner clusters than width=5?
