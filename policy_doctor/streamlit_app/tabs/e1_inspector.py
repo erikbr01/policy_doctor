@@ -21,7 +21,17 @@ import io
 import json
 import pathlib
 import pickle
+import sys
 from typing import Dict, List, Optional, Tuple
+
+# This file may be loaded via importlib while policy_doctor resolves to a
+# sibling worktree that lacks these modules. Force the correct repo root first,
+# then evict any stale policy_doctor.vlm cache entries.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+for _k in [k for k in sys.modules if k.startswith("policy_doctor.vlm")]:
+    del sys.modules[_k]
 
 import numpy as np
 import streamlit as st
