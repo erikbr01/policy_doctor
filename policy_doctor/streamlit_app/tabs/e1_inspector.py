@@ -91,6 +91,18 @@ def _load_episode_pkl(eval_dir_str: str, rollout_idx: int):
 
 
 @st.cache_data(show_spinner=False)
+def _load_episode_meta(eval_dir_str: str):
+    """Return (episode_lengths, episode_successes) from episodes/metadata.yaml."""
+    import yaml
+    meta_path = pathlib.Path(eval_dir_str) / "episodes" / "metadata.yaml"
+    with open(meta_path) as f:
+        meta = yaml.safe_load(f) or {}
+    lengths = meta.get("episode_lengths", [])
+    successes = meta.get("episode_successes", [None] * len(lengths))
+    return lengths, successes
+
+
+@st.cache_data(show_spinner=False)
 def _make_storyboard_cached(
     eval_dir_str: str,
     slice_idx: int,
@@ -351,14 +363,20 @@ def _render_episode_player(
     frame_seed: int,
 ) -> None:
     eval_dir_path = pathlib.Path(eval_dir)
-    pkls = list_rollout_episode_pkls(eval_dir_path / "episodes")
-    n_episodes = len(pkls)
+    ep_lengths, ep_successes = _load_episode_meta(eval_dir)
+    n_episodes = len(ep_lengths)
 
-    rollout_idx = st.number_input(
-        "Episode (rollout_idx)", min_value=0, max_value=n_episodes - 1,
-        value=0, step=1,
+    def _ep_label(i: int) -> str:
+        succ = ep_successes[i] if i < len(ep_successes) else None
+        tag = " ✓" if succ is True else (" ✗" if succ is False else "")
+        return f"ep {i:03d}{tag}  ({ep_lengths[i]} steps)"
+
+    rollout_idx = st.selectbox(
+        "Episode",
+        list(range(n_episodes)),
+        format_func=_ep_label,
+        key="ep_player_rollout_idx",
     )
-    rollout_idx = int(rollout_idx)
 
     assignments = _episode_slice_assignments(rollout_idx, metadata, labels)
     if not assignments:
@@ -472,7 +490,21 @@ def _render_prompt_inspector(
         st.info("No queries for this cluster.")
         return
 
-    q_idx = st.selectbox("Query slice", cdata["query_indices"], key="prompt_qidx")
+    def _slice_label(s_idx: int) -> str:
+        if s_idx < len(metadata):
+            m = metadata[s_idx]
+            r = m.get("rollout_idx", "?")
+            w0 = m.get("window_start", m.get("start", "?"))
+            w1 = m.get("window_end", m.get("end", "?"))
+            pred = pred_by_query.get(s_idx)
+            ok = "✓" if (pred and pred["is_correct"]) else ("✗" if pred else "")
+            return f"slice {s_idx}  ep{r} t={w0}–{w1}  {ok}"
+        return f"slice {s_idx}"
+
+    q_idx = st.selectbox(
+        "Query slice", cdata["query_indices"],
+        format_func=_slice_label, key="prompt_qidx",
+    )
     pred = pred_by_query.get(q_idx)
     if pred is None:
         st.warning(f"No prediction found for query_idx={q_idx}")
