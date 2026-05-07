@@ -2,7 +2,7 @@
 
 This document captures findings, methodological caveats, and queued follow-ups for Experiment E1 on the transport_mh r512x512 policy/rollouts/clustering. It is **separate from `experiment_e1_cluster_coherence.md`**, which describes how to run the experiment; this doc describes what the runs produced.
 
-Last updated: 2026-05-04 (F10, F11 added)
+Last updated: 2026-05-06 (F16 head-to-head; F10d state/state_action K sweep; clustering paths updated)
 
 ---
 
@@ -227,6 +227,17 @@ All three representations evaluated at K=10 with the same best-known config (com
 
 **Implication:** influence captures behavioral structure that raw observations alone do not. The gap is real and meaningful (0.519 vs 0.467 at matched K, same evaluation). However, state clustering is not noise — it's a viable weaker baseline, not a flat-chance result. The influence signal's advantage likely reflects its sensitivity to *how the policy processes* the state, not just what the state is.
 
+**F10d — State and state_action K sweep** (obs=current, action=executed, same 50D UMAP pipeline, w=5,s=2):
+
+| K | state clean | Ratio | p | state_action clean | Ratio | p |
+|---|---|---|---|---|---|---|
+| 5 | 0.600 (9/15) | 3.0× | 7.9e-4 | **0.733 (11/15)** | 3.7× | 1.3e-5 |
+| 10 | 0.467 (14/30) | 4.7× | 3.1e-7 | 0.333 (9/27) | 3.3× | 8.7e-4 |
+| 15 | 0.303 (10/33) | 4.5× | 3.9e-5 | 0.417 (15/36) | 6.2× | 3.3e-9 |
+| 20 | 0.359 (14/39) | 7.2× | 2.8e-9 | 0.333 (15/45) | 6.7× | 2.5e-9 |
+
+All results significant. State_action is notably strong at K=5 (0.733, 3.7×) — the executed action is a clear discriminator when there are only 5 clusters — but collapses at K=10 (0.333) as clusters become finer-grained and the single executed step no longer separates them. State is more consistent across K. Both representations are superseded by `state_action_full` (full history + full plan, 0.480 at K=10 — see F16) when the complete predicted trajectory is available.
+
 ---
 
 ## Best-known config (post-F8/F9)
@@ -303,8 +314,10 @@ All three representations evaluated at K=10 with the best-known config (768² co
 
 - `policy_doctor/data/slice_representations.py` — abstraction + 3 concretes (`infembed`, `state`, `state_action`) tested and committed (commit `c9d69ff`).
 - `scripts/build_alt_clustering.py` — single-config CLI tested and committed.
-- K=10 clusterings: `/tmp/transport_r512_state_k10/`, `/tmp/transport_r512_state_action_k10/`.
-- E1 results: `experiments/e1_transport_r512_seed0_qwen3vl8b_state_k10/`, `experiments/e1_transport_r512_seed0_qwen3vl8b_state_action_k10/`.
+- K=5/10/15/20 clusterings: `/mnt/ssdB/erik/cupid_data/clusterings/transport_r512_state_k{K}/`, `transport_r512_state_action_k{K}/` (moved from /tmp, persistent).
+- InfEmbed K=5/10/15 clusterings: `/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering_k{K}/`
+- Window sweep clusterings: `/mnt/ssdB/erik/cupid_data/window_sweep_clusterings/`, `/mnt/ssdB/erik/cupid_data/window_sweep_wf_clusterings/`
+- E1 results: `experiments/e1_transport_r512_seed0_qwen3vl8b_state_k{K}/`, `experiments/e1_transport_r512_seed0_qwen3vl8b_state_action_k{K}/` (K=5/10/15/20).
 
 ---
 
