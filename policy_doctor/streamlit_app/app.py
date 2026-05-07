@@ -396,8 +396,11 @@ def main() -> None:
         comparison.render_tab(config=config, data=data)
 
     with tab_mimicgen_eef:
-        from policy_doctor.streamlit_app.tabs import mimicgen_eef
-        mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
+        try:
+            from policy_doctor.streamlit_app.tabs import mimicgen_eef
+            mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
+        except ImportError as e:
+            st.info(f"MimicGen EEF tab unavailable: {e}")
 
     with tab_runtime_monitor:
         from policy_doctor.streamlit_app.tabs import runtime_monitor
