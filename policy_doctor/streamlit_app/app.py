@@ -413,14 +413,16 @@ def main() -> None:
 
     with tab_e1_inspector:
         try:
-            import importlib.util as _ilu
-            _spec = _ilu.spec_from_file_location(
-                "e1_inspector",
-                pathlib.Path(__file__).parent / "tabs" / "e1_inspector.py",
-            )
-            _mod = _ilu.module_from_spec(_spec)
-            _spec.loader.exec_module(_mod)
-            _mod.render()
+            if "e1_inspector_mod" not in st.session_state:
+                import importlib.util as _ilu
+                _spec = _ilu.spec_from_file_location(
+                    "e1_inspector",
+                    pathlib.Path(__file__).parent / "tabs" / "e1_inspector.py",
+                )
+                _mod = _ilu.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                st.session_state.e1_inspector_mod = _mod
+            st.session_state.e1_inspector_mod.render()
         except Exception as e:
             st.caption(f"E1 Inspector unavailable: {type(e).__name__}: {e}")
 
