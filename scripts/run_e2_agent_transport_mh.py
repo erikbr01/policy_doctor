@@ -28,7 +28,7 @@ for p in [_REPO, _REPO / "third_party" / "cupid"]:
         sys.path.insert(0, str(p))
 
 
-_DEFAULT_CLUSTERING = Path("/tmp/transport_mh_seed0_r512_clustering")
+_DEFAULT_CLUSTERING = Path("/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering")
 _DEFAULT_EPISODES = Path(
     "/mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/mar27/"
     "mar27_train_diffusion_unet_lowdim_transport_mh_0_r512x512/latest/episodes"

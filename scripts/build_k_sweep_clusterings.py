@@ -29,7 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/tmp/transport_mh_seed0_r512_clustering")
+    ap.add_argument("--src", default="/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering")
     ap.add_argument("--out_template", default="/tmp/transport_mh_seed0_r512_clustering_k{K}")
     ap.add_argument("--ks", type=int, nargs="+", default=[10, 15])
     ap.add_argument("--seed", type=int, default=42)

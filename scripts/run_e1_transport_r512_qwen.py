@@ -21,7 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--clustering_dir", default="/tmp/transport_mh_seed0_r512_clustering")
+    ap.add_argument("--clustering_dir", default="/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering")
     ap.add_argument(
         "--eval_dir",
         default=(

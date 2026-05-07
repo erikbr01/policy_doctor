@@ -52,7 +52,7 @@ EXISTING_CLUSTERINGS = {
     "encoder_plan_t0":   SWEEP_CLUST / "encoder_plan_t0__w5_s2__K10",
     "bottleneck_plan_t0": SWEEP_CLUST / "bottleneck_plan_t0__w5_s2__K10",
     "bottleneck_plan_t5": SWEEP_CLUST / "bottleneck_plan_t5__w5_s2__K10",
-    "infembed_100d":     pathlib.Path("/tmp/transport_mh_seed0_r512_clustering_k10"),
+    "infembed_100d":     pathlib.Path("/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering_k10"),
     "trak":              SWEEP_CLUST / "trak__w5_s2__K10",
 }
 
