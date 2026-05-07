@@ -72,7 +72,7 @@ def _col(cid): return _PALETTE[int(cid) % len(_PALETTE)]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _img_b64(img: Image.Image, size: int = 256) -> str:
+def _img_b64(img: Image.Image, size: int = 380) -> str:
     img = img.convert("RGB").resize((size, size), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=75)
@@ -204,7 +204,7 @@ def _cluster_section(exp_dir: pathlib.Path, max_clusters: int, frame_seed: int) 
     cluster_ids = sp["cluster_ids"][:max_clusters]
     K = len(sp["cluster_ids"])
     max_frames = sp.get("max_frames_per_storyboard", 4)
-    comp_size = min(sp.get("composite_target_size", 512), 256)
+    comp_size = min(sp.get("composite_target_size", 512), 400)
 
     # Overall stats
     r = _get_clean(exp_dir, K)
@@ -228,7 +228,7 @@ def _cluster_section(exp_dir: pathlib.Path, max_clusters: int, frame_seed: int) 
             img = _make_storyboard(eval_dir, s_idx, metadata, max_frames, comp_size, frame_seed)
             if img:
                 ex_imgs.append(f'<img src="data:image/jpeg;base64,{_img_b64(img)}" '
-                               f'style="width:140px;border-radius:4px;margin:3px">')
+                               f'style="width:200px;border-radius:4px;margin:4px">')
 
         # Query storyboards (first 5, correct/incorrect)
         q_items = []
@@ -248,9 +248,9 @@ def _cluster_section(exp_dir: pathlib.Path, max_clusters: int, frame_seed: int) 
             )
             q_items.append(f"""
             <div style="display:inline-block;vertical-align:top;margin:4px;
-                        border:2px solid {border};border-radius:6px;padding:4px;width:200px">
+                        border:2px solid {border};border-radius:6px;padding:4px;width:240px">
               <img src="data:image/jpeg;base64,{_img_b64(img)}"
-                   style="width:190px;border-radius:3px;display:block">
+                   style="width:230px;border-radius:3px;display:block">
               <div style="font-size:11px;font-weight:bold;color:{border};margin-top:4px">{icon}</div>
               <div style="font-size:10px;color:#444;margin-top:4px;max-height:120px;
                           overflow-y:auto;line-height:1.4">{responses}</div>
@@ -294,7 +294,7 @@ def _cluster_section(exp_dir: pathlib.Path, max_clusters: int, frame_seed: int) 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="/tmp/e1_report.html")
-    ap.add_argument("--max_clusters", type=int, default=5)
+    ap.add_argument("--max_clusters", type=int, default=999)
     ap.add_argument("--frame_seed", type=int, default=42)
     ap.add_argument("--detail_exp", nargs="*", default=None,
                     help="Experiment dir names to show cluster detail for "
