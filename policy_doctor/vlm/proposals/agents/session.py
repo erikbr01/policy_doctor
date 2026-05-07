@@ -37,6 +37,7 @@ from policy_doctor.vlm.proposals.agents.tools.types import (
     TextBlock,
     ToolResult,
     ToolSpec,
+    VideoBlock,
 )
 from policy_doctor.vlm.proposals.agents.trace import SessionTrace
 
@@ -59,6 +60,18 @@ def _image_block_for_message(img) -> Dict[str, Any]:
     }
 
 
+def _video_block_for_message(blk: "VideoBlock") -> Dict[str, Any]:
+    import base64
+    return {
+        "type": "video",
+        "source": {
+            "type": "base64",
+            "media_type": blk.mime_type,
+            "data": base64.standard_b64encode(blk.data).decode("ascii"),
+        },
+    }
+
+
 def _content_to_message_blocks(result: ToolResult) -> List[Dict[str, Any]]:
     """Translate ToolResult.content into Anthropic-shaped tool_result content blocks."""
     blocks: List[Dict[str, Any]] = []
@@ -69,8 +82,11 @@ def _content_to_message_blocks(result: ToolResult) -> List[Dict[str, Any]]:
             if blk.caption:
                 blocks.append({"type": "text", "text": blk.caption})
             blocks.append(_image_block_for_message(blk.image))
+        elif isinstance(blk, VideoBlock):
+            if blk.caption:
+                blocks.append({"type": "text", "text": blk.caption})
+            blocks.append(_video_block_for_message(blk))
     if not blocks:
-        # Some providers refuse empty tool_result; emit a sentinel.
         blocks.append({"type": "text", "text": ""})
     return blocks
 

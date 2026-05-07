@@ -17,7 +17,7 @@ from PIL import Image
 
 # Content block kinds. Kept narrow on purpose; if a tool needs to return raw
 # bytes, write them to disk and return a text block with the path.
-ContentKind = Literal["text", "image"]
+ContentKind = Literal["text", "image", "video"]
 
 
 @dataclass
@@ -33,12 +33,21 @@ class ImageBlock:
     """In-memory PIL image. Counts against the visual budget on first emission."""
 
     image: Image.Image
-    # Optional caption rendered inline by the session loop (e.g. "storyboard for r0023").
     caption: Optional[str] = None
     kind: ContentKind = "image"
 
 
-ContentBlock = Any  # TextBlock | ImageBlock — kept loose to avoid Union noise.
+@dataclass
+class VideoBlock:
+    """Raw video bytes (e.g. MP4). Counts against the video budget."""
+
+    data: bytes
+    mime_type: str = "video/mp4"
+    caption: Optional[str] = None
+    kind: ContentKind = "video"
+
+
+ContentBlock = Any  # TextBlock | ImageBlock | VideoBlock — kept loose to avoid Union noise.
 
 
 @dataclass

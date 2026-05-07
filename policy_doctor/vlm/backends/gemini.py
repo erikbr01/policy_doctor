@@ -448,6 +448,16 @@ def _messages_to_gemini_contents(messages: List[Dict[str, Any]]):
                             "data": raw,
                         }
                     })
+            elif t == "video":
+                src = blk.get("source") or {}
+                if src.get("type") == "base64":
+                    raw = base64.b64decode(src.get("data") or "")
+                    text_image_parts.append({
+                        "inline_data": {
+                            "mime_type": src.get("media_type", "video/mp4"),
+                            "data": raw,
+                        }
+                    })
             elif t == "tool_use":
                 fc: Dict[str, Any] = {
                     "name": blk.get("name") or "",
@@ -476,13 +486,14 @@ def _messages_to_gemini_contents(messages: List[Dict[str, Any]]):
                     st = sub.get("type") if isinstance(sub, dict) else None
                     if st == "text":
                         text_chunks.append(str(sub.get("text") or ""))
-                    elif st == "image":
+                    elif st in ("image", "video"):
                         src = sub.get("source") or {}
                         if src.get("type") == "base64":
                             raw = base64.b64decode(src.get("data") or "")
+                            default_mime = "image/jpeg" if st == "image" else "video/mp4"
                             hoisted_image_parts.append({
                                 "inline_data": {
-                                    "mime_type": src.get("media_type", "image/jpeg"),
+                                    "mime_type": src.get("media_type", default_mime),
                                     "data": raw,
                                 }
                             })

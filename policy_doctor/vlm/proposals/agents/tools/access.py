@@ -32,6 +32,7 @@ from policy_doctor.vlm.proposals.agents.tools.types import (
     TextBlock,
     ToolResult,
     ToolSpec,
+    VideoBlock,
 )
 from policy_doctor.vlm.proposals.pool import (
     episode_idx_to_rollout_id,
@@ -323,9 +324,17 @@ def _make_get_slice_video(ctx: SessionContext) -> ToolSpec:
         want_state_text = _include_state_text(ctx)
 
         # Render visual content.
-        if mode == "frames":
+        if mode == "video":
+            mp4_bytes = _render_slice_mp4_bytes(
+                entry.episode_pkl, start, end,
+                pad_before=sb_kwargs.get("pad_before", 12),
+                pad_after=sb_kwargs.get("pad_after", 12),
+                cameras=sb_kwargs.get("cameras"),
+            )
+            visual_blocks: List = [VideoBlock(data=mp4_bytes, caption=f"slice {sid} (frames {start}-{end})")] if mp4_bytes else []
+        elif mode == "frames":
             frames = _render_slice_frames(entry.episode_pkl, start, end, **sb_kwargs)
-            visual_blocks: List = []
+            visual_blocks = []
             if frames:
                 for fi, frame_img in enumerate(frames):
                     visual_blocks.append(ImageBlock(image=frame_img, caption=f"{sid} frame {fi+1}/{len(frames)}"))
@@ -694,6 +703,71 @@ def _render_slice_frames(
                 canvas.paste(thumb, (0, r * cell_h))
         out.append(canvas)
     return out or None
+
+
+def _render_slice_mp4_bytes(
+    pkl_path: Path,
+    start: int,
+    end: int,
+    *,
+    pad_before: int = 12,
+    pad_after: int = 12,
+    cameras: Optional[Tuple[str, ...]] = None,
+    fps: int = 8,
+    frame_w: int = 256,
+    frame_h: int = 192,
+) -> Optional[bytes]:
+    """Render a slice as MP4 bytes using cv2.
+
+    All cameras are stacked vertically per frame. Returns None for low-dim runs.
+    """
+    try:
+        import cv2
+        import pandas as pd
+        import tempfile
+
+        df = pd.read_pickle(str(pkl_path))
+    except Exception:
+        return None
+
+    cols = _resolve_cameras(list(df.columns), cameras)
+    if not cols:
+        return None
+
+    n_steps = len(df)
+    win_start = max(0, start - pad_before)
+    win_end = min(n_steps - 1, end + pad_after)
+    if win_end < win_start:
+        return None
+
+    canvas_h = frame_h * len(cols)
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as fp:
+        tmp_path = fp.name
+    try:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        vw = cv2.VideoWriter(tmp_path, fourcc, fps, (frame_w, canvas_h))
+        arrs = {col: df[col].to_list() for col in cols}
+        for tidx in range(win_start, win_end + 1):
+            canvas = np.zeros((canvas_h, frame_w, 3), dtype=np.uint8)
+            for r, col in enumerate(cols):
+                arr = arrs[col]
+                if tidx < len(arr):
+                    frame = np.asarray(arr[tidx]).astype("uint8")
+                    frame_rgb = cv2.resize(
+                        cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if frame.ndim == 3 and frame.shape[2] == 3 else frame,
+                        (frame_w, frame_h),
+                    )
+                    canvas[r * frame_h:(r + 1) * frame_h] = frame_rgb
+            vw.write(canvas)
+        vw.release()
+        return Path(tmp_path).read_bytes()
+    except Exception:
+        return None
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _load_slice_state_text(

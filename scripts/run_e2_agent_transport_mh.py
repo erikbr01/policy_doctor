@@ -120,7 +120,8 @@ def main() -> int:
     ap.add_argument("--model_id", default="gemini-2.5-flash")
     ap.add_argument("--max_new_tokens", type=int, default=4096)
     ap.add_argument("--max_tool_calls", type=int, default=25)
-    ap.add_argument("--max_visual_calls", type=int, default=18)
+    ap.add_argument("--max_visual_calls", type=int, default=0)
+    ap.add_argument("--max_video_calls", type=int, default=8)
     ap.add_argument("--max_session_duration_s", type=int, default=1800)
     ap.add_argument("--max_turns", type=int, default=40)
     ap.add_argument("--temperature", type=float, default=0.3)
@@ -163,17 +164,15 @@ def main() -> int:
     bc = BudgetConfig(
         max_tool_calls=args.max_tool_calls,
         max_visual_calls=args.max_visual_calls,
-        max_video_calls=0,
+        max_video_calls=args.max_video_calls,
         max_session_duration_s=args.max_session_duration_s,
     )
 
     storyboard_cfg = {
-        "n_frames": 5,
         "pad_before": 12,
         "pad_after": 12,
-        "target_size": (1024, 1024),
-        "cameras": None,          # auto-pick: agentview + every wrist cam
-        "mode": "frames",         # send each timestep as a separate image
+        "cameras": None,             # auto-pick: agentview + every wrist cam
+        "mode": "video",             # send full MP4 clip instead of storyboard
         "include_state_text": True,  # append per-frame obs tail + action
     }
 
