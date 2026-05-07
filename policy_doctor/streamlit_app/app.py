@@ -10,14 +10,7 @@ Usage:
 """
 
 import pathlib
-import sys
 from typing import Optional
-
-# Ensure this worktree's policy_doctor wins over any pip-installed editable copy
-# from a sibling worktree (see: pip editable install shadowing).
-_THIS_REPO = pathlib.Path(__file__).resolve().parents[3]
-if str(_THIS_REPO) not in sys.path:
-    sys.path.insert(0, str(_THIS_REPO))
 
 import streamlit as st
 
