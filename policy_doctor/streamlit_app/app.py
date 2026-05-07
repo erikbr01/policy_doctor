@@ -407,8 +407,11 @@ def main() -> None:
         runtime_monitor.render_tab(config=config, data=data, task_config_stem=config_name)
 
     with tab_e2_console:
-        from policy_doctor.streamlit_app.tabs import e2_console
-        e2_console.render()
+        try:
+            from policy_doctor.streamlit_app.tabs import e2_console
+            e2_console.render()
+        except ImportError as e:
+            st.info(f"E2 Console tab unavailable: {e}")
 
     with tab_e1_inspector:
         from policy_doctor.streamlit_app.tabs import e1_inspector
