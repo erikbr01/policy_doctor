@@ -57,7 +57,7 @@ def _build_graph_and_pool(clustering_dir: Path, episodes_dir: Path):
     return graph, pool, cluster_labels, metadata, manifest
 
 
-def _make_backend(backend: str, model_id: str, max_new_tokens: int, vertexai: bool = False, gcp_project: Optional[str] = None):
+def _make_backend(backend: str, model_id: str, max_new_tokens: int, vertexai: bool = False, gcp_project: Optional[str] = None, location: str = "us-central1"):
     """Build a VLMBackend that implements ``chat_with_tools``.
 
     Note: Qwen2/3-VL backends do NOT implement chat_with_tools yet — they
@@ -74,6 +74,7 @@ def _make_backend(backend: str, model_id: str, max_new_tokens: int, vertexai: bo
                 max_output_tokens=max_new_tokens,
                 vertexai=True,
                 project=gcp_project,
+                location=location,
             )
         if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
             env = Path(__file__).resolve().parents[1] / ".env"
@@ -135,6 +136,8 @@ def main() -> int:
                          "Bypasses free-tier quota limits when a billing-enabled GCP project is available.")
     ap.add_argument("--gcp_project", default=None,
                     help="GCP project for Vertex AI mode (defaults to GOOGLE_CLOUD_PROJECT env var).")
+    ap.add_argument("--location", default="us-central1",
+                    help="Vertex AI region (default us-central1). Use 'global' for models like gemini-3.1-pro-preview.")
     args = ap.parse_args()
 
     if args.out_dir is None:
@@ -151,7 +154,8 @@ def main() -> int:
     print(f"[run] loading backend={args.backend} model={args.model_id} vertexai={getattr(args,'vertexai',False)}", flush=True)
     backend = _make_backend(args.backend, args.model_id, args.max_new_tokens,
                             vertexai=getattr(args, "vertexai", False),
-                            gcp_project=getattr(args, "gcp_project", None))
+                            gcp_project=getattr(args, "gcp_project", None),
+                            location=getattr(args, "location", "us-central1"))
 
     from policy_doctor.vlm.proposals.agents.budget import BudgetConfig
     from policy_doctor.vlm.proposals.agents.run import run_one_session
