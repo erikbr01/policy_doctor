@@ -362,6 +362,7 @@ def main() -> None:
         tab_mimicgen_eef,
         tab_runtime_monitor,
         tab_e2_console,
+        tab_e1_inspector,
     ) = st.tabs([
         "Clustering",
         "Behavior Graph",
@@ -371,6 +372,7 @@ def main() -> None:
         "MimicGen EEF",
         "Runtime Monitor",
         "E2 Console",
+        "E1 Inspector",
     ])
 
     with tab_clustering:
@@ -404,6 +406,10 @@ def main() -> None:
     with tab_e2_console:
         from policy_doctor.streamlit_app.tabs import e2_console
         e2_console.render()
+
+    with tab_e1_inspector:
+        from policy_doctor.streamlit_app.tabs import e1_inspector
+        e1_inspector.render()
 
 
 if __name__ == "__main__":
