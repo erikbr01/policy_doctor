@@ -424,7 +424,7 @@ def main() -> None:
                 st.session_state.e1_inspector_mod = _mod
             st.session_state.e1_inspector_mod.render()
         except Exception as e:
-            st.caption(f"E1 Inspector unavailable: {type(e).__name__}: {e}")
+            st.exception(e)
 
 
 if __name__ == "__main__":
