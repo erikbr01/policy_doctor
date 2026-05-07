@@ -57,7 +57,7 @@ def _build_graph_and_pool(clustering_dir: Path, episodes_dir: Path):
     return graph, pool, cluster_labels, metadata, manifest
 
 
-def _make_backend(backend: str, model_id: str, max_new_tokens: int):
+def _make_backend(backend: str, model_id: str, max_new_tokens: int, vertexai: bool = False, gcp_project: Optional[str] = None):
     """Build a VLMBackend that implements ``chat_with_tools``.
 
     Note: Qwen2/3-VL backends do NOT implement chat_with_tools yet — they
@@ -68,8 +68,14 @@ def _make_backend(backend: str, model_id: str, max_new_tokens: int):
         import os
         from policy_doctor.vlm.backends.gemini import GeminiVLMBackend
 
+        if vertexai:
+            return GeminiVLMBackend(
+                model_name=model_id,
+                max_output_tokens=max_new_tokens,
+                vertexai=True,
+                project=gcp_project,
+            )
         if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
-            # Try the project-local .env so you don't have to export by hand.
             env = Path(__file__).resolve().parents[1] / ".env"
             if env.exists():
                 for line in env.read_text().splitlines():
@@ -124,6 +130,11 @@ def main() -> int:
         "handing off (or placing) so arm-1 can move it to the goal."
     ))
     ap.add_argument("--no_render", action="store_true")
+    ap.add_argument("--vertexai", action="store_true",
+                    help="Use Vertex AI (ADC / gcloud credentials) instead of API key. "
+                         "Bypasses free-tier quota limits when a billing-enabled GCP project is available.")
+    ap.add_argument("--gcp_project", default=None,
+                    help="GCP project for Vertex AI mode (defaults to GOOGLE_CLOUD_PROJECT env var).")
     args = ap.parse_args()
 
     if args.out_dir is None:
@@ -137,8 +148,10 @@ def main() -> int:
     )
     print(f"[run] pool: {len(pool)} rollouts; graph: {len(graph.nodes)} nodes; slices: {len(metadata)}", flush=True)
 
-    print(f"[run] loading backend={args.backend} model={args.model_id}", flush=True)
-    backend = _make_backend(args.backend, args.model_id, args.max_new_tokens)
+    print(f"[run] loading backend={args.backend} model={args.model_id} vertexai={getattr(args,'vertexai',False)}", flush=True)
+    backend = _make_backend(args.backend, args.model_id, args.max_new_tokens,
+                            vertexai=getattr(args, "vertexai", False),
+                            gcp_project=getattr(args, "gcp_project", None))
 
     from policy_doctor.vlm.proposals.agents.budget import BudgetConfig
     from policy_doctor.vlm.proposals.agents.run import run_one_session

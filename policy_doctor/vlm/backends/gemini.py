@@ -52,11 +52,19 @@ def _pil_to_bytes(img: Image.Image) -> bytes:
 
 
 class GeminiVLMBackend(VLMBackend):
-    """Gemini backend via the google-generativeai SDK.
+    """Gemini backend via the google-genai SDK.
 
     Backend params (all optional):
       - ``model_name``: Gemini model ID (default ``gemini-2.0-flash``).
-      - ``api_key``: Gemini API key; falls back to ``GOOGLE_API_KEY`` env var.
+      - ``api_key``: Gemini API key; falls back to ``GOOGLE_API_KEY`` /
+        ``GEMINI_API_KEY`` env vars. Ignored when ``vertexai=True``.
+      - ``vertexai``: if True, authenticate via Application Default Credentials
+        (gcloud auth / service account) and route through Vertex AI. Requires
+        ``project`` (falls back to ``GOOGLE_CLOUD_PROJECT`` env var) and
+        ``location`` (default ``us-central1``). Use this to avoid free-tier
+        quota limits when a billing-enabled GCP project is available.
+      - ``project``: GCP project ID for Vertex AI mode.
+      - ``location``: Vertex AI region (default ``us-central1``).
       - ``max_output_tokens``: generation budget (default 1024).
       - ``temperature``: sampling temperature (default 0.2).
     """
@@ -68,21 +76,38 @@ class GeminiVLMBackend(VLMBackend):
         *,
         model_name: str = "gemini-2.0-flash",
         api_key: Optional[str] = None,
+        vertexai: bool = False,
+        project: Optional[str] = None,
+        location: str = "us-central1",
         max_output_tokens: int = 1024,
         temperature: float = 0.2,
     ) -> None:
         genai, genai_types = _require_genai()
-        key = (
-            api_key
-            or os.environ.get("GOOGLE_API_KEY")
-            or os.environ.get("GEMINI_API_KEY")
-        )
-        if not key:
-            raise ValueError(
-                "Gemini backend requires an API key (api_key param, "
-                "GOOGLE_API_KEY env var, or GEMINI_API_KEY env var)."
+        if vertexai:
+            gcp_project = (
+                project
+                or os.environ.get("GOOGLE_CLOUD_PROJECT")
+                or os.environ.get("GCLOUD_PROJECT")
             )
-        self._client = genai.Client(api_key=key)
+            if not gcp_project:
+                raise ValueError(
+                    "vertexai=True requires a GCP project (project param or "
+                    "GOOGLE_CLOUD_PROJECT env var). Run: gcloud config set project <id>"
+                )
+            self._client = genai.Client(vertexai=True, project=gcp_project, location=location)
+        else:
+            key = (
+                api_key
+                or os.environ.get("GOOGLE_API_KEY")
+                or os.environ.get("GEMINI_API_KEY")
+            )
+            if not key:
+                raise ValueError(
+                    "Gemini backend requires an API key (api_key param, "
+                    "GOOGLE_API_KEY env var, or GEMINI_API_KEY env var), "
+                    "or pass vertexai=True to use Application Default Credentials."
+                )
+            self._client = genai.Client(api_key=key)
         self._types = genai_types
         self._model_name = model_name
         self._max_output_tokens = max_output_tokens
