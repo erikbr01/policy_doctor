@@ -77,6 +77,38 @@ def build_tool_registry(
     return by_name
 
 
+def build_description_tool_registry(
+    ctx: SessionContext,
+    out_dir: Optional[Path] = None,
+) -> Dict[str, ToolSpec]:
+    """Build the tool registry for the Stage 1 visual description session.
+
+    Includes: all cheap topology tools, all access tools (including
+    get_slice_video so the agent can watch clips), all analysis tools.
+    Does NOT include submission or exploration tools.
+    Terminal tool: finalize_descriptions.
+    """
+    from policy_doctor.vlm.proposals.agents.tools import (
+        access,
+        analysis,
+        description,
+        topology,
+    )
+
+    specs = []
+    specs.extend(topology.build(ctx))
+    specs.extend(access.build(ctx))
+    specs.extend(analysis.build(ctx))
+    specs.extend(description.build(ctx, out_dir=out_dir))
+
+    by_name: Dict[str, ToolSpec] = {}
+    for spec in specs:
+        if spec.name in by_name:
+            raise ValueError(f"duplicate tool name {spec.name!r} in description registry")
+        by_name[spec.name] = spec
+    return by_name
+
+
 def build_exploration_tool_registry(
     ctx: SessionContext,
     out_dir: Optional[Path] = None,

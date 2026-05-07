@@ -132,6 +132,10 @@ def main() -> int:
         "handing off (or placing) so arm-1 can move it to the goal."
     ))
     ap.add_argument("--no_render", action="store_true")
+    ap.add_argument("--two_stage", action="store_true",
+                    help="Run a two-stage session: Stage 1 watches clips and writes literal "
+                         "descriptions; Stage 2 proposes demonstrations from those descriptions "
+                         "with no visual budget. Incompatible with single-stage replication.")
     ap.add_argument("--vertexai", action="store_true",
                     help="Use Vertex AI (ADC / gcloud credentials) instead of API key. "
                          "Bypasses free-tier quota limits when a billing-enabled GCP project is available.")
@@ -176,22 +180,42 @@ def main() -> int:
         "include_state_text": True,  # append per-frame obs tail + action
     }
 
-    print(f"[run] starting {args.condition} session (seed={args.seed})", flush=True)
-    result = run_one_session(
-        condition=args.condition,
-        seed=args.seed,
-        backend=backend,
-        graph=graph,
-        pool=pool,
-        out_dir=args.out_dir,
-        budget_config=bc,
-        max_turns=args.max_turns,
-        temperature=args.temperature,
-        cluster_labels=cluster_labels,
-        cluster_metadata=metadata,
-        task_hint=args.task_hint,
-        storyboard=storyboard_cfg,
-    )
+    if args.two_stage:
+        from policy_doctor.vlm.proposals.agents.run import run_two_stage_session
+        print(f"[run] starting TWO-STAGE {args.condition} session (seed={args.seed})", flush=True)
+        result = run_two_stage_session(
+            condition=args.condition,
+            seed=args.seed,
+            backend=backend,
+            graph=graph,
+            pool=pool,
+            out_dir=args.out_dir,
+            budget_config=bc,
+            max_turns=args.max_turns,
+            temperature=args.temperature,
+            cluster_labels=cluster_labels,
+            cluster_metadata=metadata,
+            task_hint=args.task_hint,
+            storyboard=storyboard_cfg,
+        )
+    else:
+        from policy_doctor.vlm.proposals.agents.run import run_one_session
+        print(f"[run] starting {args.condition} session (seed={args.seed})", flush=True)
+        result = run_one_session(
+            condition=args.condition,
+            seed=args.seed,
+            backend=backend,
+            graph=graph,
+            pool=pool,
+            out_dir=args.out_dir,
+            budget_config=bc,
+            max_turns=args.max_turns,
+            temperature=args.temperature,
+            cluster_labels=cluster_labels,
+            cluster_metadata=metadata,
+            task_hint=args.task_hint,
+            storyboard=storyboard_cfg,
+        )
 
     print(
         f"[run] done: stop={result.stop_reason} n_submitted={len(result.submitted_requests)} "

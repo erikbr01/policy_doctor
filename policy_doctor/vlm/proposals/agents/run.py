@@ -28,6 +28,7 @@ from policy_doctor.vlm.proposals.agents.context import SessionContext
 from policy_doctor.vlm.proposals.agents.session import AgentSession, SessionResult
 from policy_doctor.vlm.proposals.agents.system_prompts import prompt_text
 from policy_doctor.vlm.proposals.agents.tools.registry import (
+    build_description_tool_registry,
     build_exploration_tool_registry,
     build_tool_registry,
 )
@@ -89,6 +90,9 @@ def run_one_session(
     user_message: Optional[str] = None,
     storyboard: Optional[Dict[str, Any]] = None,
     exploration_taxonomy: Optional[Dict[str, Any]] = None,
+    visual_descriptions: Optional[Dict[str, Any]] = None,
+    pre_inspected_slices: Optional[set] = None,
+    pre_inspected_nodes: Optional[set] = None,
 ) -> SessionResult:
     """Run a single session and persist its artefacts."""
     cond = parse_condition(condition)
@@ -119,10 +123,19 @@ def run_one_session(
         backend=backend,
     )
 
+    # Pre-populate inspection bookkeeping from a prior description session so
+    # the evidence gate accepts slices the Stage 1 agent already watched.
+    if pre_inspected_slices:
+        ctx.inspected_slices.update(pre_inspected_slices)
+    if pre_inspected_nodes:
+        ctx.inspected_nodes.update(pre_inspected_nodes)
+
     tools = build_tool_registry(cond, ctx, backend=backend)
     system_prompt = prompt_text(cond)
     user_msg = user_message or _default_user_message(
-        pool, task_hint, exploration_taxonomy=exploration_taxonomy
+        pool, task_hint,
+        exploration_taxonomy=exploration_taxonomy,
+        visual_descriptions=visual_descriptions,
     )
 
     trace_path = out_dir / "trace.jsonl"
@@ -280,18 +293,204 @@ def run_exploration_session(
     return {}
 
 
+def run_description_session(
+    *,
+    backend: VLMBackend,
+    graph,
+    pool,
+    out_dir: Path,
+    budget_config: Optional[BudgetConfig] = None,
+    max_turns: int = 40,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    cluster_labels=None,
+    cluster_metadata=None,
+    cluster_centroids=None,
+    raw_states_dir=None,
+    storyboards_dir=None,
+    videos_dir=None,
+    task_hint: str = "",
+    storyboard: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Stage 1 of the two-stage pipeline: visual description session.
+
+    Runs an agent whose only job is to watch video/storyboard clips and write
+    literal descriptions of what it sees — no failure-mode labels, no proposals.
+    Returns the loaded ``visual_descriptions.json`` dict (or ``{}`` on failure).
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    effective_budget = budget_config or BudgetConfig(
+        max_tool_calls=40,
+        max_visual_calls=0,
+        max_video_calls=12,
+        max_session_duration_s=1200,
+    )
+
+    session_config: Dict[str, Any] = {}
+    if storyboard:
+        session_config["storyboard"] = dict(storyboard)
+
+    ctx = SessionContext.build(
+        condition="description",
+        graph=graph,
+        pool=pool,
+        cluster_labels=cluster_labels,
+        cluster_metadata=cluster_metadata,
+        cluster_centroids=cluster_centroids,
+        raw_states_dir=raw_states_dir,
+        storyboards_dir=storyboards_dir,
+        videos_dir=videos_dir,
+        budget_config=effective_budget,
+        task_hint=task_hint,
+        config=session_config,
+        backend=backend,
+    )
+
+    tools = build_description_tool_registry(ctx, out_dir=out_dir)
+
+    from importlib.resources import files as _pkg_files
+    import policy_doctor.vlm.proposals.agents.system_prompts as _sp_pkg
+    system_prompt = (_pkg_files(_sp_pkg) / "description.md").read_text(encoding="utf-8")
+
+    sample_ids = [e.rollout_id for e in pool.entries[:20]]
+    user_msg = (
+        f"Task: {task_hint or '(unspecified)'}\n\n"
+        f"Pool contains {len(pool)} rollouts; sample ids: {' '.join(sample_ids)}.\n\n"
+        "Watch video clips from the high-failure clusters and describe exactly what "
+        "you see. Call finalize_descriptions when done."
+    )
+
+    trace_path = out_dir / "trace.jsonl"
+    with SessionTrace(out_path=trace_path) as trace:
+        session = AgentSession(
+            backend=backend,
+            ctx=ctx,
+            tools=tools,
+            system_prompt=system_prompt,
+            user_message=user_msg,
+            seed=0,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_turns=max_turns,
+            trace=trace,
+            out_dir=out_dir,
+            target_n_submissions=0,
+        )
+        session.run()
+
+    desc_path = out_dir / "visual_descriptions.json"
+    if desc_path.exists():
+        return json.loads(desc_path.read_text(encoding="utf-8"))
+    return {}
+
+
+def run_two_stage_session(
+    *,
+    condition: Condition | str,
+    seed: int,
+    backend: VLMBackend,
+    graph,
+    pool,
+    out_dir: Path,
+    budget_config: Optional[BudgetConfig] = None,
+    max_turns: int = 60,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    cluster_labels=None,
+    cluster_metadata=None,
+    cluster_centroids=None,
+    classifier=None,
+    raw_states_dir=None,
+    storyboards_dir=None,
+    videos_dir=None,
+    task_hint: str = "",
+    storyboard: Optional[Dict[str, Any]] = None,
+    description_budget: Optional[BudgetConfig] = None,
+) -> "SessionResult":
+    """Run a two-stage session: description first, then proposals from descriptions.
+
+    Stage 1 (description): the agent watches video clips and writes literal
+    observations — arm positions, gripper states, contact or lack thereof.
+    No failure-mode labels. Outputs ``visual_descriptions.json``.
+
+    Stage 2 (proposals): a fresh agent session with standard A_G/A_NG tools
+    but NO visual budget. It receives the Stage 1 descriptions as context in
+    its user message and must ground its submissions in those observations
+    rather than in task priors. The inspected_slices / inspected_nodes from
+    Stage 1 are pre-populated so the evidence gate passes.
+    """
+    out_dir = Path(out_dir)
+    desc_dir = out_dir / "stage1_description"
+    proposal_dir = out_dir / "stage2_proposals"
+
+    # --- Stage 1: description ---
+    desc_result = run_description_session(
+        backend=backend,
+        graph=graph,
+        pool=pool,
+        out_dir=desc_dir,
+        budget_config=description_budget,
+        max_turns=max_turns // 2,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        cluster_labels=cluster_labels,
+        cluster_metadata=cluster_metadata,
+        cluster_centroids=cluster_centroids,
+        raw_states_dir=raw_states_dir,
+        storyboards_dir=storyboards_dir,
+        videos_dir=videos_dir,
+        task_hint=task_hint,
+        storyboard=storyboard,
+    )
+
+    # --- Stage 2: proposals from descriptions ---
+    # Visual budget is 0 — the agent must work from text descriptions.
+    s2_budget = budget_config or BudgetConfig(
+        max_tool_calls=30,
+        max_visual_calls=0,
+        max_video_calls=0,
+        max_session_duration_s=1800,
+    )
+
+    result = run_one_session(
+        condition=condition,
+        seed=seed,
+        backend=backend,
+        graph=graph,
+        pool=pool,
+        out_dir=proposal_dir,
+        budget_config=s2_budget,
+        max_turns=max_turns,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        cluster_labels=cluster_labels,
+        cluster_metadata=cluster_metadata,
+        cluster_centroids=cluster_centroids,
+        classifier=classifier,
+        raw_states_dir=raw_states_dir,
+        storyboards_dir=storyboards_dir,
+        videos_dir=videos_dir,
+        task_hint=task_hint,
+        storyboard=storyboard,
+        visual_descriptions=desc_result,
+        # Pre-populate inspection bookkeeping from Stage 1 so the evidence
+        # gate accepts the slices the description agent already watched.
+        pre_inspected_slices=set(desc_result.get("inspected_slices") or []),
+        pre_inspected_nodes=set(int(n) for n in (desc_result.get("inspected_nodes") or [])),
+    )
+
+    return result
+
+
 def _default_user_message(
     pool,
     task_hint: str,
     exploration_taxonomy: Optional[Dict[str, Any]] = None,
+    visual_descriptions: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Initial user turn shown to the agent.
-
-    Includes the task hint and a sampled list of rollout ids so the agent has
-    concrete handles to query. The tool surface is the source of truth for
-    everything else. If ``exploration_taxonomy`` is provided, it is appended as
-    a structured prior from the pre-stage exploration session.
-    """
+    """Initial user turn shown to the agent."""
     sample_ids = [e.rollout_id for e in pool.entries[:20]]
     sample_str = " ".join(sample_ids)
     msg = (
@@ -312,6 +511,39 @@ def _default_user_message(
             "your starting prior.\n\n"
             f"{json.dumps(exploration_taxonomy, indent=2)}"
         )
+    if visual_descriptions:
+        descs = visual_descriptions.get("cluster_descriptions") or []
+        msg += (
+            "\n\n## Stage 1 visual observations\n\n"
+            "The following are LITERAL descriptions of video clips from the high-failure "
+            "clusters, written by an observer who watched the clips frame by frame. "
+            "These are the only visual evidence available to you — you have NO visual "
+            "budget to watch additional clips. Your demonstration requests must be "
+            "grounded in these specific observations. Do not introduce failure modes "
+            "or robot behaviors not described here.\n\n"
+        )
+        for d in descs:
+            cid = d.get("cluster_id", "?")
+            slices = d.get("slices_observed", [])
+            informative = d.get("informative", True)
+            contact = d.get("robot_object_contact", False)
+            msg += f"### c{cid} (slices: {', '.join(slices)})\n"
+            if not informative:
+                msg += (
+                    f"**UNINFORMATIVE** — the observer reported no robot-object contact "
+                    f"in any clip. Do not submit requests citing c{cid} as evidence of "
+                    f"a specific failure mode.\n\n"
+                )
+            else:
+                msg += f"Robot-object contact: {'yes' if contact else 'no'}\n"
+                msg += f"{d.get('literal_description', '')}\n"
+                if d.get("gripper_states"):
+                    msg += f"Gripper states: {d['gripper_states']}\n"
+                if d.get("object_location"):
+                    msg += f"Object location: {d['object_location']}\n"
+                if d.get("sequence_of_events"):
+                    msg += f"Sequence: {d['sequence_of_events']}\n"
+                msg += "\n"
     return msg
 
 
