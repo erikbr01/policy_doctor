@@ -69,6 +69,24 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
          "Required when clustering was done at the window level and rollout_embeddings "
          "from the npz are at the timestep level (NearestCentroidAssigner fallback only).",
 )
+# InfEmbed predict acceleration knobs (forwarded to InfEmbedStreamScorer).  Defaults
+# match the fastest-known config for the lowdim diffusion U-Net.  Pass
+# --projection_on_cpu for image policies that OOM, or --no-compile if you don't
+# want to pay the ~20s torch.compile warmup at session start.
+@click.option(
+    "--projection_on_gpu/--projection_on_cpu", "projection_on_gpu",
+    default=True,
+    help="Where the Arnoldi projection vectors live (default: GPU; ~2-3x faster predict).",
+)
+@click.option(
+    "--compile/--no-compile", "use_compile", default=True,
+    help="torch.compile the inner U-Net for predict (default: on; ~1.1x extra, ~20s warmup).",
+)
+@click.option(
+    "--compile_target", type=click.Choice(["inner_unet", "wrapper"]),
+    default="inner_unet",
+    help="Compile target when --compile is set (default: inner_unet).",
+)
 def main(
     output_dir: str,
     train_dir: str,
@@ -82,6 +100,9 @@ def main(
     device: str,
     verbose: bool,
     episodes_dir: Optional[str],
+    projection_on_gpu: bool,
+    use_compile: bool,
+    compile_target: str,
 ):
     # ------------------------------------------------------------------
     # Load checkpoint (mirrors eval_save_episodes.py)
@@ -140,6 +161,9 @@ def main(
         mode="rollout",
         device=device,
         episodes_dir=episodes_dir,
+        projection_on_gpu=projection_on_gpu,
+        compile=use_compile,
+        compile_target=compile_target,
     )
     monitored = MonitoredPolicy(policy=policy, classifier=classifier, verbose=verbose)
 

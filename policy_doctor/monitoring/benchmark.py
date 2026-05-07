@@ -101,6 +101,20 @@ def main(argv=None):
     parser.add_argument("--n_samples", type=int, default=50, help="Number of random samples to benchmark")
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations (excluded from stats)")
     parser.add_argument("--device", default="cuda:0")
+    # InfEmbed predict acceleration knobs (apply to the InfEmbed scorer only).
+    # Defaults: GPU R + inner_unet compile.
+    parser.add_argument("--projection_on_gpu", dest="projection_on_gpu",
+                        action="store_true", default=True,
+                        help="Keep Arnoldi projection vectors on GPU (default).")
+    parser.add_argument("--projection_on_cpu", dest="projection_on_gpu",
+                        action="store_false",
+                        help="Keep Arnoldi projection vectors on CPU (use if GPU OOMs).")
+    parser.add_argument("--compile", dest="compile",
+                        action="store_true", default=True,
+                        help="torch.compile the inner U-Net (default; warmup absorbed by --warmup).")
+    parser.add_argument("--no-compile", dest="compile", action="store_false")
+    parser.add_argument("--compile_target", choices=["inner_unet", "wrapper"],
+                        default="inner_unet")
     args = parser.parse_args(argv)
 
     device = torch.device(args.device)
@@ -146,6 +160,9 @@ def main(argv=None):
             num_diffusion_timesteps=args.num_diffusion_timesteps,
             loss_fn=args.loss_fn,
             device=args.device,
+            projection_on_gpu=args.projection_on_gpu,
+            compile=args.compile,
+            compile_target=args.compile_target,
         )
         for b in all_batches[:args.warmup]:
             ie_scorer.embed(b)

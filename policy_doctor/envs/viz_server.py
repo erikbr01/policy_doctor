@@ -23,6 +23,7 @@ import json
 import struct
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -80,7 +81,7 @@ _KEY_ACTIONS = {
 }
 
 _key_lock = threading.Lock()
-_key_state = {"is_intervening": False, "action": None}
+_key_state = {"is_intervening": False, "action": None, "reset_requested": False}
 
 
 def _handle_key(key: int) -> None:
@@ -88,6 +89,8 @@ def _handle_key(key: int) -> None:
     with _key_lock:
         if key == ord(" "):
             _key_state["is_intervening"] = not _key_state["is_intervening"]
+        if key == ord("r"):
+            _key_state["reset_requested"] = True
         if key in _KEY_ACTIONS:
             _key_state["action"] = _KEY_ACTIONS[key]
         else:
@@ -185,6 +188,115 @@ def _start_spacemouse(vendor_id: int = 9583, product_id: int = 50741,
     return True
 
 
+def _start_pygame_controller(
+    controller_index: int = 0,
+    deadzone: float = 0.15,
+    scale_pos: float = 1.0,
+    scale_rot: float = 1.0,
+    left_x_axis: int = 0,
+    left_y_axis: int = 1,
+    right_x_axis: int = 2,
+    right_y_axis: int = 3,
+    lt_axis: int = 4,
+    rt_axis: int = 5,
+    close_button: int = 4,
+    open_button: int = 5,
+    toggle_button: int = 9,
+    reset_button: int = 8,
+) -> bool:
+    """Try to start a pygame-backed controller reader.
+
+    Useful on macOS for Bluetooth / USB controllers that SDL sees but the
+    `inputs` package does not. State is merged into _key_state so the runner's
+    HTTPInterventionDevice can consume it through /intervention.
+    """
+    try:
+        import pygame
+    except ImportError:
+        return False
+
+    pygame.init()
+    pygame.joystick.init()
+    if pygame.joystick.get_count() <= controller_index:
+        return False
+
+    joystick = pygame.joystick.Joystick(controller_index)
+    joystick.init()
+    print(f"[viz server] Pygame controller connected: {joystick.get_name()}", flush=True)
+
+    last_toggle_state = [0]
+    last_reset_state = [0]
+
+    def _apply_deadzone(value: float) -> float:
+        if abs(value) < deadzone:
+            return 0.0
+        sign = 1.0 if value > 0 else -1.0
+        return sign * (abs(value) - deadzone) / (1.0 - deadzone)
+
+    def _axis(idx: int) -> float:
+        if idx < 0 or idx >= joystick.get_numaxes():
+            return 0.0
+        return float(joystick.get_axis(idx))
+
+    def _button(idx: int) -> bool:
+        if idx < 0 or idx >= joystick.get_numbuttons():
+            return False
+        return bool(joystick.get_button(idx))
+
+    def _reader():
+        while True:
+            pygame.event.pump()
+
+            toggle_state = int(_button(toggle_button))
+            if toggle_state == 1 and last_toggle_state[0] == 0:
+                with _key_lock:
+                    _key_state["is_intervening"] = not _key_state["is_intervening"]
+            last_toggle_state[0] = toggle_state
+
+            reset_state = int(_button(reset_button))
+            if reset_state == 1 and last_reset_state[0] == 0:
+                with _key_lock:
+                    _key_state["reset_requested"] = True
+            last_reset_state[0] = reset_state
+
+            lx = _apply_deadzone(_axis(left_x_axis))
+            ly = _apply_deadzone(-_axis(left_y_axis))
+            rx = _apply_deadzone(_axis(right_x_axis))
+            ry = _apply_deadzone(-_axis(right_y_axis))
+
+            lt = (_axis(lt_axis) + 1.0) / 2.0
+            rt = (_axis(rt_axis) + 1.0) / 2.0
+            pitch = rt - lt
+
+            close = _button(close_button)
+            open_ = _button(open_button)
+            gripper = -1.0 if close else (1.0 if open_ else 0.0)
+
+            action = None
+            if any([lx, ly, rx, ry, abs(pitch) > 0.01, close, open_]):
+                action = [
+                    float(np.clip(lx * scale_pos, -1, 1)),
+                    float(np.clip(ly * scale_pos, -1, 1)),
+                    float(np.clip(ry * scale_pos, -1, 1)),
+                    0.0,
+                    float(np.clip(pitch * scale_rot, -1, 1)),
+                    float(np.clip(rx * scale_rot, -1, 1)),
+                    gripper,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+
+            with _key_lock:
+                _key_state["action"] = action
+
+            time.sleep(0.01)
+
+    t = threading.Thread(target=_reader, name="pygame-controller", daemon=True)
+    t.start()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Flask app (runs in worker threads)
 # ---------------------------------------------------------------------------
@@ -196,7 +308,9 @@ app.logger.disabled = True
 @app.get("/intervention")
 def get_intervention():
     with _key_lock:
-        return dict(_key_state)
+        state = dict(_key_state)
+        _key_state["reset_requested"] = False
+        return state
 
 
 @app.post("/frame")
@@ -266,15 +380,26 @@ def _overlay(canvas: np.ndarray, meta: dict) -> np.ndarray:
 def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
-    # Optional SpaceMouse
-    if device in ("spacemouse", "auto"):
+    # Optional gamepad / SpaceMouse. For demo use on macOS, `pygame` supports
+    # controllers that `inputs` may not see.
+    if device in ("pygame", "auto"):
+        found = _start_pygame_controller()
+        if not found and device == "pygame":
+            print("[viz server] WARNING: pygame controller not found", flush=True)
+        elif found:
+            print("[viz server] Input: pygame controller + keyboard", flush=True)
+        elif device == "auto":
+            sm_found = _start_spacemouse()
+            if sm_found:
+                print("[viz server] Input: SpaceMouse + keyboard", flush=True)
+            else:
+                print("[viz server] Input: keyboard only", flush=True)
+    elif device == "spacemouse":
         found = _start_spacemouse()
-        if not found and device == "spacemouse":
+        if not found:
             print("[viz server] WARNING: SpaceMouse not found", flush=True)
         elif found:
             print("[viz server] Input: SpaceMouse + keyboard", flush=True)
-        else:
-            print("[viz server] Input: keyboard only", flush=True)
     else:
         print("[viz server] Input: keyboard only", flush=True)
 
@@ -296,7 +421,8 @@ def serve(port: int = 5002, fps: int = 30, device: str = "auto") -> None:
     blank = np.zeros((480, 640, 3), dtype=np.uint8)
     for i, line in enumerate([
         "Waiting for frames...",
-        "Keys: Space=toggle  W/S/A/D/Q/E=arm  G/H=gripper  Q=quit",
+        "Keys: Space=toggle  R=reset  W/S/A/D/Q/E=arm  G/H=gripper  Q=quit",
+        "Gamepad: L-stick xy  R-stick z/yaw  triggers pitch  L1/R1 gripper  Share=reset",
     ]):
         cv2.putText(blank, line, (20, 220 + i * 35),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
@@ -326,7 +452,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--device", default="auto",
-                        choices=["auto", "keyboard", "spacemouse"],
-                        help="auto: try SpaceMouse, fall back to keyboard")
+                        choices=["auto", "keyboard", "spacemouse", "pygame"],
+                        help="auto: try pygame controller, then SpaceMouse, then keyboard")
     args = parser.parse_args()
     serve(args.port, args.fps, args.device)

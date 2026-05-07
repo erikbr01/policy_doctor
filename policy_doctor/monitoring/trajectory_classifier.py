@@ -131,6 +131,9 @@ class TrajectoryClassifier:
         mode: Literal["rollout", "demo"] = "rollout",
         device: str = "auto",
         episodes_dir: Optional[str] = None,
+        projection_on_gpu: bool = True,
+        compile: bool = True,
+        compile_target: str = "inner_unet",
     ) -> "TrajectoryClassifier":
         """Build a TrajectoryClassifier from a policy checkpoint.
 
@@ -151,6 +154,13 @@ class TrajectoryClassifier:
                 ``infembed_embeddings.npz`` rollout embeddings are at the timestep
                 level — used to compute window-mean embeddings for the
                 ``NearestCentroidAssigner`` centroids.
+            projection_on_gpu: Forwarded to :class:`InfEmbedStreamScorer`. Default
+                ``True`` (fastest); set ``False`` for image policies that OOM.
+            compile: Forwarded to :class:`InfEmbedStreamScorer`. Default ``True``
+                — pays a one-time torch.compile warmup (~20s) for ~1.1x predict
+                speedup, amortised across a monitoring session.
+            compile_target: ``'inner_unet'`` (default) or ``'wrapper'``; see scorer
+                docstring.
         """
         import dill
         import torch
@@ -187,6 +197,9 @@ class TrajectoryClassifier:
             infembed_fit_path=infembed_fit_path,
             infembed_embeddings_path=infembed_embeddings_path,
             device=device,
+            projection_on_gpu=projection_on_gpu,
+            compile=compile,
+            compile_target=compile_target,
         )
 
         clustering_path = Path(clustering_dir)

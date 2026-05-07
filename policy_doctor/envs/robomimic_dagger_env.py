@@ -42,10 +42,12 @@ class RobomimicDAggerEnv(gym.Env):
         inner_env: gym.Env,
         obs_keys: list[str],
         output_dir: Optional[Path | str] = None,
+        record_data: bool = True,
     ) -> None:
         self.inner_env = inner_env
         self.obs_keys = obs_keys
         self.output_dir = Path(output_dir) if output_dir else None
+        self.record_data = record_data
 
         self.action_space = inner_env.action_space
         self.observation_space = inner_env.observation_space
@@ -98,22 +100,23 @@ class RobomimicDAggerEnv(gym.Env):
             import torch
             action_np = action.detach().cpu().numpy() if isinstance(action, torch.Tensor) else np.array(action)
 
-        # Capture per-key obs and sim state
-        raw_obs = self._get_raw_obs_dict()
-        sim_state = self._get_sim_state()
+        if self.record_data:
+            # Capture per-key obs and sim state only when collection is enabled.
+            raw_obs = self._get_raw_obs_dict()
+            sim_state = self._get_sim_state()
 
-        self._episode_data.append(
-            {
-                "timestep": len(self._episode_data),
-                "obs": {k: raw_obs[k].copy() for k in self.obs_keys},
-                "stacked_obs": obs.copy() if hasattr(obs, "copy") else obs,
-                "action": action_np.copy(),
-                "reward": float(reward),
-                "done": bool(done),
-                "acting_agent": self._acting_agent,
-                "sim_state": sim_state.copy(),
-            }
-        )
+            self._episode_data.append(
+                {
+                    "timestep": len(self._episode_data),
+                    "obs": {k: raw_obs[k].copy() for k in self.obs_keys},
+                    "stacked_obs": obs.copy() if hasattr(obs, "copy") else obs,
+                    "action": action_np.copy(),
+                    "reward": float(reward),
+                    "done": bool(done),
+                    "acting_agent": self._acting_agent,
+                    "sim_state": sim_state.copy(),
+                }
+            )
 
         return obs, reward, done, info
 

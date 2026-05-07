@@ -130,7 +130,6 @@ def load_embeddings_reduced(result_dir: Path) -> Optional[np.ndarray]:
 
 
 def save_clustering_result(
-    task_config: str,
     name: str,
     cluster_labels: np.ndarray,
     metadata: List[Dict[str, Any]],
@@ -143,11 +142,12 @@ def save_clustering_result(
     n_clusters: int,
     n_samples: int,
     embeddings_reduced: Optional[np.ndarray] = None,
+    output_dir: Path | None = None,
+    task_config: str | None = None,
 ) -> Path:
     """Save a clustering result to disk.
 
     Args:
-        task_config: Task config name.
         name: Display name; will be slugified for the directory name.
         cluster_labels: 1D array of cluster labels.
         metadata: List of per-slice metadata dicts (JSON-serializable).
@@ -160,15 +160,23 @@ def save_clustering_result(
         n_samples: Number of samples (len(cluster_labels)).
         embeddings_reduced: Optional ``(n_samples, n_components)`` float32 array
             of UMAP-reduced embeddings.  When provided, saved as
-            ``embeddings_reduced.npy`` alongside the other files.  This sidecar
-            is used by the E1 cluster-coherence experiment for centroid-proximity
-            sample selection.
+            ``embeddings_reduced.npy`` alongside the other files.  Used by the
+            E1 cluster-coherence experiment for centroid-proximity sample selection.
+        output_dir: Explicit output directory. When provided, results are written to
+            ``output_dir / slug`` instead of the iv configs tree. Takes precedence
+            over task_config.
+        task_config: Task config name (legacy). Used only when output_dir is None.
 
     Returns:
         Path to the result directory.
     """
     slug = _slugify(name)
-    result_dir = get_clustering_dir(task_config) / slug
+    if output_dir is not None:
+        result_dir = Path(output_dir) / slug
+    elif task_config is not None:
+        result_dir = get_clustering_dir(task_config) / slug
+    else:
+        raise ValueError("Either output_dir or task_config must be provided")
     result_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {

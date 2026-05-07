@@ -3,7 +3,7 @@
 # Run this BEFORE starting the DAgger runner.
 #
 # Usage:
-#   ./scripts/experiments/run_viz_server.sh [--port 5002] [--fps 30]
+#   ./scripts/experiments/run_viz_server.sh [--port 5002] [--fps 30] [--device auto|pygame|spacemouse|keyboard]
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/_lib.sh"
 
 PORT=5002
 FPS=30
+# Demo-friendly default: pygame sees macOS Bluetooth / USB gamepads that
+# `inputs` may miss; viz_server falls back to SpaceMouse, then keyboard.
 DEVICE="auto"
 while [[ $# -gt 0 ]]; do
     case "$1" in

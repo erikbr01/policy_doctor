@@ -106,6 +106,21 @@ def auto_device() -> str:
     type=str,
     help="DAgger config preset (keyboard_default, spacemouse_default, defaults, etc.)",
 )
+# InfEmbed predict acceleration knobs (see InfEmbedStreamScorer docstring).
+@click.option(
+    "--projection_on_gpu/--projection_on_cpu", "projection_on_gpu",
+    default=True,
+    help="Where the Arnoldi projection vectors live (default: GPU; ~2-3x faster predict).",
+)
+@click.option(
+    "--compile/--no-compile", "use_compile", default=True,
+    help="torch.compile the inner U-Net (default: on; ~1.1x extra, ~20s warmup).",
+)
+@click.option(
+    "--compile_target", type=click.Choice(["inner_unet", "wrapper"]),
+    default="inner_unet",
+    help="Compile target when --compile is set (default: inner_unet).",
+)
 def main(
     train_dir: str,
     train_ckpt: str,
@@ -119,6 +134,9 @@ def main(
     device: str,
     no_visualization: bool,
     dagger_config: str,
+    projection_on_gpu: bool,
+    use_compile: bool,
+    compile_target: str,
 ) -> None:
     """Run DAgger episodes on robocasa with behavior graph intervention timing."""
 
@@ -165,6 +183,9 @@ def main(
         clustering_dir=clustering_dir,
         mode="rollout",
         device=device,
+        projection_on_gpu=projection_on_gpu,
+        compile=use_compile,
+        compile_target=compile_target,
     )
 
     graph, node_values = get_behavior_graph_and_slice_values(

@@ -36,6 +36,10 @@ class InterventionDevice(ABC):
     def reset(self) -> None:
         """Reset internal state (called at episode start)."""
 
+    def consume_reset_request(self) -> bool:
+        """Return True once when the user requested a scene reset."""
+        return False
+
 
 class PassthroughInterventionDevice(InterventionDevice):
     """Stub device: never intervenes, always returns None."""
@@ -100,6 +104,7 @@ class KeyboardInterventionDevice(InterventionDevice):
         self.action_dim = action_dim
         self.step_size = step_size
         self._is_intervening = False
+        self._reset_requested = False
         self._keys_pressed = set()
         self._listener = None
 
@@ -112,7 +117,9 @@ class KeyboardInterventionDevice(InterventionDevice):
         def on_press(key):
             try:
                 char = key.char
-                if char and char.lower() in self.KEY_BINDINGS:
+                if char and char.lower() == "r":
+                    self._reset_requested = True
+                elif char and char.lower() in self.KEY_BINDINGS:
                     self._keys_pressed.add(char.lower())
             except AttributeError:
                 # Special key (arrows, F-keys, space, etc.)
@@ -159,6 +166,11 @@ class KeyboardInterventionDevice(InterventionDevice):
         """Reset internal state."""
         self._keys_pressed.clear()
         self._is_intervening = False
+
+    def consume_reset_request(self) -> bool:
+        requested = self._reset_requested
+        self._reset_requested = False
+        return requested
 
     def close(self) -> None:
         """Stop the listener thread."""
@@ -583,6 +595,173 @@ class XboxControllerInterventionDevice(InterventionDevice):
         self.close()
 
 
+class PygameControllerInterventionDevice(InterventionDevice):
+    """Pygame-backed controller for macOS Bluetooth / USB gamepads.
+
+    This is useful for controllers that SDL/pygame can see but the `inputs`
+    package cannot (e.g. macOS reports some wireless gamepads as
+    "PS4 Controller" / "Wireless Controller").
+
+    Default axis mapping follows the SDL mapping observed for the demo
+    controller on macOS:
+      Left stick  X axis 0: arm x
+      Left stick  Y axis 1: arm y (negated: push forward = +y)
+      Right stick X axis 2: arm yaw
+      Right stick Y axis 3: arm z (negated: push up = +z)
+      LT axis 4 / RT axis 5: arm pitch = RT - LT
+
+    Default buttons:
+      L1/LB button 4: gripper close
+      R1/RB button 5: gripper open
+      Options/Start button 9: toggle intervention
+    """
+
+    ACTION_DIM = 10
+
+    def __init__(
+        self,
+        controller_index: int = 0,
+        deadzone: float = 0.15,
+        scale_position: float = 1.0,
+        scale_rotation: float = 1.0,
+        left_x_axis: int = 0,
+        left_y_axis: int = 1,
+        right_x_axis: int = 2,
+        right_y_axis: int = 3,
+        lt_axis: int = 4,
+        rt_axis: int = 5,
+        close_button: int = 4,
+        open_button: int = 5,
+        toggle_button: int = 9,
+        reset_button: int = 8,
+    ) -> None:
+        try:
+            import pygame
+        except ImportError as e:
+            raise ImportError("pygame not found. Install with: pip install pygame") from e
+
+        pygame.init()
+        pygame.joystick.init()
+        n = pygame.joystick.get_count()
+        if n <= 0:
+            raise RuntimeError("No pygame controllers found. Connect controller and try again.")
+        if controller_index >= n:
+            raise RuntimeError(
+                f"Controller index {controller_index} out of range; {n} controller(s) connected."
+            )
+
+        self._pygame = pygame
+        self._joystick = pygame.joystick.Joystick(controller_index)
+        self._joystick.init()
+
+        self.controller_index = controller_index
+        self.deadzone = deadzone
+        self.scale_position = scale_position
+        self.scale_rotation = scale_rotation
+        self.left_x_axis = left_x_axis
+        self.left_y_axis = left_y_axis
+        self.right_x_axis = right_x_axis
+        self.right_y_axis = right_y_axis
+        self.lt_axis = lt_axis
+        self.rt_axis = rt_axis
+        self.close_button = close_button
+        self.open_button = open_button
+        self.toggle_button = toggle_button
+        self.reset_button = reset_button
+
+        self._is_intervening = False
+        self._last_toggle_state = 0
+        self._last_reset_state = 0
+        self._reset_requested = False
+        print(f"[PygameController] Opened {self._joystick.get_name()}")
+
+    def _apply_deadzone(self, value: float) -> float:
+        if abs(value) < self.deadzone:
+            return 0.0
+        sign = 1.0 if value > 0 else -1.0
+        return sign * (abs(value) - self.deadzone) / (1.0 - self.deadzone)
+
+    def _axis(self, idx: int) -> float:
+        if idx < 0 or idx >= self._joystick.get_numaxes():
+            return 0.0
+        return float(self._joystick.get_axis(idx))
+
+    def _button(self, idx: int) -> bool:
+        if idx < 0 or idx >= self._joystick.get_numbuttons():
+            return False
+        return bool(self._joystick.get_button(idx))
+
+    @property
+    def is_intervening(self) -> bool:
+        self._pygame.event.pump()
+        toggle_state = int(self._button(self.toggle_button))
+        if toggle_state == 1 and self._last_toggle_state == 0:
+            self._is_intervening = not self._is_intervening
+        self._last_toggle_state = toggle_state
+
+        reset_state = int(self._button(self.reset_button))
+        if reset_state == 1 and self._last_reset_state == 0:
+            self._reset_requested = True
+        self._last_reset_state = reset_state
+        return self._is_intervening
+
+    def get_action(self) -> Optional[np.ndarray]:
+        self._pygame.event.pump()
+        _ = self.is_intervening
+
+        lx = self._apply_deadzone(self._axis(self.left_x_axis))
+        ly = self._apply_deadzone(-self._axis(self.left_y_axis))
+        rx = self._apply_deadzone(self._axis(self.right_x_axis))
+        ry = self._apply_deadzone(-self._axis(self.right_y_axis))
+
+        # Pygame/SDL commonly reports triggers as axes in [-1, 1]. Convert to [0, 1].
+        lt_raw = self._axis(self.lt_axis)
+        rt_raw = self._axis(self.rt_axis)
+        lt = (lt_raw + 1.0) / 2.0
+        rt = (rt_raw + 1.0) / 2.0
+
+        close = self._button(self.close_button)
+        open_ = self._button(self.open_button)
+        pitch = rt - lt
+        gripper = -1.0 if close else (1.0 if open_ else 0.0)
+
+        if not any([lx, ly, rx, ry, abs(pitch) > 0.01, close, open_]):
+            return None
+
+        action = np.zeros(self.ACTION_DIM, dtype=np.float32)
+        action[0] = np.clip(lx * self.scale_position, -1, 1)
+        action[1] = np.clip(ly * self.scale_position, -1, 1)
+        action[2] = np.clip(ry * self.scale_position, -1, 1)
+        action[4] = np.clip(pitch * self.scale_rotation, -1, 1)
+        action[5] = np.clip(rx * self.scale_rotation, -1, 1)
+        action[6] = gripper
+        return action
+
+    def notify(self, message: str) -> None:
+        print(f"[PygameController INTERVENTION] {message}")
+
+    def reset(self) -> None:
+        self._is_intervening = False
+        self._last_toggle_state = 0
+        self._last_reset_state = 0
+
+    def consume_reset_request(self) -> bool:
+        _ = self.is_intervening
+        requested = self._reset_requested
+        self._reset_requested = False
+        return requested
+
+    def close(self) -> None:
+        if hasattr(self, "_joystick"):
+            try:
+                self._joystick.quit()
+            except Exception:
+                pass
+
+    def __del__(self):
+        self.close()
+
+
 class HTTPInterventionDevice(InterventionDevice):
     """Polls intervention state from the viz server's GET /intervention endpoint.
 
@@ -608,7 +787,7 @@ class HTTPInterventionDevice(InterventionDevice):
         self._url = server_url.rstrip("/") + "/intervention"
         self._session = requests.Session()
         self._poll_interval = poll_interval
-        self._state: dict = {"is_intervening": False, "action": None}
+        self._state: dict = {"is_intervening": False, "action": None, "reset_requested": False}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -631,7 +810,13 @@ class HTTPInterventionDevice(InterventionDevice):
 
     def reset(self) -> None:
         with self._lock:
-            self._state = {"is_intervening": False, "action": None}
+            self._state = {"is_intervening": False, "action": None, "reset_requested": False}
+
+    def consume_reset_request(self) -> bool:
+        with self._lock:
+            requested = bool(self._state.get("reset_requested", False))
+            self._state["reset_requested"] = False
+        return requested
 
     def close(self) -> None:
         self._stop.set()
