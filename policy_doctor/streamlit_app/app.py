@@ -10,7 +10,14 @@ Usage:
 """
 
 import pathlib
+import sys
 from typing import Optional
+
+# Ensure this worktree's policy_doctor wins over any pip-installed editable copy
+# from a sibling worktree (see: pip editable install shadowing).
+_THIS_REPO = pathlib.Path(__file__).resolve().parents[3]
+if str(_THIS_REPO) not in sys.path:
+    sys.path.insert(0, str(_THIS_REPO))
 
 import streamlit as st
 
@@ -345,7 +352,7 @@ def main() -> None:
             config_key = f"{data_cache_version}_{config_name}_{config.eval_dir}_{config.train_dir}"
             data = _get_cached_data(config_key, config)
         except Exception as e:
-            st.sidebar.warning(f"Influence data unavailable: {type(e).__name__}")
+            st.sidebar.caption(f"⚠ Influence data unavailable ({type(e).__name__})")
         if data is not None:
             _render_sidebar_dataset_info(data)
 
@@ -412,8 +419,11 @@ def main() -> None:
             st.caption(f"Tab unavailable: {type(e).__name__}: {e}")
 
     with tab_e1_inspector:
-        from policy_doctor.streamlit_app.tabs import e1_inspector
-        e1_inspector.render()
+        try:
+            from policy_doctor.streamlit_app.tabs import e1_inspector
+            e1_inspector.render()
+        except ImportError as e:
+            st.caption(f"Tab unavailable: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
