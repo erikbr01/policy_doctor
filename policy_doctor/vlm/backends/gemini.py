@@ -432,6 +432,8 @@ def _messages_to_gemini_contents(messages: List[Dict[str, Any]]):
         # one Content per (role, block_group).
         text_image_parts: List[Dict[str, Any]] = []
         tool_use_parts: List[Dict[str, Any]] = []
+        fn_response_parts: List[Dict[str, Any]] = []
+        pending_hoists: List[Dict[str, Any]] = []
         for blk in content:
             t = blk.get("type")
             if t == "text":
@@ -461,8 +463,11 @@ def _messages_to_gemini_contents(messages: List[Dict[str, Any]]):
                     fc["id"] = pmd["function_call_id"]
                 tool_use_parts.append({"function_call": fc})
             elif t == "tool_result":
-                # Build a function response Content. Strip images out of the
-                # content list and hoist them into a sibling user message.
+                # Accumulate function_response parts; they will be emitted as
+                # a SINGLE 'function' Content after all blocks are processed.
+                # Gemini requires exactly one function_response per function_call
+                # within a turn — splitting them across multiple Contents causes
+                # 400 INVALID_ARGUMENT when the model made parallel calls.
                 tu_id = blk.get("tool_use_id") or ""
                 inner = blk.get("content") or []
                 text_chunks: List[str] = []
@@ -484,34 +489,30 @@ def _messages_to_gemini_contents(messages: List[Dict[str, Any]]):
                 response_payload: Dict[str, Any] = {"text": "\n".join(text_chunks) or ""}
                 if blk.get("is_error"):
                     response_payload["error"] = True
-
-                # We need the function name; Anthropic carries it on the
-                # tool_use turn, not on tool_result. Look back at the most
-                # recent assistant turn for the matching id.
                 fn_name = _lookup_tool_name_for_id(messages, tu_id) or "unknown_tool"
-
-                # Emit the function response as its own Content (Gemini role 'function').
-                out.append({
-                    "role": "function",
-                    "parts": [{
-                        "function_response": {
-                            "name": fn_name,
-                            "response": response_payload,
-                        }
-                    }],
+                fn_response_parts.append({
+                    "function_response": {
+                        "name": fn_name,
+                        "response": response_payload,
+                    }
                 })
                 if hoisted_image_parts:
-                    sibling = {
+                    pending_hoists.append({
                         "role": "user",
                         "parts": [
                             {"text": f"[image attached to tool_use_id={tu_id}]"},
                             *hoisted_image_parts,
                         ],
-                    }
-                    out.append(sibling)
-                    hoisted.append(sibling)
+                    })
 
-        # Now flush text/image and tool_use parts as needed.
+        # Flush all collected parts for this message.
+        # Function responses: one Content block containing ALL parts so the
+        # count matches the number of function_calls in the preceding turn.
+        if fn_response_parts:
+            out.append({"role": "function", "parts": fn_response_parts})
+        for h in pending_hoists:
+            out.append(h)
+            hoisted.append(h)
         if text_image_parts:
             gemini_role = "model" if role_in == "assistant" else "user"
             out.append({"role": gemini_role, "parts": text_image_parts})
