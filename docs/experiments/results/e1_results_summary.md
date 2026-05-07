@@ -691,6 +691,83 @@ State representations: `state_full` = full 2-step obs history (118D → UMAP 100
 
 - **encoder_plan_t0 K sweep (F14f)**: K=5→0.533, K=10→0.625, K=15→0.444, K=20→0.359; all significant; encoder beats bottleneck at K=5/10/15
 
+## Artifact paths
+
+All paths relative to repo root (`/home/erbauer/refactor_cupid/e1-cluster-validation`) unless noted.
+Persistent external storage root: `/mnt/ssdB/erik/cupid_data/` (survives reboots).
+Eval episodes: `/mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/mar27/mar27_train_diffusion_unet_lowdim_transport_mh_0_r512x512/latest/`
+
+### InfEmbed baseline (F1–F10)
+
+| Artifact | Path |
+|---|---|
+| InfEmbed base clustering (pre-k-sweep) | `/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering/` |
+| InfEmbed K=5/10/15 clusterings | `/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering_k{5,10,15}/` |
+| InfEmbed K=5 E1 results | `experiments/e1_infembed_k5_{n3,n20q}_comp{512,768,1024}/` |
+| InfEmbed K=10 E1 results | `experiments/e1_infembed_k10_n2_comp{512,768,1024,1536}/` |
+| InfEmbed K=15 E1 results | `experiments/e1_infembed_k15_n2_comp{512,768,1024}/` |
+| InfEmbed K=20 E1 results | `experiments/e1_infembed_k20_{n2_comp512,n2_comp768}/` |
+
+### Visual / format sweeps (F2–F9)
+
+| Artifact | Path |
+|---|---|
+| VLM model sweep (Qwen3-VL-8B vs 32B) | `experiments/e1_transport_r512_seed0_qwen3vl{8b,32b_nf4}_k10_v2/` |
+| Composite size sweep (K=10) | `experiments/e1_transport_r512_seed0_qwen3vl8b_k10_v2_comp{768,1024}/` |
+| Frames mode sweep | `experiments/e1_transport_r512_seed0_qwen3vl8b_k10_v2_frames_cap384/` |
+| Hybrid frames+composite | `experiments/e1_transport_r512_seed0_qwen3vl8b_k10_v2_hybrid_q_frames/` |
+| View angle sweep | `experiments/e1_transport_r512_seed0_qwen3vl8b_k10_v2_view{0,5,10,15}_mf9/` |
+| K=5/15/20 baselines | `experiments/e1_transport_r512_seed0_qwen3vl8b_k{5,15,20}_{v2,K20,K20_reps3}/` |
+
+### State / state_action K sweep (F10, F10d)
+
+| Artifact | Path |
+|---|---|
+| State clusterings K=5/10/15/20 | `/mnt/ssdB/erik/cupid_data/clusterings/transport_r512_state_k{5,10,15,20}/` |
+| State_action clusterings K=5/10/15/20 | `/mnt/ssdB/erik/cupid_data/clusterings/transport_r512_state_action_k{5,10,15,20}/` |
+| State E1 results K=5/10/15/20 | `experiments/e1_transport_r512_seed0_qwen3vl8b_state_k{5,10,15,20}/` |
+| State_action E1 results K=5/10/15/20 | `experiments/e1_transport_r512_seed0_qwen3vl8b_state_action_k{5,10,15,20}/` |
+
+### Window sweep (F11–F12)
+
+| Artifact | Path |
+|---|---|
+| Timestep-first clusterings (UMAP trunk + branches) | `/mnt/ssdB/erik/cupid_data/window_sweep_clusterings/` |
+| Window-first clusterings (one UMAP per config) | `/mnt/ssdB/erik/cupid_data/window_sweep_wf_clusterings/` |
+| Timestep-first E1 results | `experiments/window_sweep/` |
+| Window-first E1 results | `experiments/window_sweep_wf/` |
+
+### Policy embedding sweep (F13–F14f)
+
+| Artifact | Path |
+|---|---|
+| Pre-computed embeddings (all layers) | `EVAL_DIR/policy_embeddings/{layer}.npz` |
+| All clusterings | `experiments/policy_emb_sweep/clusterings/{label}__w{w}_s{s}__K{K}/` |
+| All E1 results | `experiments/policy_emb_sweep/{label}__w{w}_s{s}__K{K}/` |
+| Sweep orchestrator script | `scripts/run_policy_emb_sweep.py` |
+| Encoder K sweep script | `scripts/run_encoder_k_sweep.py` |
+
+### TRAK + InfEmbed 50D (F15)
+
+| Artifact | Path |
+|---|---|
+| TRAK clusterings K=5/10/15/20 | `experiments/policy_emb_sweep/clusterings/trak__w5_s2__K{5,10,15,20}/` |
+| TRAK E1 results K=5/10/15/20 | `experiments/policy_emb_sweep/trak__w5_s2__K{5,10,15,20}/` |
+| InfEmbed 50D clustering | `/mnt/ssdB/erik/cupid_data/clusterings/infembed_50d_k10/` |
+| InfEmbed 50D E1 results | `experiments/e1_infembed_50d_k10/` |
+
+### Head-to-head (F16)
+
+| Artifact | Path |
+|---|---|
+| state_full clustering (118D → UMAP 100D) | `experiments/head_to_head/clusterings/state_full__w5_s2__K10/` |
+| state_action_full clustering (438D → UMAP 100D) | `experiments/head_to_head/clusterings/state_action_full__w5_s2__K10/` |
+| All other clusterings | reused from policy_emb_sweep/clusterings/ and `/mnt/ssdB/.../clusterings/` |
+| All E1 results | `experiments/head_to_head/{label}/` |
+| Head-to-head script | `scripts/run_head_to_head.py` |
+
+---
+
 ## Operational note
 
 Going forward, only **GPU 0** is in scope for E1 work — GPU 1 is reserved for sander tonkens' streamlit. All sweep scripts pin via `CUDA_VISIBLE_DEVICES=0` accordingly.
