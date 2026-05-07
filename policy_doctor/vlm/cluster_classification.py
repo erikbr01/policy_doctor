@@ -989,6 +989,9 @@ def run_cluster_coherence_classification(
     plan["clustering_dir"] = str(clustering_dir)
     plan["eval_dir"] = str(eval_dir)
     plan["backend"] = getattr(backend, "name", type(backend).__name__)
+    plan["model_id"] = getattr(backend, "model_id", None)
+    plan["load_in_4bit"] = getattr(backend, "load_in_4bit", None)
+    plan["load_in_8bit"] = getattr(backend, "load_in_8bit", None)
     plan["max_frames_per_storyboard"] = int(max_frames_per_storyboard)
     plan["view_window_extension"] = int(view_window_extension)
     plan["include_action_text"] = bool(include_action_text)
@@ -1074,6 +1077,9 @@ def run_cluster_coherence_classification(
     # Metrics
     metrics = compute_classification_metrics(all_records, cluster_ids)
     metrics["backend"] = plan["backend"]
+    metrics["model_id"] = plan.get("model_id")
+    metrics["load_in_4bit"] = plan.get("load_in_4bit")
+    metrics["load_in_8bit"] = plan.get("load_in_8bit")
     metrics["n_clusters"] = len(cluster_ids)
     metrics["n_example_per_cluster"] = n_example
     metrics["n_query_per_cluster"] = n_query
