@@ -395,18 +395,21 @@ def _make_get_slice_video(ctx: SessionContext) -> ToolSpec:
             metadata={"slice_id": sid, "format": mode},
         )
 
+    # When the session is configured to return MP4 clips, charge video budget.
+    effective_cost = "video" if _storyboard_mode(ctx) == "video" else "visual"
+    desc = (
+        "Visual content for one slice as an MP4 video clip. "
+        "COUNTS AGAINST THE VIDEO BUDGET."
+        if effective_cost == "video" else
+        "Visual content for one slice as a storyboard image. "
+        "COUNTS AGAINST THE VISUAL BUDGET."
+    )
     return ToolSpec(
         name="get_slice_video",
-        description=(
-            "Visual content for one slice. format='storyboard' (default) returns a "
-            "4-frame composite. format='video' would return an MP4 if available; "
-            "currently falls back to storyboard. COUNTS AGAINST THE VISUAL BUDGET."
-        ),
+        description=desc,
         input_schema=S.GET_SLICE_VIDEO,
         func=_run,
-        # Storyboard cost is "visual"; video escalates to "video" but only when format=video.
-        # The session loop reads the actual cost from each call's args at dispatch time.
-        cost="visual",
+        cost=effective_cost,
     )
 
 
