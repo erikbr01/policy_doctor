@@ -345,9 +345,7 @@ def main() -> None:
             config_key = f"{data_cache_version}_{config_name}_{config.eval_dir}_{config.train_dir}"
             data = _get_cached_data(config_key, config)
         except Exception as e:
-            st.error(f"Failed to load influence data: {e}")
-            if "influence_visualizer" in str(e):
-                st.caption("Install influence_visualizer for this backend, or use a native loader.")
+            st.sidebar.warning(f"Influence data unavailable: {type(e).__name__}")
         if data is not None:
             _render_sidebar_dataset_info(data)
 
@@ -400,7 +398,7 @@ def main() -> None:
             from policy_doctor.streamlit_app.tabs import mimicgen_eef
             mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
         except ImportError as e:
-            st.info(f"MimicGen EEF tab unavailable: {e}")
+            st.caption(f"Tab unavailable: {type(e).__name__}: {e}")
 
     with tab_runtime_monitor:
         from policy_doctor.streamlit_app.tabs import runtime_monitor
@@ -411,7 +409,7 @@ def main() -> None:
             from policy_doctor.streamlit_app.tabs import e2_console
             e2_console.render()
         except ImportError as e:
-            st.info(f"E2 Console tab unavailable: {e}")
+            st.caption(f"Tab unavailable: {type(e).__name__}: {e}")
 
     with tab_e1_inspector:
         from policy_doctor.streamlit_app.tabs import e1_inspector
