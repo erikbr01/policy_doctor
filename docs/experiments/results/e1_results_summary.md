@@ -646,11 +646,36 @@ The practical rules that do hold:
 
 ---
 
+### F16 — Head-to-head comparison: K=10, n_query=5, n_reps=5
+
+Controlled re-run of all major representations under identical protocol (same K, same n_example=3, n_query=5, n_reps=5, global_episode_disjoint, 768², seed=42). Larger query pool (~40–50 clean queries per run vs 24–30 in the sweep) gives tighter estimates and more reliable cross-representation comparison.
+
+| Representation | Clean | n | Ratio | p |
+|---|---|---|---|---|
+| **bottleneck_plan_t5** | **0.540 (27/50)** | 50 | **5.4×** | **1.1e-14** |
+| encoder_plan_t0 | 0.525 (21/40) | 40 | 5.2× | 2.0e-11 |
+| bottleneck_plan_t0 | 0.480 (24/50) | 50 | 4.8× | 8.9e-12 |
+| state_action_full | 0.480 (24/50) | 50 | 4.8× | 8.9e-12 |
+| infembed_100d | 0.378 (17/45) | 45 | 3.8× | 6.9e-7 |
+| state_full | 0.378 (17/45) | 45 | 3.8× | 6.9e-7 |
+| trak | 0.200 (10/50) | 50 | 2.0× | 2.5e-2 |
+
+State representations: `state_full` = full 2-step obs history (118D → UMAP 100D); `state_action_full` = full history + full 16-step predicted action plan (438D → UMAP 100D).
+
+**F16a — bottleneck_plan_t5 is the most reliable best representation (0.540).** The sweep result for encoder_plan_t0 (0.625, 15/24) was inflated by a small clean bucket. With 40 clean queries, encoder settles at 0.525 — consistent with but not significantly above bottleneck_plan_t5 (0.540). The top-3 (bottleneck_t5, encoder_t0, bottleneck_t0) are within 6pt and all share the same order of magnitude p-value. bottleneck_plan_t5 wins on point estimate.
+
+**F16b — encoder advantage over bottleneck does not replicate cleanly.** In the sweep (n=24), encoder_plan_t0 appeared 16pt ahead of bottleneck_plan_t0. Here (n=40 vs n=50) the gap is 4.5pt. The earlier result was likely a sampling artifact from a small clean bucket. The representations are close; bottleneck_plan_t5 is arguably the more reproducible best.
+
+**F16c — state_action_full (full history + full plan) matches bottleneck_plan_t0.** 0.480 vs 0.480, identical p-value. Adding the full 16-step predicted plan to raw state recovers as much clustering signal as the policy bottleneck with the same action — the plan itself is highly informative even without passing through the neural network. This is a notable finding: you don't need the UNet to cluster behaviourally if you have the raw action plan.
+
+**F16d — InfEmbed 100D ties state_full (both 0.378, 3.8×).** Raw proprioceptive state (2-step history, 118D → UMAP) and the Arnoldi-projected gradient embeddings (100D) give identical results. InfEmbed's advantage over raw state likely came from the 50D UMAP inconsistency in earlier experiments (F15a). On equal footing they are equivalent.
+
+**F16e — TRAK is now marginally significant (p=0.025, 2.0×) but remains the weakest.** With n=50 clean queries it clears the α=0.05 threshold, but the effect is small (2× vs chance). Not a complete null result, but far below every other representation.
+
+**F16 headline:** `bottleneck_plan_t5 ≈ encoder_plan_t0 > bottleneck_plan_t0 ≈ state_action_full >> infembed_100d ≈ state_full >> trak`. The raw action plan is a surprisingly strong clustering signal on its own; the neural representation adds ~10pt over it.
+
 ## Findings to write up after the next batch
 
-- **State-only K=10**: 0.467 clean, 4.7× — state recovers visual structure, InfEmbed still better (F10)
-- **State_action K=10**: 0.333 clean, 3.3× — adding raw actions to state hurts (F10)
-- **policy_emb plan@t0 K=10**: 0.593 clean, 5.9× — new best, beats InfEmbed by +7pt (F14)
 - **encoder_plan_t0 K sweep (F14f)**: K=5→0.533, K=10→0.625, K=15→0.444, K=20→0.359; all significant; encoder beats bottleneck at K=5/10/15
 
 ## Operational note
