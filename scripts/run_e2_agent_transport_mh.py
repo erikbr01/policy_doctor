@@ -172,7 +172,9 @@ def main() -> int:
         "pad_before": 12,
         "pad_after": 12,
         "target_size": (1024, 1024),
-        "cameras": None,  # auto-pick: agentview + every wrist cam available
+        "cameras": None,          # auto-pick: agentview + every wrist cam
+        "mode": "frames",         # send each timestep as a separate image
+        "include_state_text": True,  # append per-frame obs tail + action
     }
 
     print(f"[run] starting {args.condition} session (seed={args.seed})", flush=True)

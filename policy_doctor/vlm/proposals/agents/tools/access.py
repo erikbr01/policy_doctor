@@ -318,18 +318,29 @@ def _make_get_slice_video(ctx: SessionContext) -> ToolSpec:
                 code="not_found",
             )
 
-        composite = _render_slice_storyboard(
-            entry.episode_pkl, start, end, **_storyboard_kwargs(ctx)
-        )
-        if composite is None:
+        sb_kwargs = _storyboard_kwargs(ctx)
+        mode = _storyboard_mode(ctx)
+        want_state_text = _include_state_text(ctx)
+
+        # Render visual content.
+        if mode == "frames":
+            frames = _render_slice_frames(entry.episode_pkl, start, end, **sb_kwargs)
+            visual_blocks: List = []
+            if frames:
+                for fi, frame_img in enumerate(frames):
+                    visual_blocks.append(ImageBlock(image=frame_img, caption=f"{sid} frame {fi+1}/{len(frames)}"))
+        else:
+            composite = _render_slice_storyboard(entry.episode_pkl, start, end, **sb_kwargs)
+            visual_blocks = [ImageBlock(image=composite, caption=f"slice {sid}")] if composite else []
+
+        if not visual_blocks:
             return ToolResult.error(
                 "get_slice_video",
                 f"no frames available for {sid!r} (low-dim run? video format unsupported)",
                 code="no_frames",
             )
 
-        # Track inspection: a slice video counts as inspecting the cluster
-        # the slice belongs to.
+        # Track inspection.
         ctx.inspected_slices.add(sid)
         if ctx.cluster_labels is not None and ctx.cluster_metadata is not None:
             for i, meta in enumerate(ctx.cluster_metadata):
@@ -342,19 +353,37 @@ def _make_get_slice_video(ctx: SessionContext) -> ToolSpec:
                         ctx.inspected_nodes.add(label)
                     break
 
-        caption = f"slice {sid} (frames {start}-{end})"
-        # Only storyboard format supported in v1; agent asking for 'video' gets storyboard with a note.
-        note = ""
-        if fmt == "video":
-            note = " [video format not yet supported on slices; returning storyboard]"
+        note = " [video format not yet supported on slices; returning storyboard]" if fmt == "video" else ""
+        content: List = [TextBlock(text=f"slice {sid} (frames {start}-{end}){note}")]
+        content.extend(visual_blocks)
+
+        # Per-frame numeric state/action text (opt-in via storyboard config).
+        if want_state_text:
+            # Reconstruct the sampled frame indices to align text with images.
+            n_frames = sb_kwargs.get("n_frames", 5)
+            pad_before = sb_kwargs.get("pad_before", 12)
+            pad_after = sb_kwargs.get("pad_after", 12)
+            try:
+                import pandas as pd
+                df_len = len(pd.read_pickle(str(entry.episode_pkl)))
+                win_start = max(0, start - pad_before)
+                win_end = min(df_len - 1, end + pad_after)
+                span = win_end - win_start + 1
+                idxs = (
+                    [win_start + int(i * (span - 1) / max(1, n_frames - 1)) for i in range(n_frames)]
+                    if span >= n_frames else list(range(win_start, win_end + 1))
+                )
+                state_text = _load_slice_state_text(entry.episode_pkl, idxs, start)
+                if state_text:
+                    content.append(TextBlock(text=state_text))
+            except Exception:
+                pass
+
         return ToolResult(
             name="get_slice_video",
             ok=True,
-            content=[
-                TextBlock(text=caption + note),
-                ImageBlock(image=composite, caption=caption),
-            ],
-            metadata={"slice_id": sid, "format": "storyboard"},
+            content=content,
+            metadata={"slice_id": sid, "format": mode},
         )
 
     return ToolSpec(
@@ -459,12 +488,7 @@ def _load_storyboard(path: Optional[Path]) -> Optional[Image.Image]:
 
 
 def _storyboard_kwargs(ctx: SessionContext) -> Dict[str, Any]:
-    """Extract storyboard-render kwargs from ``ctx.config['storyboard']``.
-
-    Layer 2 visual tools share these knobs so a YAML config can shape what
-    the agent sees without touching code: temporal padding, frames per row,
-    target image size, camera selection.
-    """
+    """Extract storyboard-render kwargs from ``ctx.config['storyboard']``."""
     cfg = (ctx.config or {}).get("storyboard") or {}
     kw: Dict[str, Any] = {}
     if "n_frames" in cfg:
@@ -479,6 +503,16 @@ def _storyboard_kwargs(ctx: SessionContext) -> Dict[str, Any]:
         ts = cfg["target_size"]
         kw["target_size"] = (int(ts[0]), int(ts[1]))
     return kw
+
+
+def _storyboard_mode(ctx: SessionContext) -> str:
+    cfg = (ctx.config or {}).get("storyboard") or {}
+    return str(cfg.get("mode", "composite"))
+
+
+def _include_state_text(ctx: SessionContext) -> bool:
+    cfg = (ctx.config or {}).get("storyboard") or {}
+    return bool(cfg.get("include_state_text", False))
 
 
 # Default camera preference order, used when the caller does not specify cameras.
@@ -598,6 +632,112 @@ def _render_slice_storyboard(
             thumb = frame.convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
             canvas.paste(thumb, (c * cell_w, r * cell_h))
     return canvas
+
+
+def _render_slice_frames(
+    pkl_path: Path,
+    start: int,
+    end: int,
+    *,
+    n_frames: int = 5,
+    pad_before: int = 12,
+    pad_after: int = 12,
+    cameras: Optional[Tuple[str, ...]] = None,
+    target_size: Tuple[int, int] = (1024, 1024),
+) -> Optional[List[Image.Image]]:
+    """Return one image per sampled timestep with all cameras stacked vertically.
+
+    Same frame selection logic as ``_render_slice_storyboard`` but returns a
+    list instead of a grid, preserving per-frame resolution. Each returned
+    image is ``(target_size[0], target_size[1])`` with camera rows stacked.
+    """
+    try:
+        import pandas as pd
+        df = pd.read_pickle(str(pkl_path))
+    except Exception:
+        return None
+
+    cols = _resolve_cameras(list(df.columns), cameras)
+    if not cols:
+        return None
+
+    n_steps = len(df)
+    if n_steps == 0:
+        return None
+
+    win_start = max(0, start - max(0, pad_before))
+    win_end = min(n_steps - 1, end + max(0, pad_after))
+    if win_end < win_start:
+        return None
+    span = win_end - win_start + 1
+    n_frames = max(1, int(n_frames))
+    idxs = (
+        [win_start + int(i * (span - 1) / max(1, n_frames - 1)) for i in range(n_frames)]
+        if span >= n_frames
+        else list(range(win_start, win_end + 1))
+    )
+
+    arrs_by_col = {}
+    for col in cols:
+        arrs_by_col[col] = df[col].to_list()
+
+    cell_h = target_size[1] // len(cols)
+    cell_w = target_size[0]
+    out: List[Image.Image] = []
+    for tidx in idxs:
+        canvas = Image.new("RGB", (cell_w, cell_h * len(cols)), (0, 0, 0))
+        for r, col in enumerate(cols):
+            arr = arrs_by_col[col]
+            if tidx < len(arr):
+                thumb = Image.fromarray(np.asarray(arr[tidx]).astype("uint8"))
+                thumb = thumb.convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
+                canvas.paste(thumb, (0, r * cell_h))
+        out.append(canvas)
+    return out or None
+
+
+def _load_slice_state_text(
+    pkl_path: Path,
+    sampled_idxs: List[int],
+    absolute_start: int,
+    *,
+    max_obs_dim: int = 24,
+    max_action_dim: int = 14,
+) -> Optional[str]:
+    """Format per-timestep obs tail + action for the sampled frame indices.
+
+    Returns a compact text block showing the numeric state the policy received
+    and the action it executed at each displayed frame. ``max_obs_dim`` keeps
+    the obs vector bounded (last N dims — typically proprioception + gripper).
+    ``max_action_dim`` keeps action bounded (Franka = 7 joints + 1 gripper
+    per arm = 14 for dual-arm transport_mh).
+    """
+    try:
+        import pandas as pd
+        df = pd.read_pickle(str(pkl_path))
+    except Exception:
+        return None
+
+    if "obs" not in df.columns and "action" not in df.columns:
+        return None
+
+    lines = ["Numeric state at each displayed frame (obs tail + action):"]
+    for local_t, tidx in enumerate(sampled_idxs):
+        if tidx >= len(df):
+            continue
+        row = df.iloc[tidx]
+        parts = [f"t={tidx}(abs)"]
+        if "obs" in row.index:
+            obs = np.asarray(row["obs"]).reshape(-1)
+            tail = obs[-max_obs_dim:] if obs.size > max_obs_dim else obs
+            parts.append("obs_tail=[" + ", ".join(f"{v:.3f}" for v in tail.tolist()) + "]")
+        if "action" in row.index:
+            act = np.asarray(row["action"]).reshape(-1)
+            if max_action_dim and act.size > max_action_dim:
+                act = act[:max_action_dim]
+            parts.append("action=[" + ", ".join(f"{v:.3f}" for v in act.tolist()) + "]")
+        lines.append("  " + "  ".join(parts))
+    return "\n".join(lines) if len(lines) > 1 else None
 
 
 # ---------------------------------------------------------------------------
