@@ -44,6 +44,13 @@ class ClaudeVLMBackend(VLMBackend):
     Backend params (all optional):
       - ``model_name``: Claude model ID (default ``claude-sonnet-4-6``).
       - ``api_key``: Anthropic API key; falls back to ``ANTHROPIC_API_KEY`` env var.
+        Ignored when ``vertexai=True``.
+      - ``vertexai``: if True, route through Vertex AI using Application Default
+        Credentials. Requires ``project`` and optionally ``region`` (default
+        ``us-east5``).
+      - ``project``: GCP project ID for Vertex AI mode. Falls back to
+        ``GOOGLE_CLOUD_PROJECT`` env var.
+      - ``region``: Vertex AI region (default ``us-east5``).
       - ``max_tokens``: generation budget (default 1024).
       - ``temperature``: sampling temperature (default 0.2).
     """
@@ -55,12 +62,30 @@ class ClaudeVLMBackend(VLMBackend):
         *,
         model_name: str = "claude-sonnet-4-6",
         api_key: Optional[str] = None,
+        vertexai: bool = False,
+        project: Optional[str] = None,
+        region: str = "us-east5",
         max_tokens: int = 1024,
         temperature: float = 0.2,
     ) -> None:
         anthropic = _require_anthropic()
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self._client = anthropic.Anthropic(api_key=key)
+        if vertexai:
+            gcp_project = (
+                project
+                or os.environ.get("GOOGLE_CLOUD_PROJECT")
+                or os.environ.get("GCLOUD_PROJECT")
+            )
+            if not gcp_project:
+                raise ValueError(
+                    "vertexai=True requires a GCP project (project param or "
+                    "GOOGLE_CLOUD_PROJECT env var)."
+                )
+            self._client = anthropic.AnthropicVertex(
+                region=region, project_id=gcp_project
+            )
+        else:
+            key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+            self._client = anthropic.Anthropic(api_key=key)
         self._model = model_name
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -308,9 +333,4 @@ def _move_images_to_sibling_user_message(messages: list) -> list:
 def build_claude_backend(params: Optional[Dict[str, Any]]) -> ClaudeVLMBackend:
     """Factory function registered in the VLM registry."""
     p = dict(params or {})
-    return ClaudeVLMBackend(
-        model_name=p.get("model_name", "claude-sonnet-4-6"),
-        api_key=p.get("api_key"),
-        max_tokens=int(p.get("max_tokens", 1024)),
-        temperature=float(p.get("temperature", 0.2)),
-    )
+    return ClaudeVLMB

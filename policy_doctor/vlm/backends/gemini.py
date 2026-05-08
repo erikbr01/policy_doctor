@@ -128,7 +128,12 @@ class GeminiVLMBackend(VLMBackend):
         ``parts`` is a list of strings and/or ``{"mime_type", "data"}`` image
         dicts (the legacy interface). They get converted to ``types.Part``
         objects expected by the new SDK.
+
+        Retries on 429 RESOURCE_EXHAUSTED with exponential backoff (up to 5
+        attempts, starting at 30s) so quota bursts don't abort long E1 runs.
         """
+        import time
+
         contents: List[Any] = []
         for p in parts:
             if isinstance(p, str):
@@ -144,10 +149,22 @@ class GeminiVLMBackend(VLMBackend):
             temperature=self._temperature,
             system_instruction=system_prompt or None,
         )
-        response = self._client.models.generate_content(
-            model=self._model_name, contents=contents, config=cfg,
-        )
-        return response.text or ""
+        wait = 30
+        for attempt in range(5):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model_name, contents=contents, config=cfg,
+                )
+                return response.text or ""
+            except Exception as exc:
+                if attempt < 4 and "429" in str(exc):
+                    print(f"  [gemini] 429 rate limit — waiting {wait}s (attempt {attempt+1}/5)",
+                          flush=True)
+                    time.sleep(wait)
+                    wait = min(wait * 2, 300)
+                else:
+                    raise
+        return ""  # unreachable
 
     # ------------------------------------------------------------------
     # VLMBackend interface
