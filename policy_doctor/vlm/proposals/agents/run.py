@@ -322,10 +322,10 @@ def run_description_session(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     effective_budget = budget_config or BudgetConfig(
-        max_tool_calls=40,
+        max_tool_calls=80,
         max_visual_calls=0,
         max_video_calls=12,
-        max_session_duration_s=1200,
+        max_session_duration_s=1800,
     )
 
     session_config: Dict[str, Any] = {}
@@ -446,12 +446,15 @@ def run_two_stage_session(
     )
 
     # --- Stage 2: proposals from descriptions ---
-    # Visual budget is 0 — the agent must work from text descriptions.
-    s2_budget = budget_config or BudgetConfig(
-        max_tool_calls=30,
+    # Visual/video budget is always 0 — the agent must work from Stage 1 text.
+    # We preserve max_tool_calls and session duration from the caller's config
+    # but hard-zero any visual budget regardless of what was passed.
+    _base = budget_config or BudgetConfig()
+    s2_budget = BudgetConfig(
+        max_tool_calls=_base.max_tool_calls,
         max_visual_calls=0,
         max_video_calls=0,
-        max_session_duration_s=1800,
+        max_session_duration_s=_base.max_session_duration_s,
     )
 
     result = run_one_session(

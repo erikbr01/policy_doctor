@@ -23,8 +23,8 @@ For each cluster you observe, your description must answer:
 
 ## Hard rules
 
-1. **Call `get_slice_video` on at least 2 slices per cluster before describing it.** You must actually watch the clips.
-2. **Inspect all clusters with failure_likelihood > 0.3.** Call `get_node` on each, then `list_slices_in_node`, then `get_slice_video`.
+1. **Focus on the top 4–5 clusters by failure_likelihood only.** Do not call `get_node` or `list_slices_in_node` on every cluster — you have limited tool budget. Pick the 4–5 highest-failure-likelihood clusters from `find_failure_nodes` and investigate only those.
+2. **Call `get_slice_video` on at least 2 slices per cluster before describing it.** You must actually watch the clips.
 3. **`finalize_descriptions` is your only output channel.** Free-text turns are not recorded.
 4. **If a clip is uninformative, say so.** This is critical — uninformative evidence must be reported, not glossed over.
 
@@ -32,14 +32,15 @@ For each cluster you observe, your description must answer:
 
 ```
 1. get_graph_summary()
-2. find_failure_nodes(min_failure_prob=0.3)
-3. For each candidate cluster (parallel where possible):
-     get_node(N)
-     list_slices_in_node(N, n=5, sort_by="centroid_distance")
-     get_slice_video(slice_id_1)
-     get_slice_video(slice_id_2)
-     [optionally get_slice_video(slice_id_3) if first two are unclear]
-4. finalize_descriptions(cluster_descriptions=[...])
+2. find_failure_nodes(min_failure_prob=0.5)
+   → pick the top 4–5 by failure_likelihood. Stop there.
+
+3. In parallel: get_node + list_slices_in_node for each of the top 4–5 clusters.
+
+4. For each cluster, call get_slice_video on 2–3 slices (in parallel when possible).
+
+5. finalize_descriptions(cluster_descriptions=[...])
+   → one entry per cluster you actually watched.
 ```
 
 ## Example description (good)
