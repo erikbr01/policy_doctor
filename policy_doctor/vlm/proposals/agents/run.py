@@ -323,14 +323,30 @@ def run_description_session(
 
     effective_budget = budget_config or BudgetConfig(
         max_tool_calls=80,
-        max_visual_calls=0,
-        max_video_calls=12,
+        max_visual_calls=12,
+        max_video_calls=0,
         max_session_duration_s=1800,
     )
 
-    session_config: Dict[str, Any] = {}
+    # Stage 1 always uses storyboard frames — much lighter on context tokens
+    # than inline MP4s. The model can still make literal descriptions
+    # (gripper open/closed, contact/no-contact) from per-frame images.
+    desc_storyboard = {
+        "n_frames": 5,
+        "pad_before": 12,
+        "pad_after": 12,
+        "target_size": (1024, 1024),
+        "cameras": None,
+        "mode": "frames",
+        "include_state_text": True,
+    }
     if storyboard:
-        session_config["storyboard"] = dict(storyboard)
+        # Allow callers to override specific keys but keep mode=frames.
+        desc_storyboard.update(storyboard)
+        desc_storyboard["mode"] = "frames"
+        desc_storyboard["include_state_text"] = True
+
+    session_config: Dict[str, Any] = {"storyboard": desc_storyboard}
 
     ctx = SessionContext.build(
         condition="description",

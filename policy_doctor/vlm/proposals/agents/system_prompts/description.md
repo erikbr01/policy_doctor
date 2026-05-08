@@ -37,7 +37,9 @@ For each cluster you observe, your description must answer:
 
 3. In parallel: get_node + list_slices_in_node for each of the top 4–5 clusters.
 
-4. For each cluster, call get_slice_video on 2–3 slices (in parallel when possible).
+4. For each cluster, call get_slice_video on 2 slices — one at a time, NOT in
+   a parallel batch. Video/image data accumulates in the context window; batching
+   many calls at once exceeds the token limit. Watch one, then the next.
 
 5. finalize_descriptions(cluster_descriptions=[...])
    → one entry per cluster you actually watched.
