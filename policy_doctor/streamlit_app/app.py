@@ -413,16 +413,8 @@ def main() -> None:
 
     with tab_e1_inspector:
         try:
-            if "e1_inspector_mod" not in st.session_state:
-                import importlib.util as _ilu
-                _spec = _ilu.spec_from_file_location(
-                    "e1_inspector",
-                    pathlib.Path(__file__).parent / "tabs" / "e1_inspector.py",
-                )
-                _mod = _ilu.module_from_spec(_spec)
-                _spec.loader.exec_module(_mod)
-                st.session_state.e1_inspector_mod = _mod
-            st.session_state.e1_inspector_mod.render()
+            from policy_doctor.streamlit_app.tabs import e1_inspector
+            e1_inspector.render(repo_root=pathlib.Path(__file__).resolve().parents[2])
         except Exception as e:
             st.exception(e)
 

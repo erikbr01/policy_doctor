@@ -636,7 +636,8 @@ def run_query_with_label_maps(
     example_indices: Dict[int, List[int]],
     metadata: List[dict],
     eval_dir: pathlib.Path,
-    backend: VLMBackend,
+    backend: Optional[VLMBackend] = None,
+    backends: Optional[List[Tuple[str, VLMBackend]]] = None,
     n_repetitions: int,
     max_frames: int,
     system_prompt: Optional[str],
@@ -653,13 +654,29 @@ def run_query_with_label_maps(
 ) -> Dict[str, Any]:
     """Run one query with pre-determined per-rep label maps (for reproducibility).
 
+    All backends receive identical images and label maps so their predictions are
+    directly comparable. Per-rep records include ``model_predictions`` keyed by
+    model name. Top-level fields (``majority_predicted_cluster_id``, ``is_correct``,
+    ``agreement_rate``) are derived from the cross-model consensus for backward compat.
+
     ``storyboard_mode`` controls visual rendering for *example* slices:
     ``"composite"`` packs frames into one image per slice; ``"frames"`` sends
     each frame as its own image. ``query_storyboard_mode`` overrides for the
-    query side (default falls back to ``storyboard_mode``); the hybrid setup
-    is ``storyboard_mode="composite", query_storyboard_mode="frames"``.
+    query side.
     """
+    from collections import Counter
+
     from PIL import Image as PILImage
+
+    # Normalize to list of (name, backend) pairs.
+    if backends is None and backend is not None:
+        _backends: List[Tuple[str, VLMBackend]] = [
+            (getattr(backend, "name", type(backend).__name__), backend)
+        ]
+    elif backends is not None:
+        _backends = list(backends)
+    else:
+        raise ValueError("Either backend or backends must be provided.")
 
     q_mode = query_storyboard_mode or storyboard_mode
 
@@ -675,8 +692,7 @@ def run_query_with_label_maps(
         include_state_text=include_state_text,
     )
 
-    # Each example slice yields a list of images. In composite mode this is
-    # one image per slice; in frames mode it's max_frames per slice.
+    # Each example slice yields a list of images (same for all models).
     example_visuals: Dict[int, List[List[PILImage.Image]]] = {}
     example_extra_text_by_cid: Dict[int, List[Optional[str]]] = {}
     for cid in cluster_ids:
@@ -732,48 +748,92 @@ def run_query_with_label_maps(
 
         valid_labels = [label_map[cid] for cid in ordered_ids] + ["unclear"]
 
-        raw_text = backend.classify_slice(
-            query_images=query_visual,
-            example_sets=example_sets,
-            system_prompt=system_prompt,
-            user_preamble=preamble,
-            user_prompt=user_prompt_question,
-            query_extra_text=query_extra_text,
-            example_extra_texts=example_extra_texts,
-        )
-        pred_opaque, is_unclear = parse_classification_response(raw_text, valid_labels)
-        if is_unclear:
-            pred_cid = None
-        else:
-            pred_cid = inv_map.get(pred_opaque)
+        # All backends see identical inputs for this rep.
+        model_predictions: Dict[str, Any] = {}
+        for model_name, bk in _backends:
+            try:
+                raw_text = bk.classify_slice(
+                    query_images=query_visual,
+                    example_sets=example_sets,
+                    system_prompt=system_prompt,
+                    user_preamble=preamble,
+                    user_prompt=user_prompt_question,
+                    query_extra_text=query_extra_text,
+                    example_extra_texts=example_extra_texts,
+                )
+                pred_opaque, is_unclear = parse_classification_response(raw_text, valid_labels)
+                pred_cid = None if is_unclear else inv_map.get(pred_opaque)
+            except Exception as exc:
+                raw_text = f"[ERROR: {exc}]"
+                pred_opaque, is_unclear = "unclear", True
+                pred_cid = None
+            model_predictions[model_name] = {
+                "raw_response": raw_text,
+                "predicted_opaque": pred_opaque,
+                "predicted_cluster_id": pred_cid,
+                "is_unclear": is_unclear,
+            }
+
+        # Rep-level consensus: do all models agree on the same cluster?
+        all_pred_cids = [p["predicted_cluster_id"] for p in model_predictions.values()]
+        rep_all_agree = len(set(str(c) for c in all_pred_cids)) == 1
+        rep_consensus_cid = all_pred_cids[0] if rep_all_agree else None
 
         rep_records.append({
             "rep": rep_i,
             "label_map": {str(k): v for k, v in label_map.items()},
-            "predicted_opaque": pred_opaque,
-            "predicted_cluster_id": pred_cid,
-            "is_unclear": is_unclear,
-            "raw_response": raw_text,
+            "model_predictions": model_predictions,
+            "consensus_cluster_id": rep_consensus_cid,
+            "all_agree": rep_all_agree,
         })
 
-    # Majority vote on cluster_id (None == unclear)
-    from collections import Counter
+    # Per-model majority vote across reps.
+    model_names = [name for name, _ in _backends]
+    per_model_majority: Dict[str, Any] = {}
+    for model_name in model_names:
+        cids = [r["model_predictions"][model_name]["predicted_cluster_id"] for r in rep_records]
+        count = Counter(cids)
+        maj_cid, maj_n = count.most_common(1)[0]
+        per_model_majority[model_name] = {
+            "majority_predicted_cluster_id": maj_cid,
+            "is_correct": (maj_cid == true_cluster_id) if maj_cid is not None else False,
+            "is_unclear": maj_cid is None,
+            "agreement_rate": maj_n / n_repetitions,
+        }
 
-    pred_cids = [r["predicted_cluster_id"] for r in rep_records]
-    count = Counter(pred_cids)
-    majority_cid, majority_n = count.most_common(1)[0]
-    agreement_rate = majority_n / n_repetitions
+    # Cross-model consensus: majority across all (model × rep) votes.
+    all_votes = [
+        r["model_predictions"][mn]["predicted_cluster_id"]
+        for r in rep_records
+        for mn in model_names
+    ]
+    cross_count = Counter(all_votes)
+    cross_maj_cid, cross_maj_n = cross_count.most_common(1)[0]
+    cross_agreement = cross_maj_n / len(all_votes) if all_votes else 0.0
+    cross_is_correct = (cross_maj_cid == true_cluster_id) if cross_maj_cid is not None else False
 
-    is_correct = (majority_cid == true_cluster_id) if majority_cid is not None else False
+    # Fraction of reps where all models agreed.
+    rep_agreement_rate = sum(1 for r in rep_records if r["all_agree"]) / n_repetitions
 
     return {
+        # Backward-compat top-level fields (derived from cross-model consensus).
         "query_idx": query_idx,
         "true_cluster_id": true_cluster_id,
-        "majority_predicted_cluster_id": majority_cid,
-        "is_correct": is_correct,
-        "is_unclear": (majority_cid is None),
-        "agreement_rate": agreement_rate,
+        "majority_predicted_cluster_id": cross_maj_cid,
+        "is_correct": cross_is_correct,
+        "is_unclear": cross_maj_cid is None,
+        "agreement_rate": cross_agreement,
         "n_repetitions": n_repetitions,
+        # Multi-model fields.
+        "model_names": model_names,
+        "per_model_majority": per_model_majority,
+        "cross_model_consensus": {
+            "majority_predicted_cluster_id": cross_maj_cid,
+            "is_correct": cross_is_correct,
+            "is_unclear": cross_maj_cid is None,
+            "agreement_rate": cross_agreement,
+        },
+        "rep_agreement_rate": rep_agreement_rate,
         "repetitions": rep_records,
     }
 
@@ -910,6 +970,67 @@ def compute_classification_metrics(
 
 
 # ---------------------------------------------------------------------------
+# Multi-model metrics
+# ---------------------------------------------------------------------------
+
+def compute_classification_metrics_multi(
+    records: List[Dict[str, Any]],
+    cluster_ids: List[int],
+    model_names: List[str],
+) -> Dict[str, Any]:
+    """Compute per-model and cross-model-consensus metrics from multi-model records.
+
+    Returns a dict with:
+      - ``per_model``: {model_name: same schema as compute_classification_metrics}
+      - ``consensus``: cross-model consensus metrics (same schema)
+      - ``inter_model_agreement``: fraction of queries where all models agreed in majority vote
+      - ``rep_agreement_rate_mean``: mean fraction of reps where all models agreed
+    """
+    # Per-model metrics — build synthetic single-model record lists.
+    per_model: Dict[str, Any] = {}
+    for model_name in model_names:
+        def _single_model_record(r: Dict[str, Any], mn: str = model_name) -> Dict[str, Any]:
+            pm = r.get("per_model_majority", {}).get(mn, {})
+            return {
+                "query_idx": r["query_idx"],
+                "true_cluster_id": r["true_cluster_id"],
+                "majority_predicted_cluster_id": pm.get("majority_predicted_cluster_id"),
+                "is_correct": pm.get("is_correct", False),
+                "is_unclear": pm.get("is_unclear", True),
+                "agreement_rate": pm.get("agreement_rate", 0.0),
+                "n_repetitions": r["n_repetitions"],
+            }
+        model_records = [_single_model_record(r) for r in records]
+        per_model[model_name] = compute_classification_metrics(model_records, cluster_ids)
+
+    # Cross-model consensus metrics (top-level fields are already consensus-derived).
+    per_model["consensus"] = compute_classification_metrics(records, cluster_ids)
+
+    # Inter-model agreement: fraction of queries where all models' majority votes agree.
+    n_queries = len(records)
+    n_all_agree = 0
+    for r in records:
+        pm = r.get("per_model_majority", {})
+        maj_cids = {mn: pm.get(mn, {}).get("majority_predicted_cluster_id") for mn in model_names}
+        vals = list(maj_cids.values())
+        if len(set(str(v) for v in vals)) == 1:
+            n_all_agree += 1
+    inter_model_agreement = n_all_agree / n_queries if n_queries > 0 else 0.0
+
+    rep_agreement_rates = [r.get("rep_agreement_rate", 0.0) for r in records]
+    rep_agreement_rate_mean = float(np.mean(rep_agreement_rates)) if rep_agreement_rates else 0.0
+
+    return {
+        "per_model": per_model,
+        "inter_model_agreement": inter_model_agreement,
+        "inter_model_n_agree": n_all_agree,
+        "inter_model_n_total": n_queries,
+        "rep_agreement_rate_mean": rep_agreement_rate_mean,
+        "model_names": model_names,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -917,7 +1038,8 @@ def run_cluster_coherence_classification(
     *,
     clustering_dir: pathlib.Path,
     eval_dir: pathlib.Path,
-    backend: VLMBackend,
+    backend: Optional[VLMBackend] = None,
+    backends: Optional[List[Tuple[str, VLMBackend]]] = None,
     n_example: int = 5,
     n_query: int = 5,
     n_repetitions: int = 3,
@@ -939,15 +1061,31 @@ def run_cluster_coherence_classification(
 ) -> Dict[str, Any]:
     """Run Experiment E1 for one clustering result.
 
+    Accepts either ``backend`` (single VLMBackend, backward compat) or
+    ``backends`` (list of (name, VLMBackend) for multi-model experiments).
+    When multiple backends are provided all models receive identical queries
+    and label maps; model disagreement is captured in ``per_model_majority``
+    and ``cross_model_consensus`` fields of each predictions record.
+
     Workflow:
     1. Load clustering artifacts (labels, metadata, optional embeddings_reduced).
     2. Build and persist ``sample_plan.json`` (pre-commitment).
-    3. For each query slice in the plan: run VLM classification n_repetitions times.
+    3. For each query slice in the plan: run all backends n_repetitions times.
     4. Persist ``predictions.jsonl`` (one record per query).
-    5. Compute and persist ``metrics.json``.
+    5. Compute and persist ``metrics.json`` (per-model + consensus when multi-model).
     6. Return a summary dict.
     """
     from policy_doctor.vlm.annotate import load_clustering_artifacts
+
+    # Normalize to list of (name, backend) pairs.
+    if backends is not None:
+        _backends: List[Tuple[str, VLMBackend]] = list(backends)
+    elif backend is not None:
+        _backends = [(getattr(backend, "name", type(backend).__name__), backend)]
+    else:
+        raise ValueError("Either backend or backends must be provided.")
+    _is_multi = len(_backends) > 1
+    _model_names = [name for name, _ in _backends]
 
     step_dir = pathlib.Path(step_dir)
     step_dir.mkdir(parents=True, exist_ok=True)
@@ -988,10 +1126,19 @@ def run_cluster_coherence_classification(
     plan["random_seed"] = random_seed
     plan["clustering_dir"] = str(clustering_dir)
     plan["eval_dir"] = str(eval_dir)
-    plan["backend"] = getattr(backend, "name", type(backend).__name__)
-    plan["model_id"] = getattr(backend, "model_id", None)
-    plan["load_in_4bit"] = getattr(backend, "load_in_4bit", None)
-    plan["load_in_8bit"] = getattr(backend, "load_in_8bit", None)
+    # Record model info — list for multi-model, single value for compat.
+    if _is_multi:
+        plan["backends"] = [
+            {"name": name, "model_id": getattr(bk, "model_id", None)}
+            for name, bk in _backends
+        ]
+        plan["backend"] = _model_names  # list in multi-model mode
+    else:
+        _bk = _backends[0][1]
+        plan["backend"] = getattr(_bk, "name", type(_bk).__name__)
+        plan["model_id"] = getattr(_bk, "model_id", None)
+        plan["load_in_4bit"] = getattr(_bk, "load_in_4bit", None)
+        plan["load_in_8bit"] = getattr(_bk, "load_in_8bit", None)
     plan["max_frames_per_storyboard"] = int(max_frames_per_storyboard)
     plan["view_window_extension"] = int(view_window_extension)
     plan["include_action_text"] = bool(include_action_text)
@@ -1000,7 +1147,7 @@ def run_cluster_coherence_classification(
     plan["composite_target_size"] = int(composite_target_size)
     plan["query_storyboard_mode"] = query_storyboard_mode
 
-    # Pre-generate label maps for all queries
+    # Pre-generate label maps for all queries (identical across all models)
     plan["label_maps"] = generate_label_maps_for_plan(plan, rng)
 
     plan_path = step_dir / "sample_plan.json"
@@ -1017,7 +1164,7 @@ def run_cluster_coherence_classification(
         print(
             f"[dry_run] validate_cluster_coherence_vlm: "
             f"K={len(cluster_ids)} clusters, {n_queries_total} queries × {n_repetitions} reps, "
-            f"backend={plan['backend']}"
+            f"models={_model_names}"
         )
         return {
             "sample_plan_path": str(plan_path),
@@ -1028,14 +1175,13 @@ def run_cluster_coherence_classification(
             "dry_run": True,
         }
 
-    # Classification loop
+    # Classification loop — all backends see identical inputs
     frame_rng = np.random.default_rng(random_seed + 1000)
     all_records: List[Dict[str, Any]] = []
     predictions_path = step_dir / "predictions.jsonl"
 
     with open(predictions_path, "w") as pred_f:
         for cid in cluster_ids:
-            ex_idx = plan["clusters"][cid]["example_indices"]
             q_idxs = plan["clusters"][cid]["query_indices"]
             cid_str = str(cid)
 
@@ -1053,7 +1199,7 @@ def run_cluster_coherence_classification(
                     example_indices={c: plan["clusters"][c]["example_indices"] for c in cluster_ids},
                     metadata=metadata,
                     eval_dir=eval_dir,
-                    backend=backend,
+                    backends=_backends,
                     n_repetitions=n_repetitions,
                     max_frames=max_frames_per_storyboard,
                     system_prompt=sys_p,
@@ -1075,26 +1221,42 @@ def run_cluster_coherence_classification(
     print(f"  Predictions written: {predictions_path} ({len(all_records)} records)")
 
     # Metrics
-    metrics = compute_classification_metrics(all_records, cluster_ids)
-    metrics["backend"] = plan["backend"]
-    metrics["model_id"] = plan.get("model_id")
-    metrics["load_in_4bit"] = plan.get("load_in_4bit")
-    metrics["load_in_8bit"] = plan.get("load_in_8bit")
+    if _is_multi:
+        multi_metrics = compute_classification_metrics_multi(all_records, cluster_ids, _model_names)
+        # Flatten for compat: top-level fields come from consensus.
+        consensus_metrics = multi_metrics["per_model"]["consensus"]
+        metrics: Dict[str, Any] = {**consensus_metrics, **multi_metrics}
+        metrics.pop("per_model", None)  # move under its own key
+        metrics["per_model"] = multi_metrics["per_model"]
+    else:
+        _bk = _backends[0][1]
+        metrics = compute_classification_metrics(all_records, cluster_ids)
+        metrics["backend"] = plan["backend"]
+        metrics["model_id"] = plan.get("model_id")
+        metrics["load_in_4bit"] = plan.get("load_in_4bit")
+        metrics["load_in_8bit"] = plan.get("load_in_8bit")
     metrics["n_clusters"] = len(cluster_ids)
     metrics["n_example_per_cluster"] = n_example
     metrics["n_query_per_cluster"] = n_query
     metrics["n_repetitions"] = n_repetitions
     metrics["random_seed"] = random_seed
+    metrics["model_names"] = _model_names
 
     metrics_path = step_dir / "metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2, default=str)
     print(f"  Metrics written: {metrics_path}")
-    print(
-        f"  Top-1 accuracy: {metrics['top1_accuracy']:.3f} "
-        f"(chance={metrics['chance_level']:.3f}, "
-        f"p={metrics.get('binomial_test_pvalue', 'n/a')})"
-    )
+
+    # Print summary
+    top1 = metrics.get("top1_accuracy", 0.0)
+    chance = metrics.get("chance_level", 0.0)
+    pval = metrics.get("binomial_test_pvalue", "n/a")
+    print(f"  Consensus top-1: {top1:.3f} (chance={chance:.3f}, p={pval})")
+    if _is_multi:
+        for mn in _model_names:
+            m = metrics["per_model"].get(mn, {})
+            print(f"    {mn}: top-1={m.get('top1_accuracy', 0.0):.3f}")
+        print(f"  Inter-model agreement: {metrics.get('inter_model_agreement', 0.0):.3f}")
 
     return {
         "sample_plan_path": str(plan_path),
@@ -1102,7 +1264,8 @@ def run_cluster_coherence_classification(
         "metrics_path": str(metrics_path),
         "n_clusters": len(cluster_ids),
         "n_queries_total": len(all_records),
-        "top1_accuracy": metrics["top1_accuracy"],
-        "binomial_test_pvalue": metrics.get("binomial_test_pvalue"),
+        "top1_accuracy": top1,
+        "binomial_test_pvalue": pval,
+        "model_names": _model_names,
         "dry_run": False,
     }
