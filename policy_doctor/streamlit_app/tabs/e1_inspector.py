@@ -601,10 +601,10 @@ def _render_prompt_inspector(
 
 # ── Main render entry point ───────────────────────────────────────────────────
 
-def render() -> None:
+def render(repo_root: Optional[pathlib.Path] = None) -> None:
     st.header("E1 Cluster Coherence Inspector")
 
-    experiments = _scan_experiments(_REPO_ROOT)
+    experiments = _scan_experiments(repo_root or _REPO_ROOT)
     if not experiments:
         st.warning(f"No E1 experiments found under {_REPO_ROOT / 'experiments'}.")
         return

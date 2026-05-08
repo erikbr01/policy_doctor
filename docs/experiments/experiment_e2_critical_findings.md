@@ -292,26 +292,160 @@ sees it.
   N turns. The 3 submissions had already persisted, so no work was lost.
 * Run took ~5–7 minutes for model load + 28-turn agent loop.
 
-## 8. Recommended next experimental moves
+## 9. Gemini-3.1-pro runs on Vertex AI — rendering and grounding experiments
+
+After setting up a GCP billing account (`gcp-driven-data`, Vertex AI, global
+region), a series of A_G sessions were run with gemini-3.1-pro-preview to
+probe different visual input modes. All sessions: transport_mh seed-0 r512
+clustering, same eval pool.
+
+### 9a. Baseline composite storyboard (gemini31pro_A_G_seed0)
+
+**11 turns, 3 submissions, stop=finalize.** Most efficient session so far.
+Notable: the model fetched all three cluster nodes and all three slice lists
+in parallel before touching visual budget, then watched 3 storyboards per
+cluster in a single batched turn. The parallel execution pattern is
+qualitatively better than any prior session.
+
+c5 diagnosis: "Arm-1 holding hammer by the very tip of the handle, leading
+to slipping." c11: same prior-driven "misaligned gripper during handoff"
+fabrication as Qwen. c6: "Arm-0 closes too early while hovering."
+
+### 9b. Per-frame storyboard + per-frame state/action text
+(gemini31pro_A_G_seed0_frames_state)
+
+Added two features: `mode="frames"` (5 separate images per slice at full
+per-frame resolution instead of a composite grid) and `include_state_text=True`
+(appends the 14-dim action vector + 24-dim obs tail at each displayed frame,
+giving the model ground-truth gripper open/closed state).
+
+**17 turns, 5 submissions.** The state text produced two diagnosis reversals
+attributable to numeric grounding:
+- **c5**: prior sessions said "grasp slips." With state text, the model read
+  that the gripper is CLOSED at t=64-76 (the hammer is held, not slipping)
+  and diagnosed the failure as "arm-1 holds hammer over goal bin but fails
+  to lower and release." Completely different prescription.
+- **c11**: prior sessions said "misaligned grasp." With state text, the model
+  read the gripper as CLOSED and diagnosed "arm holds hammer in awkward
+  vertical orientation post-handoff." Still unclear whether this is
+  grounded — c11 slices remain the open question.
+
+New clusters c14 and c19 also explored and given specific diagnoses.
+
+### 9c. Inline MP4 video (gemini31pro_A_G_seed0_video_v2)
+
+Replaced storyboard images with inline MP4 clips (cv2-rendered, 256×192 per
+camera, 8 fps, ±12-frame window), passed as `inline_data` blobs to Vertex AI.
+
+**8 turns, 4 submissions, stop=finalize.** The shortest and most efficient
+session yet. Key finding: the model batch-parallelised EVERYTHING — 5×get_node,
+5×list_slices, then 3×get_slice_video twice, then all 4 proposals submitted
+in a single parallel turn. Total: 6 video calls, 8 turns to finalize.
+
+Motion evidence enabled a new insight: the model proposed both a `recovery`
+AND an `alternative_strategy` for the c11 handoff — "place hammer on surface
+between bins, arm-1 picks it up" — indicating it inferred that the mid-air
+coordination itself is the hard part. This alternative strategy was not
+produced by any prior session. However, the c11 prose ("Arm-1 closes gripper
+while misaligned during handoff") still looks like a prior-driven story; the
+motion data was not enough to override the template.
+
+### 9d. Two-stage session: description then proposals
+(gemini31pro_A_G_seed0_twostage_v3)
+
+A new pipeline splits the agent loop into two stages:
+
+**Stage 1 (description):** a separate session with storyboard frames + state
+text but NO submission tools. The agent's only output is `finalize_descriptions`
+— a structured JSON array of literal per-cluster observations: gripper states,
+contact/no-contact, object location, sequence of events. Explicitly forbidden
+from using failure-mode language.
+
+**Stage 2 (proposals):** a fresh A_G session with **zero visual budget**.
+Receives Stage 1 descriptions as text in the user message. The `inspected_slices`
+from Stage 1 are pre-populated so the evidence gate passes without re-watching.
+Cannot deviate from the descriptions — has no images to reach for.
+
+**Stage 1 results (5 clusters described, 10 visual calls, stop=finalize):**
+
+| Cluster | Informative | Contact | Literal observation |
+|---------|------------|---------|---------------------|
+| c5  | ✓ | both arms | "Both arms' grippers closed around hammer, held horizontally above bins. Neither releases. Stationary." |
+| c11 | ✗ | none | "Right arm hovering, gripper open, hammer on floor. No contact." |
+| c14 | ✗ | none | "Right arm hovering, gripper open, hammer on floor. No contact." |
+| c6  | ✗ | none | "Right arm hovering, gripper open, hammer on floor." |
+| c12 | ✗ | none | "Right arm hovering, gripper open, hammer on floor." |
+
+**This is the first session in which c11, c14, c6, and c12 were correctly
+identified as uninformative.** Every prior session (Claude, Qwen, Gemini in
+single-stage) invented failure-mode stories for these clusters. The description
+constraint and the literal-observation requirement forced the model to report
+"no contact" honestly.
+
+**c5 received a new diagnosis**: "handoff deadlock — both arms hold the
+hammer simultaneously, neither releases." This is different from every prior
+session's c5 diagnosis. Whether it is more accurate than the single-stage
+readings requires verification against the actual storyboards.
+
+**Stage 2 results (18 turns, 5 submissions, zero visual/video budget):**
+
+All 5 submissions target c5 exclusively (the only informative cluster). The
+proposals are varied: 2× recovery from different rollout frames, 1× full
+trajectory with explicit handoff timing instruction, 1× alternative strategy
+(place-and-pick instead of mid-air handoff), 1× recovery focused on arm
+release timing. Every submission is grounded in the single Stage 1 sentence
+about c5 — the model cannot fabricate because it has no images.
+
+**What the two-stage approach does and does not fix:**
+
+Does fix: prior-driven fabrication for uninformative clusters. Does not fix:
+the underlying data quality problem (c11 etc. slices genuinely don't show the
+failure mode the cluster is supposed to characterise). A downstream fix is
+to pre-filter clusters whose Stage 1 descriptions are uninformative before
+the agent runs — the `run_exploration_session` taxonomy already provides
+`recommended_for_submission: false` flags for this purpose.
+
+Does not fix: the narrowness of Stage 2 output. With only one informative
+cluster, Stage 2 produces 5 variations on one theme. The experiment needs
+either better clustering (so informative slices represent each failure mode)
+or a higher visual budget in Stage 1 (to watch more slices per cluster until
+informative frames are found).
+
+### 9e. Infrastructure added during this round
+
+- Vertex AI mode for Gemini backend (`vertexai=True`, `location` param)
+- `mode="frames"` and `include_state_text` for `get_slice_video`
+- Inline MP4 via cv2 (`mode="video"`), with `VideoBlock` content type
+- `run_description_session` + `run_two_stage_session` in `run.py`
+- `finalize_descriptions` terminal tool + `description.md` system prompt
+- `render_twostage_session.py` — combined Stage 1 + Stage 2 HTML report
+- `build_description_tool_registry` in `registry.py`
+- Bug fix: parallel `function_response` parts batched into single Gemini Content
+- Default clustering path moved from `/tmp` to SSD
+
+## 10. Recommended next experimental moves
 
 In rough priority order:
 
-1. **Run one A_G + one A_NG session on Claude** with the new defaults
-   (paid key required). Render both reports. Repeat the head-vs-handle
-   verification on every cited storyboard. This is the fastest way to
-   know whether the rendering refactor actually moved the needle.
-2. **Add the calibration system-prompt rule** described in §5 and
-   re-run. Compare: does the agent decline a cluster when its slices
-   are uninformative, or does it submit anyway with a different prior?
-3. **Implement Qwen `chat_with_tools`** so the experiment can be run on
-   a local model. The Hermes-style function-calling output is well
-   documented; this is a few hours of work, not a research project.
-4. **DAgger-save the eval pool** (eval_save_episodes with the
-   `save_states=true` flag, if it exists; otherwise re-render via
-   DAggerRunner with no policy edits) so mid-rollout init_state works.
-   Recovery and alternative_strategy requests are currently degraded
-   without it.
-5. **Skip H_G / H_NG conditions for now**. The agentic conditions are
-   the load-bearing comparison; human conditions are a separate
-   experiment that the current infrastructure already supports but
-   that the agent-side work hasn't yet justified.
+1. **Investigate c11 cluster quality** — pull all c11 slices sorted by
+   centroid distance, render the closest 10 with the three-camera ±12-frame
+   storyboard. If they all show "gripper open, no contact, hammer on floor,"
+   the cluster's representative window is offset from the actual failure event.
+   Options: (a) down-weight c11 in the agent's tool surface, (b) fix the
+   clustering window to capture the failure moment, (c) pre-filter via
+   Stage 1 uninformative flag before the agent sees the cluster.
+2. **Increase Stage 1 visual budget and slice coverage** so more than one
+   cluster comes out informative. Current budget (12 visual calls) only
+   covers ~5 clusters × 2 slices. 20 calls with the constraint "try 3
+   slices if the first 2 are uninformative" would give better coverage.
+3. **Run the two-stage pipeline on gemini-er-1.6** once Vertex AI access
+   is granted for the `gcp-driven-data` project (or a billing-enabled
+   Gemini API key is created). The robotics-specific model may produce
+   more grounded Stage 1 descriptions.
+4. **Run A_NG two-stage** to have the comparison pair. A_NG Stage 1 uses
+   the no-graph tool surface for cluster discovery; Stage 2 proposals
+   should still be grounded in the same descriptions.
+5. **DAgger-save the eval pool** (eval_save_episodes with `save_states=true`)
+   so mid-rollout init_state works for recovery requests.
+6. **Skip H_G / H_NG conditions for now**. The agentic conditions are the
+   load-bearing comparison; human conditions are a separate experiment.
