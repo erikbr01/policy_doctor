@@ -687,6 +687,33 @@ State representations: `state_full` = full 2-step obs history (118D → UMAP 100
 
 **F16 headline:** `bottleneck_plan_t5 ≈ encoder_plan_t0 > bottleneck_plan_t0 ≈ state_action_full >> infembed_100d ≈ state_full >> trak`. The raw action plan is a surprisingly strong clustering signal on its own; the neural representation adds ~10pt over it.
 
+### F17 — Multi-model agreement as a proxy for clustering quality
+
+Running E1 with multiple VLMs (Qwen3-VL-8B, Gemini 3.1 Pro Preview, Gemini 2.5 Flash, Gemini 2.5 Flash Image) on the same clustering reveals a natural quality signal: the degree to which models agree on a query's cluster assignment measures how visually unambiguous that cluster is.
+
+**Setup:** All 4 models ran E1 on InfEmbed K=10. Qwen used n_example=2, Gemini models n_example=3; same seed (42). The 3 Gemini models share all 27 queries; 16 of those overlap with Qwen's 27 (different n_example consumes different example episodes, shifting the clean bucket).
+
+**On the 16 queries seen by all 4 models:**
+
+| Model | Accuracy on shared 16 |
+|---|---|
+| Qwen3-VL-8B | 0.500 |
+| Gemini 3.1 Pro, 2.5 Flash Image | 0.375 |
+| Gemini 2.5 Flash | 0.250 |
+
+Pairwise agreement (same predicted cluster, regardless of correctness) ranges from **19%** (Qwen vs Gemini 2.5 Flash) to **44%** (most other pairs). This is much lower than expected if clusters were visually unambiguous.
+
+**Consensus breakdown:**
+- **All 4 correct (19%)** — unambiguously easy slices; cluster boundaries are visually clear
+- **All 4 wrong (38%)** — genuinely hard slices; likely visually similar clusters or within-cluster variation
+- **Mixed (44%)** — model-specific; models use different visual cues
+
+**F17a — Inter-model consensus as a clustering quality metric.** The fraction of queries where all models agree and are correct is a model-agnostic upper bound on how separable a clustering is. At K=10, only 19% of shared queries achieve full consensus — suggesting that even the best VLMs cannot reliably distinguish ~80% of cluster assignments from visual inspection alone. This is not a failure of the VLMs but a property of the clustering: many slices sit near cluster boundaries or in behaviorally ambiguous regions.
+
+**F17b — "All wrong" queries identify genuinely ambiguous clusters.** The 38% of queries where all 4 models fail represent slices that no frontier VLM can reliably assign — these are candidates for cluster merging or re-clustering at coarser K. Tracking this "consensus failure rate" across clusterings (different K, different representations) provides a principled way to compare clustering quality without needing a human oracle.
+
+**F17c — Low pairwise agreement (19–44%) indicates models are not converging on the same visual features.** If the task had a clear answer, models should agree >80% of the time even when both are wrong (they'd at least make the same mistake). The wide spread suggests the E1 classification task is underspecified — the storyboard context is insufficient to unambiguously determine cluster membership, and models fill the gap with different biases. This motivates richer visual context (more frames, longer windows) or a text-based cluster description alongside the storyboard.
+
 ## Findings to write up after the next batch
 
 - **encoder_plan_t0 K sweep (F14f)**: K=5→0.533, K=10→0.625, K=15→0.444, K=20→0.359; all significant; encoder beats bottleneck at K=5/10/15
