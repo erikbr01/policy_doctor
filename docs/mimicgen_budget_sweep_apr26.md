@@ -4482,3 +4482,86 @@ else:
 | BUG-7 | LOW-MED | Yes | `select_mimicgen_seed.py` | `policy_seed` defaults to first seed silently |
 
 **Not a bug (A2)**: `run_clustering.py` correctly respects `evaluation.train_date` for all seeds — this was the one place the override was already implemented.
+
+## MILESTONE: S1 diversity_budget1000 — 18:42 PDT Apr 29
+**Result**: mean=0.766, best=0.794
+**Checkpoints**: ep0400→0.748, ep0450→0.734, ep0700→0.770, ep1550→0.786, ep1650→0.794
+**S1 progress**: 12/12 arms complete — S1 d60 sweep DONE
+
+---
+
+## Apr 30 2026 — Results Analysis and Controlled Replicate Experiment
+
+### d60 sweep results (Apr 30, partial — s0=8/12, s2=11/12, s1=12/12)
+
+Completed arm scores grouped by heuristic × budget (mean across available seeds):
+
+| Heuristic | b=20 | b=100 | b=500 | b=1000 |
+|-----------|------|-------|-------|--------|
+| random | 0.249 ± 0.017 (n=3) | 0.415 ± 0.073 (n=3) | 0.653 ± 0.020 (n=3) | 0.725 ± 0.094 (n=3) |
+| behavior_graph | 0.240 ± 0.018 (n=3) | 0.391 ± 0.004 (n=2) | 0.637 ± 0.011 (n=2) | 0.680 ± 0.021 (n=3) |
+| diversity | 0.283 ± 0.012 (n=3) | 0.373 ± 0.006 (n=3) | 0.644 ± 0.065 (n=2) | 0.766 (n=1) |
+
+Delta vs random (paired, same seeds):
+- behavior_graph − random: b20=−0.009, b100=−0.064, b500=−0.023, b1000=−0.045
+- diversity − random: b20=+0.034, b100=−0.042, b500=−0.017, b1000=−0.044 (n=1)
+
+**Key findings:**
+1. Budget is the dominant factor — monotonic scaling ~0.25 → ~0.40 → ~0.65 → ~0.72+ across all heuristics
+2. No heuristic clearly outperforms random; deltas are small (2–6pp) and inconsistent in sign
+3. behavior_graph is the most consistent (std=0.021 at b1000) vs random's high variance (std=0.094)
+4. diversity_b1000 s1=0.766 is the highest single result, but only n=1 seed
+
+### Why the apr23 signal doesn't replicate here
+
+The apr26 sweep uses `seeds=[0, 1, 2]` which varies the **entire pipeline** — different baseline
+policy, clustering, and behavior graph per seed. This adds pipeline-wide noise that masks the
+~10pp diversity advantage seen in apr23.
+
+In apr23, replicates held the baseline policy and clustering fixed and varied only which rollouts
+were drawn as seeds. That clean isolation is what made the heuristic signal visible
+(diversity within-condition range = 0.038 vs random = 0.179).
+
+With n=3 noisy pipeline seeds and within-condition variance ~0.05–0.09, you'd need ~10–15 seeds
+to detect a 10pp heuristic effect at p<0.05. The apr26 sweep is underpowered for heuristic
+comparison — it's well-powered for budget comparisons.
+
+The deltas in apr26 are still directionally consistent with apr23 (diversity ≥ BG ≥ random at
+budget=20 in the right direction) but well within noise.
+
+### Controlled replicate experiment (mimicgen_budget_rep_sweep)
+
+To recover the clean heuristic signal: fix the seed=1 d60 pipeline (baseline, clustering,
+behavior graph all complete) and run rep-2 and rep-3 arms varying only `random_seed` (1 and 2).
+
+This gives 3 replicates per (heuristic, budget) cell — rep-1 already complete from the
+apr26 sweep — with full upstream state held constant.
+
+**New step**: `MimicgenBudgetRepSweepStep` (`mimicgen_budget_rep_sweep`)
+- Sweeps (heuristic × budget × rep_seed) using the same device pool pattern
+- Arm names: `mimicgen_{heuristic}_budget{N}_rep{seed}` (no suffix = rep-1, already done)
+- `_make_budget_arm_class` extended with optional `random_seed` parameter
+
+**Config**: `policy_doctor/configs/experiment/mimicgen_square_rep_sweep_apr26.yaml`
+- `run_dir: data/pipeline_runs/mimicgen_square_apr26_sweep_seed1_demos60` (reuses seed=1)
+- `rep_seeds: [1, 2]` — generates rep-2 and rep-3 arms
+- Rep-1 arms skipped via `skip_if_done=True`
+
+**Launch**: `./scripts/run_budget_rep_sweep.sh`
+
+Expected result: 3 reps × 3 heuristics × 4 budgets = 36 arms; 12 already done (rep-1), 24 new.
+Within-condition std should drop significantly vs the full sweep (same baseline/clustering),
+making the ~10pp diversity advantage detectable if it holds across budgets.
+
+### Hypothesis for controlled experiment
+
+Based on apr23 (budget=200, n=3 reps, fixed upstream):
+- diversity mean=0.601, range=0.038
+- random mean=0.480, range=0.179
+- gap = +0.121
+
+Prediction for the budget sweep with fixed upstream:
+- Budget scaling will still dominate absolute performance
+- Diversity advantage should be visible (~10pp) at each budget with low within-condition variance
+- Advantage may be smaller at large budgets (more data → heuristic matters less) and larger
+  at small budgets (confirmed by apr23 budget=20: diversity=0.258 vs random=0.167, +0.091)

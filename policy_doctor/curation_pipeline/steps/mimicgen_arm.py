@@ -304,30 +304,56 @@ class MimicgenDiversityRep3ArmStep(CompositeStep):
 # One arm per budget level; each writes to <run_dir>/mimicgen_behavior_graph_budgetN/.
 # Generated via _make_bg_budget_arm_class() so the class list stays DRY.
 
-def _make_budget_arm_class(heuristic: str, budget: int) -> type:
-    """Return a CompositeStep subclass for the given heuristic and success_budget.
+def _make_budget_arm_class(
+    heuristic: str,
+    budget: int,
+    random_seed: "int | None" = None,
+) -> type:
+    """Return a CompositeStep subclass for the given heuristic, success_budget, and rep.
 
     Used by :class:`~policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep
-    .MimicgenBudgetSweepStep` to create ephemeral arm instances at runtime from
-    config-driven heuristic × budget combinations, without requiring each pair to
-    be pre-registered in ``pipeline.py``.
+    .MimicgenBudgetSweepStep` (rep-1 arms) and
+    :class:`~policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep
+    .MimicgenBudgetRepSweepStep` (rep-2/3 arms) to create ephemeral arm instances
+    at runtime without requiring each (heuristic, budget, rep) triple to be
+    pre-registered in ``pipeline.py``.
+
+    Args:
+        heuristic: Seed-selection heuristic name (``"random"``, ``"behavior_graph"``,
+            ``"diversity"``).
+        budget: ``success_budget`` value (number of successful MimicGen demos to target).
+        random_seed: When ``None`` (default) this is rep-1 — no ``random_seed`` override
+            is injected and the arm name has no suffix.  When an integer, this value is
+            injected as ``mimicgen_datagen.random_seed`` and ``_rep{random_seed}`` is
+            appended to the arm name, distinguishing it from the rep-1 arm.
     """
-    class_name = f"Mimicgen{''.join(p.capitalize() for p in heuristic.split('_'))}Budget{budget}ArmStep"
-    step_name = f"mimicgen_{heuristic}_budget{budget}"
+    rep_suffix = f"_rep{random_seed}" if random_seed is not None else ""
+    run_tag = f"budget{budget}" + (f"-rep{random_seed}" if random_seed is not None else "")
+    step_name = f"mimicgen_{heuristic}_budget{budget}{rep_suffix}"
+    class_name = (
+        f"Mimicgen{''.join(p.capitalize() for p in heuristic.split('_'))}"
+        f"Budget{budget}"
+        + (f"Rep{random_seed}" if random_seed is not None else "")
+        + "ArmStep"
+    )
+    cfg_overrides: dict = {
+        "mimicgen_datagen.seed_selection_heuristic": heuristic,
+        "mimicgen_datagen.success_budget": budget,
+        "run_tag": run_tag,
+    }
+    if random_seed is not None:
+        cfg_overrides["mimicgen_datagen.random_seed"] = random_seed
     return type(
         class_name,
         (CompositeStep,),
         {
             "__doc__": (
-                f"MimicGen arm: {heuristic} selection, success_budget={budget}.\n\n"
-                f"Budget-sweep arm — results land under <run_dir>/{step_name}/."
+                f"MimicGen arm: {heuristic} selection, success_budget={budget}"
+                + (f", random_seed={random_seed}" if random_seed is not None else "")
+                + f".\n\nBudget-sweep arm — results land under <run_dir>/{step_name}/."
             ),
             "name": step_name,
             "sub_step_classes": _SUB_STEPS,
-            "cfg_overrides": {
-                "mimicgen_datagen.seed_selection_heuristic": heuristic,
-                "mimicgen_datagen.success_budget": budget,
-                "run_tag": f"budget{budget}",
-            },
+            "cfg_overrides": cfg_overrides,
         }
     )
