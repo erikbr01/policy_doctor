@@ -13,13 +13,13 @@
 # new constrained run dir — only the generation arms are new.
 #
 #   Phase A — mimicgen_budget_sweep (rep-1, random_seed=null):
-#     3 heuristics × 2 budgets [100, 500] = 6 arms
+#     3 heuristics × 2 budgets [300, 1000] = 6 arms
 #
 #   Phase B — mimicgen_budget_rep_sweep (rep-2/3, random_seed=1/2):
 #     3 heuristics × 2 budgets × 2 rep_seeds = 12 arms
 #
 # Total: 18 arms.  Device pool: 4 concurrent slots (cuda:0 ×2, cuda:1 ×2).
-# Rough wall-clock: ~8–16hr depending on budget distribution.
+# Rough wall-clock: ~24–48hr depending on budget distribution.
 #
 # Usage:
 #   nohup bash -lc "
