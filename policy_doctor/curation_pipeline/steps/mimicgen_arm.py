@@ -28,6 +28,9 @@ Register in ``pipeline.py``'s ``ALL_STEPS`` / ``_build_step_registry()``::
 from __future__ import annotations
 
 from policy_doctor.curation_pipeline.base_step import CompositeStep
+from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
+    AnalyzeFailureStatesStep,
+)
 from policy_doctor.curation_pipeline.steps.eval_mimicgen_combined import (
     EvalMimicgenCombinedStep,
 )
@@ -42,6 +45,15 @@ from policy_doctor.curation_pipeline.steps.train_on_combined_data import (
 )
 
 _SUB_STEPS = [SelectMimicgenSeedStep, GenerateMimicgenDemosStep, TrainOnCombinedDataStep, EvalMimicgenCombinedStep]
+
+# Sub-steps for failure-targeting arms: analysis runs first, then standard arm.
+_FAILURE_TARGETING_SUB_STEPS = [
+    AnalyzeFailureStatesStep,
+    SelectMimicgenSeedStep,
+    GenerateMimicgenDemosStep,
+    TrainOnCombinedDataStep,
+    EvalMimicgenCombinedStep,
+]
 
 
 class MimicgenRandomArmStep(CompositeStep):
@@ -357,3 +369,32 @@ def _make_budget_arm_class(
             "cfg_overrides": cfg_overrides,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Failure-targeting arm — graph-guided initial + intermediate state targeting
+# ---------------------------------------------------------------------------
+
+class MimicgenFailureTargetingArmStep(CompositeStep):
+    """MimicGen arm: failure-state analysis → near-failure seed selection.
+
+    Runs ``analyze_failure_states → select_mimicgen_seed → generate_mimicgen_demos
+    → train_on_combined_data → eval_mimicgen_combined`` using
+    ``seed_selection_heuristic=near_failure`` with per-cluster IC and optional
+    subtask constraints derived automatically from the behavior graph.
+
+    All failure analysis behaviour is controlled via config keys under
+    ``mimicgen_datagen.failure_analysis.*``.  When
+    ``failure_analysis.enabled=false`` (the default), this arm degrades
+    gracefully to standard near-failure seed selection with no IC constraints.
+
+    Results land under ``<run_dir>/mimicgen_failure_targeting/``.
+    """
+
+    name = "mimicgen_failure_targeting"
+    sub_step_classes = _FAILURE_TARGETING_SUB_STEPS
+    cfg_overrides = {
+        "mimicgen_datagen.seed_selection_heuristic": "near_failure",
+        "mimicgen_datagen.fix_initial_object_poses": True,
+        "mimicgen_datagen.failure_analysis.enabled": True,
+    }

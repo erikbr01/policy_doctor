@@ -44,7 +44,7 @@ Result JSON:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from omegaconf import OmegaConf
 
@@ -131,22 +131,84 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         rollouts_hdf5 = _resolve_rollouts_hdf5(self.cfg, self.repo_root, seed)
         print(f"  [select_mimicgen_seed] rollouts_hdf5={rollouts_hdf5}")
 
-        # --- Build and run heuristic ---
-        heuristic = build_heuristic(
-            heuristic_name,
-            top_k_paths=top_k_paths,
-            min_path_probability=min_path_probability,
-            success_only=success_only,
-            random_seed=random_seed,
+        # --- Failure analysis: check if AnalyzeFailureStatesStep ran ---
+        # When enabled, override num_seeds and select per-cluster using NearFailurePathHeuristic.
+        from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
+            AnalyzeFailureStatesStep,
+        )
+        fa_step = AnalyzeFailureStatesStep(self.cfg, self.parent_run_dir)
+        fa_result = fa_step.load() if fa_step.is_done() else None
+        use_failure_analysis = (
+            fa_result is not None
+            and fa_result.get("enabled", False)
+            and fa_result.get("clusters")
         )
 
-        results: list[SeedSelectionResult] = heuristic.select_multiple(
-            n=num_seeds,
-            cluster_labels=labels,
-            metadata=metadata,
-            rollout_hdf5_path=str(rollouts_hdf5),
-            level=level,
-        )
+        results: list[SeedSelectionResult] = []
+        # per_seed_object_pose_ranges[i] and per_seed_subtask_constraints[i] carry
+        # per-seed constraint suggestions derived from the failure cluster of that seed.
+        per_seed_object_pose_ranges: list[dict | None] = []
+        per_seed_subtask_constraints: list[dict | None] = []
+
+        if use_failure_analysis:
+            clusters = fa_result["clusters"]
+            print(
+                f"  [select_mimicgen_seed] failure analysis active: "
+                f"{len(clusters)} clusters, selecting {heuristic_name} seeds per cluster"
+            )
+            for cluster_info in clusters:
+                ci = cluster_info["cluster_idx"]
+                budget = int(cluster_info.get("budget_per_cluster", 1))
+                eligible = cluster_info.get("eligible_rollout_idxs") or None
+
+                heuristic = build_heuristic(
+                    heuristic_name,
+                    top_k_paths=top_k_paths,
+                    min_path_probability=min_path_probability,
+                    success_only=success_only,
+                    random_seed=random_seed,
+                    eligible_rollout_idxs=eligible,
+                )
+                try:
+                    cluster_results = heuristic.select_multiple(
+                        n=budget,
+                        cluster_labels=labels,
+                        metadata=metadata,
+                        rollout_hdf5_path=str(rollouts_hdf5),
+                        level=level,
+                    )
+                except RuntimeError as e:
+                    print(f"  [select_mimicgen_seed] cluster {ci}: selection failed: {e}")
+                    continue
+
+                opr = cluster_info.get("suggested_object_pose_ranges")
+                sc = cluster_info.get("suggested_subtask_constraints")
+                for r in cluster_results:
+                    results.append(r)
+                    per_seed_object_pose_ranges.append(opr)
+                    per_seed_subtask_constraints.append(sc)
+                print(
+                    f"    cluster {ci}: selected {len(cluster_results)} seeds "
+                    f"from {len(eligible or [])} eligible rollouts"
+                )
+        else:
+            # Standard path: single heuristic, flat seed list.
+            heuristic = build_heuristic(
+                heuristic_name,
+                top_k_paths=top_k_paths,
+                min_path_probability=min_path_probability,
+                success_only=success_only,
+                random_seed=random_seed,
+            )
+            results = heuristic.select_multiple(
+                n=num_seeds,
+                cluster_labels=labels,
+                metadata=metadata,
+                rollout_hdf5_path=str(rollouts_hdf5),
+                level=level,
+            )
+            per_seed_object_pose_ranges = [None] * len(results)
+            per_seed_subtask_constraints = [None] * len(results)
 
         for r in results:
             print(
@@ -173,7 +235,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             )
         print(f"  [select_mimicgen_seed] seed HDF5 written ({len(results)} demos): {seed_hdf5}")
 
-        return {
+        result: dict[str, Any] = {
             "seed_hdf5_path": str(seed_hdf5.resolve()),
             "num_seeds": len(results),
             "rollout_idxs": [r.rollout_idx for r in results],
@@ -183,3 +245,9 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             "clustering_dir": str(cdir),
             "rollouts_hdf5": str(rollouts_hdf5),
         }
+        # Only include per-seed constraints in result when at least one is non-null.
+        if any(v is not None for v in per_seed_object_pose_ranges):
+            result["per_seed_object_pose_ranges"] = per_seed_object_pose_ranges
+        if any(v is not None for v in per_seed_subtask_constraints):
+            result["per_seed_subtask_constraints"] = per_seed_subtask_constraints
+        return result
