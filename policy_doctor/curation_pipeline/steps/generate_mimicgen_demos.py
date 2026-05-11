@@ -263,7 +263,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
     Dispatch model:
       1. Load seed trajectory (h5py only, runs in policy_doctor env).
       2. Materialize to ``step_dir/seed_demo.hdf5`` (h5py only).
-      3. Run ``conda run -n mimicgen python scripts/run_mimicgen_generate.py``
+      3. Run ``conda run -n mimicgen_torch2 python scripts/run_mimicgen_generate.py``
          which calls ``prepare_src_dataset`` and ``generate_dataset`` in the
          correct MuJoCo / robosuite environment.
       4. Load EEF trajectories from the generated HDF5 (h5py only).

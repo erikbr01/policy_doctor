@@ -3,7 +3,7 @@
 This script is called by :class:`~policy_doctor.curation_pipeline.steps
 .generate_mimicgen_demos.GenerateMimicgenDemosStep` via::
 
-    conda run -n mimicgen python scripts/run_mimicgen_generate.py \\
+    conda run -n mimicgen_torch2 python scripts/run_mimicgen_generate.py \\
         --seed_hdf5   /path/to/seed_demo.hdf5 \\
         --output_dir  /path/to/generation_output \\
         --task_name   square \\

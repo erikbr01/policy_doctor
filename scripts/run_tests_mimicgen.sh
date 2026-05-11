@@ -4,5 +4,5 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 export PYTHONPATH=.
-exec conda run -n mimicgen --no-capture-output \
+exec conda run -n mimicgen_torch2 --no-capture-output \
   python run_tests.py --suite mimicgen "$@"

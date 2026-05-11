@@ -1,4 +1,4 @@
-name: policy_doctor
+name: mimicgen_torch2
 channels:
   - conda-forge
   - pytorch
@@ -407,9 +407,16 @@ dependencies:
       - colorful==0.5.8
       - diffusion-policy==0.0.0
       - distlib==0.4.0
+      - dm-control==1.0.9
+      - dm-env==1.6
+      - dm-tree==0.1.8
+      - egl-probe==1.0.2
       - etils==1.5.2
       - eval-type-backport==0.3.1
+      - fasteners==0.15
+      - free-mujoco-py==2.1.6
       - gdown==5.2.1
+      - glfw==1.12.0
       - google-api-core==2.29.0
       - googleapis-common-protos==1.63.1
       - gpustat==1.1.1
@@ -421,11 +428,14 @@ dependencies:
       - joblib==1.5.3
       - jsonschema==4.25.1
       - jsonschema-specifications==2025.9.1
+      - labmaze==1.0.6
       - llvmlite==0.43.0
       - lxml==6.0.2
       - matplotlib==3.9.4
+      - mimicgen==1.0.0
       - monotonic==1.6
       - mpmath==1.3.0
+      - mujoco==3.2.6
       - nodeenv==1.10.0
       - numba==0.60.0
       - nvidia-cublas-cu12==12.8.4.1
@@ -463,6 +473,8 @@ dependencies:
       - r3m==0.0.0
       - ray==2.2.0
       - referencing==0.36.2
+      - robomimic==0.3.0
+      - robosuite==1.4.1
       - rpds-py==0.27.1
       - safetensors==0.7.0
       - scikit-learn==1.6.1
@@ -482,4 +494,4 @@ dependencies:
       - wandb==0.25.0
       - wcwidth==0.6.0
       - wrapt==2.1.1
-prefix: /home/erbauer/miniforge3/envs/policy_doctor
+prefix: /home/erbauer/miniforge3/envs/mimicgen_torch2
