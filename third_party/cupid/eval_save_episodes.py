@@ -76,7 +76,7 @@ def main(
     cls = hydra.utils.get_class(cfg._target_)
 
     # Update configuration for evaluation.
-    default_n_envs = 1 if save_episodes else 28
+    default_n_envs = 28  # multi-env works for both save_episodes=True and False
     cfg.task.env_runner.n_envs = n_envs if n_envs is not None else default_n_envs
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
