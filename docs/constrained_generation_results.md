@@ -51,13 +51,19 @@ object_pose_ranges:
 | behavior_graph_budget100 | 3 (seed=2) | **done** | — | done | **0.434** | 0.399 |
 | diversity_budget100 | 3 (seed=2) | **done** | — | done | **0.390** | 0.382 |
 
-### Results (best_success_rate, n=3)
+### Results (n=3)
 
-| heuristic | mean ± std | min | max |
-|-----------|-----------|-----|-----|
-| random | 0.350 ± 0.039 | 0.316 | 0.392 |
-| behavior_graph | 0.422 ± 0.010 | 0.416 | 0.434 |
-| diversity | 0.394 ± 0.003 | 0.390 | 0.396 |
+`best` = max success rate across top-k checkpoints. `top5_mean` = mean of top-5 checkpoints
+by success rate (fair cross-arm comparison; all D60 b=100 arms have exactly 5 checkpoints).
+
+| heuristic | metric | mean ± std | min | max |
+|-----------|--------|-----------|-----|-----|
+| random | best | 0.350 ± 0.039 | 0.316 | 0.392 |
+| | top5_mean | 0.328 ± 0.041 | 0.296 | 0.374 |
+| behavior_graph | best | **0.422 ± 0.010** | 0.416 | 0.434 |
+| | top5_mean | **0.394 ± 0.007** | 0.386 | 0.399 |
+| diversity | best | 0.394 ± 0.003 | 0.390 | 0.396 |
+| | top5_mean | 0.377 ± 0.004 | 0.374 | 0.382 |
 
 ### Unconstrained d60 b=100 reference (from apr26 rep sweep)
 
@@ -91,13 +97,19 @@ object_pose_ranges:
 | behavior_graph_budget300 | 3 (seed=2) | **done** | 58.3% (315/540) | done | **0.552** | 0.527 |
 | diversity_budget300 | 3 (seed=2) | **done** | — | done | **0.624** | 0.606 |
 
-### Results (best_success_rate, n=3)
+### Results (n=3)
 
-| heuristic | mean ± std | min | max |
-|-----------|-----------|-----|-----|
-| random | 0.500 ± 0.026 | 0.480 | 0.530 |
-| behavior_graph | 0.577 ± 0.036 | 0.552 | 0.618 |
-| diversity | 0.609 ± 0.015 | 0.594 | 0.624 |
+`best` = max success rate across top-k checkpoints. `top5_mean` = mean of top-5 checkpoints
+by success rate (all D60 b=300 arms have exactly 5 checkpoints so `top5_mean` = `mean_all`).
+
+| heuristic | metric | mean ± std | min | max |
+|-----------|--------|-----------|-----|-----|
+| random | best | 0.500 ± 0.026 | 0.480 | 0.530 |
+| | top5_mean | 0.484 ± 0.026 | 0.468 | 0.514 |
+| behavior_graph | best | 0.577 ± 0.036 | 0.552 | 0.618 |
+| | top5_mean | 0.546 ± 0.026 | 0.527 | 0.576 |
+| diversity | best | **0.609 ± 0.015** | 0.594 | 0.624 |
+| | top5_mean | **0.586 ± 0.018** | 0.573 | 0.606 |
 
 ### Reference: D60 budget=100 nut-constrained (this session)
 
@@ -188,17 +200,17 @@ is real; per-seed labels are not.
 | behavior_graph_budget1000 | 1 (null) | **done** | 57.0% (1197/2100) | done | **0.622** | 0.615 |
 | diversity_budget1000 | 1 (null) | **done** | 39.6% (1068/2700) | done | **0.712** | 0.681 |
 | random_budget300 | 2 (seed=1) | **done** | 37.4% (303/810) | done | **0.568** | 0.555 |
-| behavior_graph_budget300 | 2 (seed=1) | eval running (ckpt 4/5) | — | done | — | — |
-| diversity_budget300 | 2 (seed=1) | pending | — | — | — | — |
-| random_budget1000 | 2 (seed=1) | training (ep 1572/1751) | 37.6% (1015/2700) | — | — | — |
-| behavior_graph_budget1000 | 2 (seed=1) | pending | — | — | — | — |
-| diversity_budget1000 | 2 (seed=1) | pending | — | — | — | — |
+| behavior_graph_budget300 | 2 (seed=1) | **done** | — | done | **0.596** | 0.578 |
+| diversity_budget300 | 2 (seed=1) | **done** | — | done | **0.480** | 0.452 |
+| random_budget1000 | 2 (seed=1) | **done** | 37.6% (1015/2700) | done | **0.714** | 0.699 |
+| behavior_graph_budget1000 | 2 (seed=1) | training (ep 1500/1751) | — | — | — | — |
+| diversity_budget1000 | 2 (seed=1) | generating | — | — | — | — |
 | random_budget300 | 3 (seed=2) | **done** | 25.3% (300/1188) | done | **0.524** | 0.512 |
-| behavior_graph_budget300 | 3 (seed=2) | eval running (ckpt 3/5) | — | done | — | — |
-| diversity_budget300 | 3 (seed=2) | pending | — | — | — | — |
-| random_budget1000 | 3 (seed=2) | training (ep 1625/1751) | 25.2% (1015/4035) | — | — | — |
-| behavior_graph_budget1000 | 3 (seed=2) | pending | — | — | — | — |
-| diversity_budget1000 | 3 (seed=2) | pending | — | — | — | — |
+| behavior_graph_budget300 | 3 (seed=2) | **done** | — | done | **0.566** | 0.542 |
+| diversity_budget300 | 3 (seed=2) | **done** (manual eval) | — | done | **0.578** | 0.558 |
+| random_budget1000 | 3 (seed=2) | **done** | 25.2% (1015/4035) | done | **0.686** | 0.669 |
+| behavior_graph_budget1000 | 3 (seed=2) | training (ep 1451/1751) | — | — | — | — |
+| diversity_budget1000 | 3 (seed=2) | generating | — | — | — | — |
 
 ### Phase A results (rep-1 / null seed only)
 
@@ -215,16 +227,70 @@ Budget effect (b300→b1000): random +0.206, diversity +0.136, BG +0.038.
 Ordering flips: BG leads at b300; diversity leads at b1000 by a wide margin.
 diversity-b1000 (0.712) is the highest single-arm result across all experiments in this session.
 
-### Results (best_success_rate, n=3 — pending Phase B)
+### Results (n=3)
 
-| heuristic | budget | mean ± std | min | max |
+`best` = max success rate across top-k checkpoints. `top5_mean` = mean of top-5 checkpoints
+by success rate. Phase A arms had 9–10 checkpoints evaluated (all saved ckpts), so `top5_mean`
+and `mean_all` differ for those arms; `top5_mean` is the fair comparison across all reps.
+
+#### Budget = 300
+
+| heuristic | metric | mean ± std | min | max |
 |-----------|--------|-----------|-----|-----|
-| random | 300 | 0.514 ± 0.060 | 0.450 | 0.568 |
-| behavior_graph | 300 | — (pending) | — | — |
-| diversity | 300 | — (pending) | — | — |
-| random | 1000 | — (pending) | — | — |
-| behavior_graph | 1000 | — (pending) | — | — |
-| diversity | 1000 | — (pending) | — | — |
+| random | best | 0.514 ± 0.060 | 0.450 | 0.568 |
+| | top5_mean | 0.502 ± 0.060 | 0.438 | 0.555 |
+| behavior_graph | best | **0.582 ± 0.015** | 0.566 | 0.596 |
+| | top5_mean | **0.559 ± 0.018** | 0.542 | 0.578 |
+| diversity | best | 0.545 ± 0.056 | 0.480 | 0.578 |
+| | top5_mean | 0.522 ± 0.061 | 0.452 | 0.558 |
+
+#### Budget = 1000
+
+| heuristic | metric | mean ± std | min | max |
+|-----------|--------|-----------|-----|-----|
+| random | best | 0.685 ± 0.029 | 0.656 | 0.714 |
+| | top5_mean | 0.671 ± 0.028 | 0.644 | 0.699 |
+| behavior_graph | best | 0.630 ± 0.019 | 0.616 | 0.652 |
+| | top5_mean | 0.610 ± 0.010 | 0.598 | 0.618 |
+| diversity | best | **0.691 ± 0.050** | 0.634 | 0.726 |
+| | top5_mean | **0.673 ± 0.045** | 0.625 | 0.713 |
+
+---
+
+## Episode Length Analysis (in progress)
+
+**Motivation:** the original eval runner did not terminate episodes early on success — every
+episode ran for the full 500-step horizon regardless of outcome. This means the existing
+`mean_success_rate` values are correct, but no per-episode step-count data was ever saved,
+making it impossible to compute task throughput (average steps to completion) from the existing
+outputs.
+
+**Fix (2026-05-11):**
+- `mimicgen_lowdim_runner.py`: unconditionally calls `_is_success()` for early termination on
+  every eval episode (was gated on `save_episodes=True` before). Tracks `episode_steps` per
+  episode and logs `test/episode_length_{seed}`, `test/mean_episode_length`, and
+  `test/mean_success_episode_length` to `eval_log.json`.
+- `eval_mimicgen_combined.py`: reads the new length fields from `eval_log.json` (falls back
+  gracefully when absent for older runs), stores them per checkpoint in `result.json`, and
+  averages across checkpoints in the arm summary.
+- `scripts/aggregate_sweep_results.py`: shows `succ_ep_len (steps)` in the eval table when
+  the data is present; silently omits the row for older runs.
+
+**Re-run (2026-05-11, PID=1909802):**
+- All 36 arms across all 3 experiments re-evaluated: 194 checkpoint evals total.
+- Existing eval_save_episodes dirs renamed to `.backup` (same parent dir, no data moved).
+  Backup dirs: `/mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/<arm_name>.backup`
+- Existing `eval_mimicgen_combined` step dirs renamed to `.backup` in each pipeline arm dir.
+- New evals running: 4 concurrent workers, all on `cuda:0`.
+- Script: `scripts/rerun_evals_with_episode_lengths.py`
+- Log: `logs/rerun_evals_episode_lengths.log`
+- Est. completion: ~8 hours from launch (~06:00 PDT May 12)
+
+**Note on `top5_mean` vs `mean_all`:** Phase A arms (budget_sweep) had 9–10 checkpoints
+evaluated because the original eval ran all saved checkpoints, not just the top-5. Phase B arms
+have exactly 5 checkpoints. The `top5_mean` metric (mean of top-5 by success rate) is the fair
+cross-arm comparison. `mean_all` is kept in `result.json` for completeness but should not be
+used to compare Phase A vs Phase B arms.
 
 ---
 
@@ -244,6 +310,30 @@ diversity-b1000 (0.712) is the highest single-arm result across all experiments 
 - 2026-05-08 15:01: BG rep-2 DONE best=0.618/mean=0.576. BG rep-3 eval 4/5 done (ep300=0.458, ep700=0.544, ep850=0.544, ep1400=0.552; running ep1600). Diversity rep-2 generating (7/10 seeds active). Diversity rep-3 still pending.
 - 2026-05-08 15:43: BG rep-3 DONE best=0.552/mean=0.527. **BG complete: mean=0.577±0.036 (n=3: 0.560/0.618/0.552)**. diversity rep-2 training ep475 (in-train peak 0.480), rep-3 training ep203 (in-train peak 0.420). Est. Phase B done ~18:30.
 - 2026-05-08 17:29: diversity rep-2 training DONE (ep1751, in-train peak=0.640), eval started (ckpt 2/5: ep950=0.570, running ep1300). diversity rep-3 training ep1614/1751 (in-train peak=0.640), ~10 min remaining.
+- 2026-05-10 22:51: diversity-b300-rep2 ep238 (49K log lines, confirmed progressing). BG-b1000 last ckpts ep1100/ep1000 (log ep1250/1219, ~500 epochs left, ~3.5h at 3-way GPU share). diversity-b1000 rep1 gen 868/1000, rep2 gen 261/1000. Phase B est. done ~08:00 May 11.
+- 2026-05-11 22:46: **D300 PHASE B COMPLETE.** div-b1000 rep2 DONE best=0.726/mean=0.713. **div-b1000 n=3: mean=0.691±0.050 (0.712/0.634/0.726)**. Full d300 results: random b300=0.514/b1000=0.685, BG b300=0.582/b1000=0.630, diversity b300=0.545/b1000=0.691. Budget=1000 strongly benefits all heuristics; diversity b1000 leads.
+- 2026-05-11 22:26: rep1 DONE. rep2 4/5 done (ep0900=0.716, ep1250=0.716, ep1600=0.702, ep1700=0.706). ep1200 relaunched on cuda:0 (PID=1897155) — was dying on cuda:1. Final eval ~22:45.
+- 2026-05-11 20:22: rep1+rep2 both training done. 10 eval ckpts running (5 per rep, 320 processes, no training competition). GPU 0: 2.5GiB / GPU 1: 3.2GiB. Eval est. done ~21:30.
+- 2026-05-11 13:08: rep1 (cuda:0 solo) at ep1079 — torch.compile recompiling, only 21 ep/hr (steps incrementing ✓). rep2 (cuda:1 solo) at ep946, now running 94 ep/hr → done ~21:30. Rep1 should accelerate after compile; ~2h left if it reaches ~300 ep/hr. Bottleneck: rep2 ~21:30.
+- 2026-05-11 11:08: div-b1000 rep1 moved to cuda:0 solo (PID=1791074, ep1037 resuming) to cut ~16h→~2.5h. rep2 stays on cuda:1 solo (ep852, ~10h). Phase B est done ~21:00 May 11.
+- 2026-05-11 10:08: **BG-b1000 rep1 DONE** best=0.652. **BG-b1000 rep2 DONE** best=0.616. **BG-b1000 n=3 mean=0.630±0.019**. **div-b300 n=3 mean=0.545±0.056** (Phase A=0.576, rep1=0.480, rep2=0.578). div-b1000 ep992/809 (still training, rep2 in-train peak=0.740!).
+- 2026-05-11 09:10: **div-b300-rep2 DONE** best=0.578/mean=0.558 (manual eval). BG-b1000 rep1 eval 4/5 (peaks 0.652, running ep1700). rep2 eval 3/4 (peak 0.608). div-b1000 ep800/626 (38 ep/hr).
+- 2026-05-11 08:10: BG-b1000 rep1 eval 4/5 done. rep2 eval 3/4 done. div-b300-rep2 eval still running (all 5 procs alive, GPU 0 loaded 3477MiB but 0% util — 126 concurrent sim instances CPU-bound). div-b1000 ep784/602 (38 ep/hr in rollout window).
+- 2026-05-11 06:08: div-b300-rep2 training DONE (ep1750, peak=0.640), 5 eval processes launched manually (PIDs 1705748-52). BG-b1000 rep1 eval 3/5 (0.652/0.632/0.582, running ep1650). rep2 eval started (ckpt 1/5). div-b1000 ep642/460 (70/69 ep/hr).
+- 2026-05-11 05:43: BG-b1000 rep2 training DONE (ep1750). rep1 eval 2/5 (ep1250=0.652, ep1300=0.632, running ep1400). div-b300-rep2 ep1695 (~56 left, done ~06:10, manual eval needed). div-b1000 ep642/460 (70/69 ep/hr → done ~21:45/00:40). RAM 85/124GiB fine, GPU contention slowing rates but stable.
+- 2026-05-11 03:40: BG-b1000 rep1 eval running (still ckpt 1/5 — sim contention from training rollout evals). rep2 ep1706 (~11 ep/hr in rollout window). div-b300-rep2 ep1466. div-b1000 ep545/364 (also slow, ~23 ep/hr). Rates oscillate between fast (187+/hr) and slow (11-37/hr) windows every ~50 epochs.
+- 2026-05-11 03:03: **Rates recovered**: BG-b1000 rep1 training DONE (ep1750, peak=0.700), eval running (ckpt 1/5). rep2 ep1699 (~18 min left). div-b300-rep2 ep1443 (~36 min left, manual eval needed after). div-b1000 ep531/350 (250/243 ep/hr → done ~08:00/08:50). Phase B est. done ~09:15 May 11.
+- 2026-05-11 01:57: BG-b1000 ep1544/1493 (27/24 ep/hr, ~8-11h left). div-b300-rep2 ep907 (54 ep/hr, ~15h but will accelerate after BG done). div-b1000 ep256/83 (~28-31 ep/hr; after BG free, rates should improve 2-3×). Phase B realistic est: div-b1000 done ~May 12 11:00.
+- 2026-05-11 00:54: 5-way GPU contention (3 on cuda:0, 2 on cuda:1) causing rollout-eval bottleneck. BG-b1000 ep1516/1468 (~18 ep/hr in eval-heavy window). div-b300-rep2 ep850, div-b1000 ep227/50. Conservative est: BG-b1000 done ~05:00, div-b300-rep2 done ~08:00 (after BG frees cuda:0), div-b1000 done ~19:00-21:00. Phase B est. done ~21:00 May 11.
+- 2026-05-11 00:01: **REVISED ETA (much better)**: diversity-b1000 rep1/2 gen done, both training (ep206/33). BG-b1000 reps at ep1500/1451 (208/188 ep/hr). diversity-b300-rep2 ep820 (488 ep/hr). All 4 GPU slots (cuda:0×2, cuda:1×2) now fully utilized. BG-b1000 done ~01:30, diversity-b300-rep2 ~01:55 (manual eval needed), diversity-b1000 reps ~09:00. Phase B est. done ~09:00 May 11.
+- 2026-05-10 23:55: **REVISED ETA**: BG-b1000 reps at ep1278/1250 (~28 ep/hr due to 3-way cuda:0 sharing with diversity-b300-rep2). 473/501 epochs left = ~17h each → done ~17:00 May 11. diversity-b300-rep2 ep300 (62 ep/hr, smaller dataset), ~23h left. diversity-b1000 rep1 gen 883/1000, rep2 gen 487/1000. Phase B est. done ~22:00 May 11.
+- 2026-05-10 21:59: diversity-b300-rep2 training on cuda:0 ep201 (working!). BG-b1000 rep1/2 ep1237/1208 (peaks 0.600/0.680). diversity-b1000 rep1/2 both generating. 12/12 Phase B arms active/done.
+- 2026-05-10 21:10: diversity-b300-rep2 killed and manually relaunched on cuda:0 (PID=1517780) — was hanging on cuda:1 since 17:47. BG-b1000 rep1/2 training ep903/906. diversity-b1000 rep1 generating.
+- 2026-05-10 20:46: diversity-b300 rep1 DONE best=0.480/mean=0.452. diversity-b1000 rep1 generating (140/1000). BG-b1000 rep1/2 training ep903/906. diversity-b300 rep2 STUCK (train process hung on cuda:1 since 17:47, 0 progress). diversity-b1000 rep2 pending.
+- 2026-05-10 19:41: All 4 training simultaneously (2 per GPU slowing pace). BG-b1000 rep1/2 at ep~596/623 (logs buffered). diversity-b300 rep1 near end (~ep1669→1751), rep2 training (logs buffered at ep0 but process alive). diversity-b1000 pending. Phase B est. done ~03:00 May 11.
+- 2026-05-10 18:39: BG-b1000 rep1/2 gen done, training ep249/303 (peak 0.460/0.620). diversity-b300 rep1 gen done training ep800 (peak 0.500), rep2 training ep0. diversity-b1000 pending BG-b1000 slots (~21:30). Phase B est. done ~02:00 May 11.
+- 2026-05-10 17:37: random-b1000 DONE: rep1=0.714/0.699, rep2=0.686/0.669. **random-b1000 n=3 mean=0.685±0.029**. BG-b1000 rep2 training ep0, rep1 still generating. diversity-b300 rep1/2 generating. diversity-b1000 pending.
+- 2026-05-10 16:51: BG-b300 rep1/2 DONE (0.596/0.566). **BG-b300 n=3 mean=0.582±0.015**. random-b1000 rep1/2 evals running (in-train peaks 0.800/0.720). BG-b1000 rep1/2 generating. diversity-b300/b1000 pending slots.
 - 2026-05-10 15:49: BG-b300 rep1/2 training done, evals 4/5 and 3/5 (partial peaks 0.596/0.566). random-b1000 rep1/2 training ep1572/1625 (~10-12 min left). All 4 slots free ~16:15 → BG-b1000 + diversity-b300 all start.
 - 2026-05-10 14:47: All 4 arms ~20-43 min from training done. BG-b300 ep1465/1388 (peaks 0.640/0.580). random-b1000 ep1318/1334 (peaks 0.760/0.720). All 4 slots free ~15:45 → BG-b1000 + diversity-b300 all start. Phase B est. done ~00:30 May 11.
 - 2026-05-10 13:45: BG-b300 rep1/2 gen done, training ep710/673. random-b1000 rep1/2 training ep1033/1003 (peaks 0.760/0.720 — very strong). BG-b1000/diversity pending. Est. random-b1000 done ~15:10, BG-b1000 starts ~15:15, Phase B done ~01:00 May 11.
