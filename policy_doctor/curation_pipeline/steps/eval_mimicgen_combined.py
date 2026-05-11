@@ -133,19 +133,25 @@ class EvalMimicgenCombinedStep(PipelineStep[dict]):
                 existing_log = pathlib.Path(output_dir) / "eval_log.json"
                 if pathlib.Path(output_dir).exists() and not overwrite:
                     if existing_log.exists():
-                        rate = _read_mean_score(pathlib.Path(output_dir))
+                        rate, ep_len_mean, ep_len_succ = _read_eval_metrics(pathlib.Path(output_dir))
                         num_success = round(rate * num_episodes)
                         print(
                             f"    ckpt={ckpt_stem}  [cached]  "
                             f"successes~{num_success}/{num_episodes}  rate={rate:.3f}"
+                            + (f"  ep_len={ep_len_mean:.0f}" if ep_len_mean is not None else "")
                         )
-                        all_checkpoint_results.append({
+                        ckpt_entry = {
                             "checkpoint": ckpt_stem,
                             "output_dir": output_dir,
                             "num_episodes": num_episodes,
                             "num_success": num_success,
                             "success_rate": round(rate, 4),
-                        })
+                        }
+                        if ep_len_mean is not None:
+                            ckpt_entry["mean_episode_length"] = round(ep_len_mean, 1)
+                        if ep_len_succ is not None:
+                            ckpt_entry["mean_success_episode_length"] = round(ep_len_succ, 1)
+                        all_checkpoint_results.append(ckpt_entry)
                         continue
                     else:
                         # Partial run — clean up so subprocess can re-run cleanly.
@@ -175,46 +181,76 @@ class EvalMimicgenCombinedStep(PipelineStep[dict]):
                         f"(exit={result.returncode}) for ckpt={ckpt_stem}"
                     )
 
-                # Read success rate from eval_log.json written by eval_save_episodes
-                rate = _read_mean_score(pathlib.Path(output_dir))
+                # Read success rate (and optional episode lengths) from eval_log.json
+                rate, ep_len_mean, ep_len_succ = _read_eval_metrics(pathlib.Path(output_dir))
                 num_success = round(rate * num_episodes)
                 print(
                     f"    ckpt={ckpt_stem}  "
                     f"successes~{num_success}/{num_episodes}  "
                     f"rate={rate:.3f}"
+                    + (f"  ep_len={ep_len_mean:.0f}" if ep_len_mean is not None else "")
                 )
-                all_checkpoint_results.append({
+                ckpt_entry = {
                     "checkpoint": ckpt_stem,
                     "output_dir": output_dir,
                     "num_episodes": num_episodes,
                     "num_success": num_success,
                     "success_rate": round(rate, 4),
-                })
+                }
+                if ep_len_mean is not None:
+                    ckpt_entry["mean_episode_length"] = round(ep_len_mean, 1)
+                if ep_len_succ is not None:
+                    ckpt_entry["mean_success_episode_length"] = round(ep_len_succ, 1)
+                all_checkpoint_results.append(ckpt_entry)
 
         if not all_checkpoint_results:
             mean_rate = 0.0
             best_rate = 0.0
+            mean_ep_len = None
+            mean_succ_ep_len = None
         else:
             rates = [r["success_rate"] for r in all_checkpoint_results]
             mean_rate = round(sum(rates) / len(rates), 4)
             best_rate = round(max(rates), 4)
+            ep_lens = [r["mean_episode_length"] for r in all_checkpoint_results
+                       if "mean_episode_length" in r]
+            succ_ep_lens = [r["mean_success_episode_length"] for r in all_checkpoint_results
+                            if "mean_success_episode_length" in r]
+            mean_ep_len = round(sum(ep_lens) / len(ep_lens), 1) if ep_lens else None
+            mean_succ_ep_len = (
+                round(sum(succ_ep_lens) / len(succ_ep_lens), 1) if succ_ep_lens else None
+            )
 
         print(
             f"  [eval_mimicgen_combined] heuristic={heuristic!r}  "
             f"mean_success_rate={mean_rate:.3f}  best={best_rate:.3f}"
+            + (f"  mean_ep_len={mean_ep_len:.0f}" if mean_ep_len is not None else "")
         )
 
-        return {
+        result = {
             "heuristic": heuristic,
             "train_dir": train_dirs[0] if train_dirs else "",
             "checkpoints": all_checkpoint_results,
             "mean_success_rate": mean_rate,
             "best_success_rate": best_rate,
         }
+        if mean_ep_len is not None:
+            result["mean_episode_length"] = mean_ep_len
+        if mean_succ_ep_len is not None:
+            result["mean_success_episode_length"] = mean_succ_ep_len
+        return result
 
 
-def _read_mean_score(output_dir: pathlib.Path) -> float:
-    """Read ``test/mean_score`` from the ``eval_log.json`` written by eval_save_episodes."""
+def _read_eval_metrics(
+    output_dir: pathlib.Path,
+) -> tuple[float, float | None, float | None]:
+    """Read eval metrics from the ``eval_log.json`` written by eval_save_episodes.
+
+    Returns:
+        (success_rate, mean_episode_length, mean_success_episode_length)
+        Episode length fields are None when the runner did not log them
+        (i.e. evals run before the early-termination patch).
+    """
     import json
 
     log_path = output_dir / "eval_log.json"
@@ -230,4 +266,11 @@ def _read_mean_score(output_dir: pathlib.Path) -> float:
             f"Keys present: {sorted(data.keys())}. "
             f"eval_save_episodes output format may have changed."
         )
-    return float(data["test/mean_score"])
+    success_rate = float(data["test/mean_score"])
+    ep_len = data.get("test/mean_episode_length")
+    succ_ep_len = data.get("test/mean_success_episode_length")
+    return (
+        success_rate,
+        float(ep_len) if ep_len is not None else None,
+        float(succ_ep_len) if succ_ep_len is not None else None,
+    )

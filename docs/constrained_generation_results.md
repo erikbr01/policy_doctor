@@ -51,13 +51,19 @@ object_pose_ranges:
 | behavior_graph_budget100 | 3 (seed=2) | **done** | — | done | **0.434** | 0.399 |
 | diversity_budget100 | 3 (seed=2) | **done** | — | done | **0.390** | 0.382 |
 
-### Results (best_success_rate, n=3)
+### Results (n=3)
 
-| heuristic | mean ± std | min | max |
-|-----------|-----------|-----|-----|
-| random | 0.350 ± 0.039 | 0.316 | 0.392 |
-| behavior_graph | 0.422 ± 0.010 | 0.416 | 0.434 |
-| diversity | 0.394 ± 0.003 | 0.390 | 0.396 |
+`best` = max success rate across top-k checkpoints. `top5_mean` = mean of top-5 checkpoints
+by success rate (fair cross-arm comparison; all D60 b=100 arms have exactly 5 checkpoints).
+
+| heuristic | metric | mean ± std | min | max |
+|-----------|--------|-----------|-----|-----|
+| random | best | 0.350 ± 0.039 | 0.316 | 0.392 |
+| | top5_mean | 0.328 ± 0.041 | 0.296 | 0.374 |
+| behavior_graph | best | **0.422 ± 0.010** | 0.416 | 0.434 |
+| | top5_mean | **0.394 ± 0.007** | 0.386 | 0.399 |
+| diversity | best | 0.394 ± 0.003 | 0.390 | 0.396 |
+| | top5_mean | 0.377 ± 0.004 | 0.374 | 0.382 |
 
 ### Unconstrained d60 b=100 reference (from apr26 rep sweep)
 
@@ -91,13 +97,19 @@ object_pose_ranges:
 | behavior_graph_budget300 | 3 (seed=2) | **done** | 58.3% (315/540) | done | **0.552** | 0.527 |
 | diversity_budget300 | 3 (seed=2) | **done** | — | done | **0.624** | 0.606 |
 
-### Results (best_success_rate, n=3)
+### Results (n=3)
 
-| heuristic | mean ± std | min | max |
-|-----------|-----------|-----|-----|
-| random | 0.500 ± 0.026 | 0.480 | 0.530 |
-| behavior_graph | 0.577 ± 0.036 | 0.552 | 0.618 |
-| diversity | 0.609 ± 0.015 | 0.594 | 0.624 |
+`best` = max success rate across top-k checkpoints. `top5_mean` = mean of top-5 checkpoints
+by success rate (all D60 b=300 arms have exactly 5 checkpoints so `top5_mean` = `mean_all`).
+
+| heuristic | metric | mean ± std | min | max |
+|-----------|--------|-----------|-----|-----|
+| random | best | 0.500 ± 0.026 | 0.480 | 0.530 |
+| | top5_mean | 0.484 ± 0.026 | 0.468 | 0.514 |
+| behavior_graph | best | 0.577 ± 0.036 | 0.552 | 0.618 |
+| | top5_mean | 0.546 ± 0.026 | 0.527 | 0.576 |
+| diversity | best | **0.609 ± 0.015** | 0.594 | 0.624 |
+| | top5_mean | **0.586 ± 0.018** | 0.573 | 0.606 |
 
 ### Reference: D60 budget=100 nut-constrained (this session)
 
@@ -215,16 +227,70 @@ Budget effect (b300→b1000): random +0.206, diversity +0.136, BG +0.038.
 Ordering flips: BG leads at b300; diversity leads at b1000 by a wide margin.
 diversity-b1000 (0.712) is the highest single-arm result across all experiments in this session.
 
-### Results (best_success_rate, n=3 — pending Phase B)
+### Results (n=3)
 
-| heuristic | budget | mean ± std | min | max |
+`best` = max success rate across top-k checkpoints. `top5_mean` = mean of top-5 checkpoints
+by success rate. Phase A arms had 9–10 checkpoints evaluated (all saved ckpts), so `top5_mean`
+and `mean_all` differ for those arms; `top5_mean` is the fair comparison across all reps.
+
+#### Budget = 300
+
+| heuristic | metric | mean ± std | min | max |
 |-----------|--------|-----------|-----|-----|
-| random | 300 | 0.514 ± 0.060 | 0.450 | 0.568 |
-| behavior_graph | 300 | 0.582 ± 0.015 | 0.566 | 0.596 |
-| diversity | 300 | 0.545 ± 0.056 | 0.480 | 0.578 |
-| random | 1000 | 0.685 ± 0.029 | 0.656 | 0.714 |
-| behavior_graph | 1000 | 0.630 ± 0.019 | 0.616 | 0.652 |
-| diversity | 1000 | 0.691 ± 0.050 | 0.634 | 0.726 |
+| random | best | 0.514 ± 0.060 | 0.450 | 0.568 |
+| | top5_mean | 0.502 ± 0.060 | 0.438 | 0.555 |
+| behavior_graph | best | **0.582 ± 0.015** | 0.566 | 0.596 |
+| | top5_mean | **0.559 ± 0.018** | 0.542 | 0.578 |
+| diversity | best | 0.545 ± 0.056 | 0.480 | 0.578 |
+| | top5_mean | 0.522 ± 0.061 | 0.452 | 0.558 |
+
+#### Budget = 1000
+
+| heuristic | metric | mean ± std | min | max |
+|-----------|--------|-----------|-----|-----|
+| random | best | 0.685 ± 0.029 | 0.656 | 0.714 |
+| | top5_mean | 0.671 ± 0.028 | 0.644 | 0.699 |
+| behavior_graph | best | 0.630 ± 0.019 | 0.616 | 0.652 |
+| | top5_mean | 0.610 ± 0.010 | 0.598 | 0.618 |
+| diversity | best | **0.691 ± 0.050** | 0.634 | 0.726 |
+| | top5_mean | **0.673 ± 0.045** | 0.625 | 0.713 |
+
+---
+
+## Episode Length Analysis (in progress)
+
+**Motivation:** the original eval runner did not terminate episodes early on success — every
+episode ran for the full 500-step horizon regardless of outcome. This means the existing
+`mean_success_rate` values are correct, but no per-episode step-count data was ever saved,
+making it impossible to compute task throughput (average steps to completion) from the existing
+outputs.
+
+**Fix (2026-05-11):**
+- `mimicgen_lowdim_runner.py`: unconditionally calls `_is_success()` for early termination on
+  every eval episode (was gated on `save_episodes=True` before). Tracks `episode_steps` per
+  episode and logs `test/episode_length_{seed}`, `test/mean_episode_length`, and
+  `test/mean_success_episode_length` to `eval_log.json`.
+- `eval_mimicgen_combined.py`: reads the new length fields from `eval_log.json` (falls back
+  gracefully when absent for older runs), stores them per checkpoint in `result.json`, and
+  averages across checkpoints in the arm summary.
+- `scripts/aggregate_sweep_results.py`: shows `succ_ep_len (steps)` in the eval table when
+  the data is present; silently omits the row for older runs.
+
+**Re-run (2026-05-11, PID=1909802):**
+- All 36 arms across all 3 experiments re-evaluated: 194 checkpoint evals total.
+- Existing eval_save_episodes dirs renamed to `.backup` (same parent dir, no data moved).
+  Backup dirs: `/mnt/ssdB/erik/cupid_data/outputs/eval_save_episodes/<arm_name>.backup`
+- Existing `eval_mimicgen_combined` step dirs renamed to `.backup` in each pipeline arm dir.
+- New evals running: 4 concurrent workers, all on `cuda:0`.
+- Script: `scripts/rerun_evals_with_episode_lengths.py`
+- Log: `logs/rerun_evals_episode_lengths.log`
+- Est. completion: ~8 hours from launch (~06:00 PDT May 12)
+
+**Note on `top5_mean` vs `mean_all`:** Phase A arms (budget_sweep) had 9–10 checkpoints
+evaluated because the original eval ran all saved checkpoints, not just the top-5. Phase B arms
+have exactly 5 checkpoints. The `top5_mean` metric (mean of top-5 by success rate) is the fair
+cross-arm comparison. `mean_all` is kept in `result.json` for completeness but should not be
+used to compare Phase A vs Phase B arms.
 
 ---
 
