@@ -177,6 +177,11 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         per_seed_object_pose_ranges: list[dict | None] = []
         per_seed_subtask_constraints: list[dict | None] = []
         per_seed_chained_warp_constraints: list[dict | None] = []
+        # IC cluster center poses in {obj: {x, y, z_rot}} format for use as
+        # --seed_object_poses anchor in generate_mimicgen_demos so that the
+        # IC range is centered at the cluster center, not the seed trajectory's
+        # (potentially distant) initial pose.
+        per_seed_ic_center_poses: list[dict | None] = []
 
         if use_failure_analysis and fa_mode == "path_based":
             from policy_doctor.mimicgen.chained_warp_generator import (
@@ -184,7 +189,9 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             )
             from policy_doctor.mimicgen.failure_targeting import (
                 DEFAULT_SQUARE_STATE_SCHEMA,
+                cluster_center_to_object_poses,
             )
+            import numpy as _np
             state_schema_cfg = OmegaConf.select(fa_cfg, "state_schema")
             state_schema = (
                 OmegaConf.to_container(state_schema_cfg, resolve=True)
@@ -268,14 +275,33 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                         continue
 
                     opr = ic_cluster.get("suggested_object_pose_ranges")
+
+                    # Compute cluster center as {obj: {x, y, z_rot}} so
+                    # generate_mimicgen_demos can pass it as --seed_object_poses,
+                    # centering the IC range at the cluster center rather than at
+                    # the seed trajectory's (potentially distant) initial pose.
+                    ic_center_pose: dict | None = None
+                    center_feat = ic_cluster.get("center_feature")
+                    if center_feat is not None:
+                        full_pose = cluster_center_to_object_poses(
+                            _np.array(center_feat, dtype=_np.float32), state_schema
+                        )
+                        ic_center_pose = {
+                            obj: {"x": p["x"], "y": p["y"], "z_rot": p["z_rot"]}
+                            for obj, p in full_pose.items()
+                        }
+
                     for r in cluster_results:
                         results.append(r)
                         per_seed_object_pose_ranges.append(opr)
                         per_seed_subtask_constraints.append(None)  # legacy slot stays empty
                         per_seed_chained_warp_constraints.append(chained_warp_for_path)
+                        per_seed_ic_center_poses.append(ic_center_pose)
+                    n_eligible = len(ic_cluster.get("eligible_rollout_idxs") or [])
                     print(
                         f"    path {path_idx} ic_cluster {ci}: selected {len(cluster_results)} "
-                        f"seeds from {len(eligible or [])} eligible rollouts"
+                        f"seeds (IC cluster has {n_eligible} failure trajectories, "
+                        f"center={ic_center_pose})"
                     )
         elif use_failure_analysis:
             clusters = fa_result["clusters"]
@@ -315,6 +341,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                     per_seed_object_pose_ranges.append(opr)
                     per_seed_subtask_constraints.append(sc)
                     per_seed_chained_warp_constraints.append(None)
+                    per_seed_ic_center_poses.append(None)  # prefailure_node mode has no SE(3) center
                 print(
                     f"    cluster {ci}: selected {len(cluster_results)} seeds "
                     f"from {len(eligible or [])} eligible rollouts"
@@ -338,6 +365,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             per_seed_object_pose_ranges = [None] * len(results)
             per_seed_subtask_constraints = [None] * len(results)
             per_seed_chained_warp_constraints = [None] * len(results)
+            per_seed_ic_center_poses = [None] * len(results)
 
         for r in results:
             print(
@@ -381,4 +409,6 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             result["per_seed_subtask_constraints"] = per_seed_subtask_constraints
         if any(v is not None for v in per_seed_chained_warp_constraints):
             result["per_seed_chained_warp_constraints"] = per_seed_chained_warp_constraints
+        if any(v is not None for v in per_seed_ic_center_poses):
+            result["per_seed_ic_center_poses"] = per_seed_ic_center_poses
         return result
