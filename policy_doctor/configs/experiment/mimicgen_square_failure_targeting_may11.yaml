@@ -37,6 +37,16 @@ attribution:
   train_date: may11
   eval_date: may11
   dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
+  # TRAK falls back to BasicProjector (fast_jl requires CUDA dev headers we don't
+  # have on this machine). BasicProjector is RAM-hungry — at proj_dim=4000, fp32,
+  # and ~1.1M model params, the projection matrices push past 31 GB and the
+  # process gets OOM-killed. proj_dim=2048 + half precision keeps it comfortably
+  # under the system limit.
+  proj_dim: 2048
+  use_half_precision: true
+  # tf32/compile already disabled in baseline_config; attribution inherits.
+  compile: false
+  tf32: true
 
 clustering_influence_source: infembed
 clustering_level: rollout
@@ -142,13 +152,17 @@ mimicgen_datagen:
     slack_widen_factor: 2.0
 
 # ---------------------------------------------------------------------------
-# Steps — full pipeline (no apr23 outputs to skip past on this machine)
+# Steps — full pipeline (no apr23 outputs to skip past on this machine).
+#
+# train_attribution + finalize_attribution are intentionally omitted:
+# they compute TRAK scores, but this experiment uses
+# `clustering_influence_source: infembed` so TRAK is never read downstream.
+# On this 31 GB machine TRAK's BasicProjector fallback (fast_jl needs
+# CUDA dev headers we don't have) gets OOM-killed during featurize_holdout.
 # ---------------------------------------------------------------------------
 steps:
   - train_baseline
   - eval_policies
-  - train_attribution
-  - finalize_attribution
   - compute_infembed
   - run_clustering
   - mimicgen_random
