@@ -73,6 +73,21 @@ def _apply_robomimic_base_env_shim() -> None:
     except Exception:
         pass
 
+    # 3. EnvRobosuite.rollout_exceptions: robomimic 0.3.0 references
+    #    `mujoco_py.builder.MujocoException`, but mimicgen_torch2 has
+    #    `free-mujoco-py==2.1.6` which doesn't expose `.builder`. Returning
+    #    an empty tuple disables that one rollout-recoverable-exception
+    #    branch in generate_dataset(); errors then surface normally.
+    try:
+        import mujoco_py
+        if not hasattr(mujoco_py, "builder") or not hasattr(
+            getattr(mujoco_py, "builder", object()), "MujocoException"
+        ):
+            er.EnvRobosuite.rollout_exceptions = property(lambda self: ())  # type: ignore[attr-defined]
+    except ImportError:
+        # No mujoco_py at all — same fix.
+        er.EnvRobosuite.rollout_exceptions = property(lambda self: ())  # type: ignore[attr-defined]
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
@@ -500,6 +515,12 @@ def main(argv: list[str] | None = None) -> None:
         _dg_mod.DataGenerator = _BoundCW  # type: ignore[assignment]
         if hasattr(_gd_mod, "DataGenerator"):
             _gd_mod.DataGenerator = _BoundCW  # type: ignore[assignment]
+
+        # Early-aborted trials return states=[] / actions=zeros((0,)). MimicGen's
+        # file_utils.write_demo_to_hdf5 crashes on `states[0]` when states is empty,
+        # so don't persist failed trials — we don't need them either way (they're
+        # just retries on the way to success).
+        cfg.experiment.generation.keep_failed = False
 
         print(
             f"[run_mimicgen_generate] chained-warp constraint installed: "

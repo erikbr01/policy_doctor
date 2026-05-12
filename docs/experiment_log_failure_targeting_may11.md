@@ -353,3 +353,46 @@ or in parallel on a CPU-only mode.
   end-to-end. Will land next.
 
 ---
+
+## 2026-05-12 — Phase 2 verified end-to-end on Square_D1
+
+Ran `tests/mimicgen/test_chained_warp_e2e.py` against
+`~/data/mimicgen_data/source/square.hdf5`. Hit two pre-existing infra issues
+along the way (neither related to the chained-warp logic):
+
+1. `policy_doctor` wasn't installed in `mimicgen_torch2` → `run_mimicgen_generate.py`
+   crashed on `from policy_doctor.mimicgen.chained_warp_generator import ...`.
+   Fix: `conda run -n mimicgen_torch2 pip install -e .` (also added to
+   `scripts/setup_torch2_envs.sh` Step 3 so fresh installs handle it).
+
+2. `robomimic.envs.env_robosuite.EnvRobosuite.rollout_exceptions` references
+   `mujoco_py.builder.MujocoException`. `mimicgen_torch2` has `free-mujoco-py==2.1.6`
+   which doesn't expose `.builder`. The property is invoked by MimicGen's
+   `generate_dataset` early in the trial loop, so generation never started.
+   Fix: extended `_apply_robomimic_base_env_shim()` in `scripts/run_mimicgen_generate.py`
+   to patch the property to `lambda self: ()` when `mujoco_py.builder` is missing.
+
+3. Trials that early-abort return `states=[]`. MimicGen's `file_utils.write_demo_to_hdf5`
+   crashes on `states[0]` when failed-trial persistence is on. Fix: set
+   `cfg.experiment.generation.keep_failed = False` whenever chained-warp is active.
+   Rejected trials are just retries on the way to budget anyway.
+
+After those: both gated e2e tests pass under
+`MIMICGEN_E2E=1 conda run -n mimicgen_torch2`. Standalone verification with 5 trials
++ loose slack around the seed's own subtask-0-end pose:
+
+```
+stats: success_rate=40% (2/5), failure_rate=60% (constraint-rejected)
+demo_0: dx=+0.001m  dy=+0.003m  dθ=+0.006rad  within=True
+demo_1: dx=-0.002m  dy=+0.001m  dθ=+0.007rad  within=True
+```
+
+Every successful demo has its post-grasp object pose within the slack box —
+in fact within millimetres of the target, far tighter than the 0.5 m slack. The
+chained-warp behaviour is real: when subtask 0 lands near the target, subtask 1
+warps around the achieved (constrained) pose.
+
+Phase 2 is empirically validated. Ready to plumb the Phase-1 result JSON
+into `generate_mimicgen_demos.py` so the failure-targeting arm runs end-to-end.
+
+---

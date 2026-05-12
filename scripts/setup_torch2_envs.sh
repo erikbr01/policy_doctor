@@ -37,8 +37,11 @@ else
   echo "  mimicgen_torch2 created and sim deps installed"
 fi
 
-echo "Step 3/4  install editable packages into policy_doctor"
+echo "Step 3/4  install editable packages into policy_doctor + mimicgen_torch2"
 "${REPO}/scripts/install_policy_doctor_env.sh"
+# mimicgen_torch2 also needs `import policy_doctor` for our chained-warp
+# generator subclass, which scripts/run_mimicgen_generate.py imports at runtime.
+conda run -n mimicgen_torch2 pip install -e "${REPO}"
 
 echo "Step 4/4  install LD_LIBRARY_PATH hook for torch's bundled nvidia libs"
 # System cuDNN at /usr/lib (e.g. 9.13 for CUDA 13) shadows torch's bundled cuDNN
