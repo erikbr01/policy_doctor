@@ -268,15 +268,22 @@ class TestCollectFailureTrajectoryStates(unittest.TestCase):
 
     def setUp(self):
         # 2 failure episodes with 4 timesteps each.
-        # All states are 17-dim qpos slices to match DEFAULT_SQUARE_STATE_SCHEMA
-        # (which reads indices 10/11/13/14/15/16).
+        # State layout per DEFAULT_SQUARE_STATE_SCHEMA: idx 10 = x, 11 = y,
+        # 12 = z, 13–16 = wxyz quaternion.
         self.state_dim = 20
         rng = np.random.default_rng(0)
         ep0_states = rng.normal(size=(4, self.state_dim)).astype(np.float32)
         ep1_states = rng.normal(size=(4, self.state_dim)).astype(np.float32)
-        # Make t=0 of each episode distinctive at idx 10/11 so we can verify identity.
-        ep0_states[0, 10:12] = [0.10, 0.20]
-        ep1_states[0, 10:12] = [0.30, 0.40]
+        # Stamp the pose slice with clean values (identity rotation, fixed z).
+        for arr, (x0, y0) in ((ep0_states, (0.10, 0.20)), (ep1_states, (0.30, 0.40))):
+            arr[0, 10:13] = [x0, y0, 0.05]
+            arr[0, 13:17] = [1.0, 0.0, 0.0, 0.0]
+        # Other timesteps: zero out the quaternion to identity so feature
+        # encoding is well-defined throughout.
+        for arr in (ep0_states, ep1_states):
+            arr[:, 12] = 0.05
+            arr[:, 13] = 1.0
+            arr[:, 14:17] = 0.0
         self.states = {0: ep0_states, 1: ep1_states}
 
         # Cluster sequence per episode: [0, 0, 1, 1].
@@ -307,9 +314,10 @@ class TestCollectFailureTrajectoryStates(unittest.TestCase):
         )
         self.assertIn(START_NODE_ID, out)
         feats, tags = out[START_NODE_ID]
-        self.assertEqual(feats.shape, (2, 4))  # 2 episodes × 4-dim Square features
+        # 2 episodes × 7-dim Square features (x, y, z, qw, qx, qy, qz).
+        self.assertEqual(feats.shape, (2, 7))
         self.assertEqual([ep for ep, _ in tags], [0, 1])
-        # Verify the x/y values from t=0 propagated through the encoding.
+        # x at index 0, y at index 1.
         self.assertAlmostEqual(float(feats[0, 0]), 0.10, places=4)
         self.assertAlmostEqual(float(feats[0, 1]), 0.20, places=4)
         self.assertAlmostEqual(float(feats[1, 0]), 0.30, places=4)
@@ -380,13 +388,20 @@ class TestAnalyzeFailureStatesPathBased(unittest.TestCase):
         self.node_values = self.graph.compute_values()
 
         # Distinct t=0 / intermediate poses per episode so we can see clusters separate.
+        # Indices 10, 11, 12 = x, y, z. 13-16 = quaternion (wxyz). Stamp clean
+        # values (identity rotation, fixed z) so cluster centres land in a
+        # predictable place regardless of upstream noise.
         rng = np.random.default_rng(0)
         self.states = {}
         for ep, seq in self.ep_sequences.items():
             arr = rng.normal(scale=0.02, size=(len(seq), 20)).astype(np.float32)
-            # x at idx 10 differs by episode (group eps by collapsed seq).
-            arr[:, 10] = 0.10 + 0.001 * ep
-            arr[:, 11] = 0.20 + 0.001 * ep
+            arr[:, 10] = 0.10 + 0.001 * ep   # x
+            arr[:, 11] = 0.20 + 0.001 * ep   # y
+            arr[:, 12] = 0.05                # z (constant — table height)
+            arr[:, 13] = 1.0                 # qw
+            arr[:, 14] = 0.0                 # qx
+            arr[:, 15] = 0.0                 # qy
+            arr[:, 16] = 0.0                 # qz
             self.states[ep] = arr
 
         self.tmpdir = tempfile.TemporaryDirectory()

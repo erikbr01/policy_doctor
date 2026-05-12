@@ -444,3 +444,67 @@ mode flows: analyze → per-cluster → per-seed → generate-with-chained-warp 
 train-on-combined → eval. Ready to launch once the upstream pipeline finishes.
 
 ---
+
+## 2026-05-12 — Phase 4: full SE(3) constraint + per-node subtask override
+
+Two questions surfaced after Phase 3 was empirically verified:
+
+> **shouldn't the constraint be in xyz + full orientation?**
+
+Right — the previous schema was `(x, y, z_rot)`, a 3-DOF projection that was
+adequate for Square's tabletop tasks (`z` is fixed by gravity, pitch/roll
+≈ 0) but loses information for any task with vertical motion or non-yaw
+rotation. Phase 4 generalises to full SE(3):
+
+- **Feature encoding:** 7 dims per object — `[x, y, z, qw, qx, qy, qz]`,
+  with the quaternion canonicalised to the qw ≥ 0 hemisphere (so KMeans on
+  raw quaternion components doesn't get tripped up by the q vs −q
+  ambiguity). Centroids are quaternion-renormalised on the way out.
+- **`IntermediateConstraint.target_pose`** now carries `{x, y, z, qw, qx, qy, qz}`
+  per object. **`slack`** carries `{x, y, z, rotation}` — three translation
+  axes plus a single scalar angular slack in radians. Setting any slack
+  value to `None` skips that axis ("don't care").
+- **Rotation distance:** `2 × acos(|achieved · target|)` — handles the
+  double-cover ambiguity, clamped to avoid floating-point overshoot.
+- **`derive_slack_from_stddev`** scaling for rotation: angular slack is
+  `α × 2 × ||q_stddev||₂`, exploiting that `||Δq|| ≈ θ/2` for small θ.
+
+State schema:
+- `DEFAULT_SQUARE_STATE_SCHEMA` gained `z_idx: 12`.
+
+> **how do you match the constraint to the correct subtask?**
+
+The previous setup applied a single config knob `subtask_constraint_idx`
+to every path. Phase 4 adds an optional **per-behavior-graph-node override**
+`failure_analysis.subtask_idx_by_node`:
+
+```yaml
+failure_analysis:
+  subtask_constraint_idx: 0          # default
+  subtask_idx_by_node: {7: 0, 14: 1} # override per intermediate_node_id
+```
+
+`SelectMimicgenSeedStep` resolves per-path: if the chosen intermediate node
+appears in the map, use that subtask index; otherwise fall back to the
+global default. Log line shows which source (`override` / `global`).
+
+This is *user-controlled* mapping, not learned — a learned mapping would
+require detecting subtask events on rollouts (gripper-closure, etc.) and
+is a separate piece of work. For Square the single-subtask-knob is fine;
+for richer tasks (Coffee, NutAssembly) the per-node knob is the v1 bridge.
+
+**Tests (46 unit + 2 e2e — all passing):**
+- `test_chained_warp.py` extended: SE(3) constraint inside/boundary/outside
+  on all 3 translation axes + rotation, quaternion double-cover, full-circle
+  wraparound, `None`-slack skip-axis, widen preserves None, derive_slack
+  on 7-dim stddev, `_datagen_info_to_pose7` round-trip via `_rot_to_quat_wxyz`.
+- `test_failure_paths.py` setUps stamp clean SE(3) values in synthetic
+  HDF5s so the 7-dim feature shape is exercised end-to-end.
+- `test_chained_warp_e2e.py` rewritten to use SE(3) target/slack and to
+  verify boundary poses via quaternion angle.
+
+Empirical e2e (5 cm xyz + 0.8 rad slack, seed-pose target): impossible-target
+case rejects 100%; loose-target case yields successes with boundary poses
+inside the constraint. Same as Phase 3 but now full-orientation.
+
+---

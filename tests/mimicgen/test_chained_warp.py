@@ -29,42 +29,86 @@ from policy_doctor.mimicgen.failure_targeting import DEFAULT_SQUARE_STATE_SCHEMA
 # IntermediateConstraint.is_satisfied
 # ---------------------------------------------------------------------------
 
-def _t(x=0.0, y=0.0, z_rot=0.0):
-    return {"x": x, "y": y, "z_rot": z_rot}
+def _yaw_quat(theta: float) -> dict[str, float]:
+    """Quaternion (wxyz) representing a rotation of theta about world Z."""
+    return {
+        "qw": math.cos(theta / 2.0),
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": math.sin(theta / 2.0),
+    }
+
+
+def _pose(x=0.0, y=0.0, z=0.0, z_rot=0.0):
+    """Build a {x, y, z, qw, qx, qy, qz} dict for a yaw-only rotation."""
+    return {"x": x, "y": y, "z": z, **_yaw_quat(z_rot)}
+
+
+def _slack(x=0.03, y=0.03, z=0.03, rotation=0.5):
+    return {"x": x, "y": y, "z": z, "rotation": rotation}
 
 
 class TestIntermediateConstraintIsSatisfied(unittest.TestCase):
     def setUp(self):
         self.c = IntermediateConstraint(
             subtask_idx=0,
-            target_pose={"nut": _t(x=0.10, y=0.20, z_rot=0.0)},
-            slack={"nut": _t(x=0.03, y=0.03, z_rot=0.5)},
+            target_pose={"nut": _pose(x=0.10, y=0.20, z=0.0, z_rot=0.0)},
+            slack={"nut": _slack(x=0.03, y=0.03, z=0.03, rotation=0.5)},
         )
 
     def test_inside_box_satisfied(self):
-        sat, dists = self.c.is_satisfied({"nut": _t(x=0.12, y=0.21, z_rot=0.1)})
+        sat, dists = self.c.is_satisfied(
+            {"nut": _pose(x=0.12, y=0.21, z=0.005, z_rot=0.1)}
+        )
         self.assertTrue(sat)
-        # worst axis ratio: max(0.02/0.03, 0.01/0.03, 0.1/0.5) = 0.667
         self.assertLess(dists["nut"], 1.0)
 
     def test_on_boundary_satisfied(self):
-        # Exactly on the boundary should still satisfy (≤, not <).
-        sat, dists = self.c.is_satisfied({"nut": _t(x=0.13, y=0.20, z_rot=0.0)})
+        # Exactly at the x-axis boundary.
+        sat, dists = self.c.is_satisfied(
+            {"nut": _pose(x=0.13, y=0.20, z=0.0, z_rot=0.0)}
+        )
         self.assertTrue(sat)
         self.assertAlmostEqual(dists["nut"], 1.0, places=4)
 
     def test_outside_x_axis_violates(self):
-        sat, dists = self.c.is_satisfied({"nut": _t(x=0.15, y=0.20, z_rot=0.0)})
+        sat, dists = self.c.is_satisfied(
+            {"nut": _pose(x=0.15, y=0.20, z=0.0, z_rot=0.0)}
+        )
         self.assertFalse(sat)
         self.assertGreater(dists["nut"], 1.0)
 
-    def test_outside_z_rot_violates(self):
-        sat, _ = self.c.is_satisfied({"nut": _t(x=0.10, y=0.20, z_rot=1.0)})  # |dθ|=1.0 > 0.5
+    def test_outside_z_translation_violates(self):
+        # 5 cm above target with 3 cm slack on z.
+        sat, _ = self.c.is_satisfied(
+            {"nut": _pose(x=0.10, y=0.20, z=0.05, z_rot=0.0)}
+        )
         self.assertFalse(sat)
 
+    def test_outside_rotation_violates(self):
+        # 1.0 rad of yaw, slack is 0.5 rad.
+        sat, _ = self.c.is_satisfied(
+            {"nut": _pose(x=0.10, y=0.20, z=0.0, z_rot=1.0)}
+        )
+        self.assertFalse(sat)
+
+    def test_quaternion_double_cover_satisfied(self):
+        # q and -q are the same rotation; the constraint must use |dot|.
+        target_q = self.c.target_pose["nut"]
+        flipped = {
+            "x": 0.10, "y": 0.20, "z": 0.0,
+            "qw": -target_q["qw"], "qx": -target_q["qx"],
+            "qy": -target_q["qy"], "qz": -target_q["qz"],
+        }
+        sat, _ = self.c.is_satisfied({"nut": flipped})
+        self.assertTrue(sat)
+
     def test_angle_wraparound(self):
-        # Target is z_rot=0; achieved is z_rot ≈ 2π (= 0 modulo wrap). x/y on target.
-        sat, _ = self.c.is_satisfied({"nut": _t(x=0.10, y=0.20, z_rot=math.pi * 2 - 1e-3)})
+        # 2π yaw = 0 yaw (full revolution). Quaternion encoding handles this
+        # naturally; achieved is *literally* the target quaternion.
+        sat, _ = self.c.is_satisfied(
+            {"nut": _pose(x=0.10, y=0.20, z=0.0, z_rot=2 * math.pi)}
+        )
         self.assertTrue(sat)
 
     def test_missing_object_fails_conservatively(self):
@@ -73,15 +117,23 @@ class TestIntermediateConstraintIsSatisfied(unittest.TestCase):
         self.assertEqual(dists, {"nut": float("inf")})
 
     def test_objects_filter(self):
-        # Constraint configured to only check "nut"; if we pass another obj,
-        # it should be ignored.
         c = IntermediateConstraint(
             subtask_idx=0,
-            target_pose={"nut": _t(x=0.10), "other": _t(x=99.0)},
-            slack={"nut": _t(x=0.03), "other": _t(x=0.01)},
+            target_pose={"nut": _pose(x=0.10), "other": _pose(x=99.0)},
+            slack={"nut": _slack(), "other": _slack(x=0.01)},
             objects=["nut"],
         )
-        sat, _ = c.is_satisfied({"nut": _t(x=0.10), "other": _t(x=0.0)})
+        sat, _ = c.is_satisfied({"nut": _pose(x=0.10), "other": _pose(x=0.0)})
+        self.assertTrue(sat)
+
+    def test_none_slack_skips_axis(self):
+        # Setting slack.z to None should skip the z check, allowing arbitrary z.
+        c = IntermediateConstraint(
+            subtask_idx=0,
+            target_pose={"nut": _pose(x=0.10, y=0.20, z=0.0)},
+            slack={"nut": {"x": 0.03, "y": 0.03, "z": None, "rotation": 0.5}},
+        )
+        sat, _ = c.is_satisfied({"nut": _pose(x=0.10, y=0.20, z=99.0)})
         self.assertTrue(sat)
 
 
@@ -93,26 +145,37 @@ class TestIntermediateConstraintWiden(unittest.TestCase):
     def test_widens_all_axes(self):
         c = IntermediateConstraint(
             subtask_idx=0,
-            target_pose={"nut": _t(x=0.10)},
-            slack={"nut": {"x": 0.03, "y": 0.03, "z_rot": 0.5}},
+            target_pose={"nut": _pose(x=0.10)},
+            slack={"nut": {"x": 0.03, "y": 0.03, "z": 0.03, "rotation": 0.5}},
         )
         c2 = c.widen(2.0)
         self.assertEqual(c2.slack["nut"]["x"], 0.06)
         self.assertEqual(c2.slack["nut"]["y"], 0.06)
-        self.assertEqual(c2.slack["nut"]["z_rot"], 1.0)
+        self.assertEqual(c2.slack["nut"]["z"], 0.06)
+        self.assertEqual(c2.slack["nut"]["rotation"], 1.0)
         # Original unchanged.
         self.assertEqual(c.slack["nut"]["x"], 0.03)
 
     def test_widen_preserves_other_fields(self):
         c = IntermediateConstraint(
             subtask_idx=3,
-            target_pose={"nut": _t()},
-            slack={"nut": {"x": 0.01, "y": 0.01, "z_rot": 0.1}},
+            target_pose={"nut": _pose()},
+            slack={"nut": {"x": 0.01, "y": 0.01, "z": 0.01, "rotation": 0.1}},
             objects=["nut"],
         )
         c2 = c.widen(1.5)
         self.assertEqual(c2.subtask_idx, 3)
         self.assertEqual(c2.objects, ["nut"])
+
+    def test_widen_preserves_none(self):
+        c = IntermediateConstraint(
+            subtask_idx=0,
+            target_pose={"nut": _pose()},
+            slack={"nut": {"x": 0.01, "y": 0.01, "z": None, "rotation": 0.1}},
+        )
+        c2 = c.widen(2.0)
+        self.assertIsNone(c2.slack["nut"]["z"])
+        self.assertEqual(c2.slack["nut"]["x"], 0.02)
 
 
 # ---------------------------------------------------------------------------
@@ -121,49 +184,50 @@ class TestIntermediateConstraintWiden(unittest.TestCase):
 
 class TestDeriveSlackFromStddev(unittest.TestCase):
     def test_typical_cluster(self):
-        # Square schema (1 object "nut"). Feature is [x, y, sin, cos].
-        stddev = [0.02, 0.015, 0.1, 0.1]  # moderately tight
+        # 7-dim per-object feature: [x, y, z, qw, qx, qy, qz].
+        # Translation stddev modest; quaternion stddev concentrated in qz
+        # (yaw-only rotation has all its variance in qz with qw close to 1).
+        stddev = [0.02, 0.015, 0.005, 0.0, 0.0, 0.0, 0.05]
         slack = derive_slack_from_stddev(
             stddev, state_schema=DEFAULT_SQUARE_STATE_SCHEMA, alpha=1.5,
         )
-        # 1.5 × 0.02 = 0.030
         self.assertAlmostEqual(slack["nut"]["x"], 0.03, places=4)
         self.assertAlmostEqual(slack["nut"]["y"], 0.0225, places=4)
-        # angular slack: 1.5 × sqrt(0.01 + 0.01) ≈ 1.5 × 0.1414 ≈ 0.2121
-        self.assertAlmostEqual(slack["nut"]["z_rot"], 1.5 * math.sqrt(0.02), places=3)
+        self.assertAlmostEqual(slack["nut"]["z"], 0.0075, places=4)
+        # angular slack: alpha × 2 × ||q_stddev||  →  1.5 × 2 × 0.05 = 0.15
+        self.assertAlmostEqual(slack["nut"]["rotation"], 0.15, places=4)
 
     def test_clamps_lower_bound(self):
-        # Cluster is a single point → stddev = 0. Slack should clamp to min.
-        stddev = [0.0, 0.0, 0.0, 0.0]
+        stddev = [0.0] * 7
         slack = derive_slack_from_stddev(
             stddev, state_schema=DEFAULT_SQUARE_STATE_SCHEMA, alpha=1.5,
-            min_slack_xy=0.005, min_slack_z_rot=0.05,
+            min_slack_xyz=0.005, min_slack_rotation=0.05,
         )
         self.assertEqual(slack["nut"]["x"], 0.005)
         self.assertEqual(slack["nut"]["y"], 0.005)
-        self.assertEqual(slack["nut"]["z_rot"], 0.05)
+        self.assertEqual(slack["nut"]["z"], 0.005)
+        self.assertEqual(slack["nut"]["rotation"], 0.05)
 
     def test_clamps_upper_bound(self):
-        # Cluster spans the whole workspace → huge stddev. Slack clamps to max.
-        stddev = [10.0, 10.0, 1.0, 1.0]
+        stddev = [10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0]
         slack = derive_slack_from_stddev(
             stddev, state_schema=DEFAULT_SQUARE_STATE_SCHEMA, alpha=2.0,
-            max_slack_xy=0.05, max_slack_z_rot=1.0,
+            max_slack_xyz=0.05, max_slack_rotation=1.0,
         )
         self.assertEqual(slack["nut"]["x"], 0.05)
         self.assertEqual(slack["nut"]["y"], 0.05)
-        self.assertEqual(slack["nut"]["z_rot"], 1.0)
+        self.assertEqual(slack["nut"]["z"], 0.05)
+        self.assertEqual(slack["nut"]["rotation"], 1.0)
 
     def test_default_clamps_are_realistic_for_manipulation(self):
-        # Default upper bound for xy should be O(cm), not O(workspace).
-        stddev = [10.0, 10.0, 1.0, 1.0]
+        # Default upper bound for translation should be O(cm), not O(workspace).
+        stddev = [10.0] * 7
         slack = derive_slack_from_stddev(
             stddev, state_schema=DEFAULT_SQUARE_STATE_SCHEMA,
         )
-        # 3 cm is the upper bound — anything larger is a no-op constraint on
-        # a typical 30-cm tabletop workspace.
-        self.assertLessEqual(slack["nut"]["x"], 0.03 + 1e-9)
-        self.assertLessEqual(slack["nut"]["y"], 0.03 + 1e-9)
+        for axis in ("x", "y", "z"):
+            self.assertLessEqual(slack["nut"][axis], 0.03 + 1e-9)
+        self.assertLessEqual(slack["nut"]["rotation"], 0.5 + 1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +241,7 @@ class TestHelpers(unittest.TestCase):
         self.assertAlmostEqual(_wrap_angle(-3 * math.pi), -math.pi, places=4)
 
     def test_datagen_info_4x4_pose(self):
-        # Build a fake datagen_info with a 4x4 pose matrix.
-        # Yaw of pi/4 around z: R[0,0]=cos, R[1,0]=sin.
+        # 4x4 pose with yaw=pi/4 around z. Expect SE(3) dict back.
         c, s = math.cos(math.pi / 4), math.sin(math.pi / 4)
         pose = np.array([
             [ c, -s, 0.0, 0.123],
@@ -193,7 +256,12 @@ class TestHelpers(unittest.TestCase):
         self.assertIn("nut", out)
         self.assertAlmostEqual(out["nut"]["x"], 0.123, places=5)
         self.assertAlmostEqual(out["nut"]["y"], 0.456, places=5)
-        self.assertAlmostEqual(out["nut"]["z_rot"], math.pi / 4, places=5)
+        self.assertAlmostEqual(out["nut"]["z"], 0.789, places=5)
+        # Yaw of pi/4 → quaternion (cos(π/8), 0, 0, sin(π/8)).
+        self.assertAlmostEqual(out["nut"]["qw"], math.cos(math.pi / 8), places=5)
+        self.assertAlmostEqual(out["nut"]["qz"], math.sin(math.pi / 8), places=5)
+        self.assertAlmostEqual(out["nut"]["qx"], 0.0, places=5)
+        self.assertAlmostEqual(out["nut"]["qy"], 0.0, places=5)
 
     def test_datagen_info_empty(self):
         class FakeInfo:
@@ -218,10 +286,11 @@ class TestGenerationOutcome(unittest.TestCase):
 
 class TestClusterToChainedWarpConstraint(unittest.TestCase):
     def test_builds_constraint_from_cluster(self):
-        # Cluster center: nut at x=0.10, y=0.20, z_rot=0 (sin=0, cos=1).
-        center = [0.10, 0.20, 0.0, 1.0]
-        # Reasonable stddev: 1 cm xy, small angular spread.
-        stddev = [0.01, 0.01, 0.05, 0.05]
+        # SE(3) cluster centre: nut at (0.10, 0.20, 0.05), identity rotation
+        # (qw=1, qx=qy=qz=0).
+        center = [0.10, 0.20, 0.05,  1.0, 0.0, 0.0, 0.0]
+        # Stddev: 1 cm xy, 5 mm z, small quaternion spread in qz only.
+        stddev = [0.01, 0.01, 0.005,  0.0, 0.0, 0.0, 0.05]
         cw = cluster_to_chained_warp_constraint(
             center_feature=center,
             stddev_feature=stddev,
@@ -231,19 +300,22 @@ class TestClusterToChainedWarpConstraint(unittest.TestCase):
         )
         self.assertEqual(cw["subtask_idx"], 0)
         self.assertEqual(cw["slack_widen_factor"], 2.0)
-        # Target pose recovered from sin/cos.
         self.assertAlmostEqual(cw["target_pose"]["nut"]["x"], 0.10, places=4)
         self.assertAlmostEqual(cw["target_pose"]["nut"]["y"], 0.20, places=4)
-        self.assertAlmostEqual(cw["target_pose"]["nut"]["z_rot"], 0.0, places=4)
-        # Slack derived from stddev × 1.5, clamped.
+        self.assertAlmostEqual(cw["target_pose"]["nut"]["z"], 0.05, places=4)
+        self.assertAlmostEqual(cw["target_pose"]["nut"]["qw"], 1.0, places=4)
+        # No `z_rot` in the constraint payload — only the SE(3) keys.
+        self.assertNotIn("z_rot", cw["target_pose"]["nut"])
+        # Slack: alpha × stddev clamped to [3 mm, 3 cm] for xyz.
         self.assertAlmostEqual(cw["slack"]["nut"]["x"], 0.015, places=4)
         self.assertAlmostEqual(cw["slack"]["nut"]["y"], 0.015, places=4)
-        # Angular slack from sqrt(0.05² + 0.05²) × 1.5 ≈ 0.106
-        self.assertAlmostEqual(cw["slack"]["nut"]["z_rot"], 1.5 * math.sqrt(0.005), places=3)
+        self.assertAlmostEqual(cw["slack"]["nut"]["z"], 0.0075, places=4)
+        # Rotation slack: 1.5 × 2 × ||q_stddev|| = 1.5 × 2 × 0.05 = 0.15.
+        self.assertAlmostEqual(cw["slack"]["nut"]["rotation"], 0.15, places=4)
 
     def test_objects_filter_passthrough(self):
-        center = [0.0, 0.0, 0.0, 1.0]
-        stddev = [0.001, 0.001, 0.0, 0.0]
+        center = [0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0]
+        stddev = [0.001] * 3 + [0.0] * 4
         cw = cluster_to_chained_warp_constraint(
             center_feature=center,
             stddev_feature=stddev,
@@ -254,9 +326,8 @@ class TestClusterToChainedWarpConstraint(unittest.TestCase):
         self.assertEqual(cw["objects"], ["nut"])
 
     def test_satisfiable_by_perfect_match(self):
-        # Build a constraint and verify it's satisfied by its own target.
-        center = [0.10, 0.20, 0.0, 1.0]
-        stddev = [0.005, 0.005, 0.02, 0.02]
+        center = [0.10, 0.20, 0.05,  1.0, 0.0, 0.0, 0.0]
+        stddev = [0.005, 0.005, 0.003,  0.0, 0.0, 0.0, 0.02]
         cw = cluster_to_chained_warp_constraint(
             center_feature=center, stddev_feature=stddev,
             state_schema=DEFAULT_SQUARE_STATE_SCHEMA, subtask_idx=0,

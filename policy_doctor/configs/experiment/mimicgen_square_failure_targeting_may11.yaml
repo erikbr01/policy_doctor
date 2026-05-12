@@ -128,6 +128,13 @@ mimicgen_datagen:
     # centre." null disables the chained-warp constraint entirely.
     subtask_constraint_idx: 0
     subtask_constraint_slack: 1.5
+    # Optional: per-behavior-graph-node override of subtask_constraint_idx.
+    # Useful for tasks with >1 useful subtask boundary, where different
+    # intermediate nodes correspond to different stages of the trajectory.
+    # When set, a path whose intermediate_node_id appears here constrains at
+    # the listed subtask. Falls back to subtask_constraint_idx otherwise.
+    # Example: {7: 0, 11: 0, 14: 1}
+    subtask_idx_by_node: null
     # Multiplier on per-cluster stddev to derive slack box; widen factor governs
     # graceful degradation on outer retries (currently unused — generator
     # always uses the same slack until budget exhausted).

@@ -157,6 +157,19 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         )
         cw_slack_alpha = float(OmegaConf.select(fa_cfg, "slack_alpha") or 1.5)
         cw_slack_widen_factor = float(OmegaConf.select(fa_cfg, "slack_widen_factor") or 2.0)
+        # Optional per-behavior-graph-node override of subtask_constraint_idx.
+        # Useful when different intermediate nodes naturally correspond to
+        # different MimicGen subtask boundaries (e.g. a node that's typically
+        # active mid-grasp should constrain subtask 0; one that's mid-place
+        # should constrain subtask 1). When absent or no entry for the node,
+        # falls back to the global ``subtask_constraint_idx``.
+        cw_subtask_idx_by_node_raw = OmegaConf.select(fa_cfg, "subtask_idx_by_node")
+        cw_subtask_idx_by_node: dict[int, int] = {}
+        if cw_subtask_idx_by_node_raw is not None:
+            for k, v in OmegaConf.to_container(
+                cw_subtask_idx_by_node_raw, resolve=True
+            ).items():
+                cw_subtask_idx_by_node[int(k)] = int(v)
 
         results: list[SeedSelectionResult] = []
         # per_seed_*[i] carry per-seed constraint suggestions derived from the
@@ -190,13 +203,19 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                     print(f"    path {path_idx}: empty IC pool — skipped")
                     continue
                 intermediate_pool = path_entry.get("intermediate_pool")
+                intermediate_node_id = path_entry.get("intermediate_node_id")
+
+                # Resolve subtask_idx for this path: per-node override > global.
+                resolved_subtask_idx = cw_subtask_idx
+                if intermediate_node_id is not None and int(intermediate_node_id) in cw_subtask_idx_by_node:
+                    resolved_subtask_idx = cw_subtask_idx_by_node[int(intermediate_node_id)]
 
                 # Build the (single) chained-warp constraint for this path from the
                 # dominant intermediate cluster (largest by n_states). v1 keeps one
                 # per path; later we can pair IC ↔ intermediate clusters more carefully.
                 chained_warp_for_path: dict | None = None
                 if (
-                    cw_subtask_idx is not None
+                    resolved_subtask_idx is not None
                     and intermediate_pool
                     and intermediate_pool.get("clusters")
                 ):
@@ -206,13 +225,16 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                         center_feature=dominant["center_feature"],
                         stddev_feature=dominant["stddev_feature"],
                         state_schema=state_schema,
-                        subtask_idx=cw_subtask_idx,
+                        subtask_idx=resolved_subtask_idx,
                         slack_alpha=cw_slack_alpha,
                         slack_widen_factor=cw_slack_widen_factor,
                     )
+                    src = ("override" if int(intermediate_node_id) in cw_subtask_idx_by_node
+                           else "global")
                     print(
-                        f"    path {path_idx}: chained-warp target on subtask {cw_subtask_idx} "
-                        f"from intermediate cluster (n={dominant['n_states']})"
+                        f"    path {path_idx}: chained-warp target on subtask "
+                        f"{resolved_subtask_idx} ({src}) from intermediate cluster "
+                        f"(node={intermediate_node_id}, n={dominant['n_states']})"
                     )
 
                 for ic_cluster in ic_clusters:

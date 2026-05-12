@@ -26,6 +26,7 @@ DEFAULT_SQUARE_STATE_SCHEMA: dict[str, dict[str, int]] = {
     "nut": {
         "x_idx": 10,
         "y_idx": 11,
+        "z_idx": 12,
         "qw_idx": 13,
         "qx_idx": 14,
         "qy_idx": 15,
@@ -34,37 +35,61 @@ DEFAULT_SQUARE_STATE_SCHEMA: dict[str, dict[str, int]] = {
 }
 
 
+# Number of feature dims per object in the cluster-feature encoding:
+#   [x, y, z, qw, qx, qy, qz]  — full SE(3), with the quaternion stored in
+#   canonical (qw ≥ 0) form. Mean-of-quaternions inside a tight cluster
+#   approximates the true mean rotation; we renormalise on the way out.
+FEATURE_DIM_PER_OBJECT: int = 7
+
+
 # ---------------------------------------------------------------------------
 # State / pose extraction
 # ---------------------------------------------------------------------------
+
+def _canonical_quat(qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float, float]:
+    """Force the quaternion to the qw ≥ 0 hemisphere.
+
+    The quaternions q and -q represent the same rotation; KMeans on raw
+    quaternion components would treat them as far apart. Canonicalising
+    to qw ≥ 0 collapses that ambiguity so Euclidean means make sense
+    inside a tight cluster.
+    """
+    if qw < 0:
+        return -qw, -qx, -qy, -qz
+    return qw, qx, qy, qz
+
 
 def _state_to_object_poses(
     state: np.ndarray,
     state_schema: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, float]]:
-    """Extract world-frame {x, y, z_rot} for each object from a raw state vector.
+    """Extract world-frame SE(3) pose for each object from a raw state vector.
 
     Args:
         state:        1-D state array (qpos slice from HDF5 states).
-        state_schema: Mapping from object name to qpos index dict.
+        state_schema: Mapping from object name to qpos index dict. Must include
+                      ``x_idx``, ``y_idx``, ``z_idx``, ``qw_idx``, ``qx_idx``,
+                      ``qy_idx``, ``qz_idx`` per object.
 
     Returns:
-        ``{obj_name: {"x": float, "y": float, "z_rot": float}}``
+        ``{obj_name: {"x", "y", "z", "qw", "qx", "qy", "qz"}}``  — quaternion
+        in canonical (qw ≥ 0) hemisphere.
     """
     result: dict[str, dict[str, float]] = {}
     for obj_name, schema in state_schema.items():
         x = float(state[schema["x_idx"]])
         y = float(state[schema["y_idx"]])
-        qw = float(state[schema["qw_idx"]])
-        qx = float(state.flat[schema.get("qx_idx", schema["qw_idx"] + 1)])
-        qy = float(state.flat[schema.get("qy_idx", schema["qw_idx"] + 2)])
-        qz = float(state.flat[schema.get("qz_idx", schema["qw_idx"] + 3)])
-        # Yaw (rotation about world Z axis) from quaternion (MuJoCo wxyz convention).
-        z_rot = float(np.arctan2(
-            2.0 * (qw * qz + qx * qy),
-            1.0 - 2.0 * (qy * qy + qz * qz),
-        ))
-        result[obj_name] = {"x": x, "y": y, "z_rot": z_rot}
+        z = float(state[schema["z_idx"]])
+        qw, qx, qy, qz = _canonical_quat(
+            float(state[schema["qw_idx"]]),
+            float(state[schema["qx_idx"]]),
+            float(state[schema["qy_idx"]]),
+            float(state[schema["qz_idx"]]),
+        )
+        result[obj_name] = {
+            "x": x, "y": y, "z": z,
+            "qw": qw, "qx": qx, "qy": qy, "qz": qz,
+        }
     return result
 
 
@@ -72,17 +97,16 @@ def _state_to_cluster_features(
     state: np.ndarray,
     state_schema: dict[str, dict[str, int]],
 ) -> np.ndarray:
-    """Return a (4*n_objects,) feature vector suitable for KMeans clustering.
+    """Return a (7*n_objects,) feature vector suitable for KMeans clustering.
 
-    Encodes each object as [x, y, sin(z_rot), cos(z_rot)] to avoid angle
-    wrap-around artefacts in Euclidean distance.
+    Encodes each object as [x, y, z, qw, qx, qy, qz] with the quaternion
+    canonicalised to the qw ≥ 0 hemisphere — see :func:`_canonical_quat`.
     """
     features: list[float] = []
     for obj_name in sorted(state_schema):
         poses = _state_to_object_poses(state, {obj_name: state_schema[obj_name]})
         p = poses[obj_name]
-        z = p["z_rot"]
-        features += [p["x"], p["y"], np.sin(z), np.cos(z)]
+        features += [p["x"], p["y"], p["z"], p["qw"], p["qx"], p["qy"], p["qz"]]
     return np.array(features, dtype=np.float32)
 
 
@@ -319,31 +343,56 @@ def cluster_target_states(
 # Constraint derivation
 # ---------------------------------------------------------------------------
 
+def _yaw_from_quat(qw: float, qx: float, qy: float, qz: float) -> float:
+    """Yaw (rotation about world Z axis) from a wxyz quaternion."""
+    return float(np.arctan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz),
+    ))
+
+
 def cluster_center_to_object_poses(
     center: np.ndarray,
     state_schema: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, dict[str, float]]:
-    """Reconstruct world-frame {x, y, z_rot} from a cluster-center feature vector.
+    """Reconstruct world-frame SE(3) poses from a cluster-center feature vector.
 
-    The feature vector is [x, y, sin(z_rot), cos(z_rot)] per object (from
-    :func:`_state_to_cluster_features`).  This inverts the encoding.
+    The feature vector is ``[x, y, z, qw, qx, qy, qz]`` per object (from
+    :func:`_state_to_cluster_features`). The quaternion part of the centroid
+    is renormalised so the result is a valid unit quaternion (a KMeans mean
+    of canonical quaternions usually has ``||q||`` slightly under 1 inside
+    a tight cluster).
 
-    Args:
-        center:       1-D feature vector (length 4 * n_objects).
-        state_schema: Used only for object names / ordering.
+    For convenience the result also exposes ``z_rot`` — yaw recovered from
+    the quaternion — so downstream code that only cares about planar
+    rotation (e.g. ``object_poses_to_pose_ranges`` building the IC range
+    schema) can keep working unchanged.
 
     Returns:
-        ``{obj_name: {"x": float, "y": float, "z_rot": float}}``
+        ``{obj_name: {"x", "y", "z", "qw", "qx", "qy", "qz", "z_rot"}}``.
     """
     schema = state_schema or DEFAULT_SQUARE_STATE_SCHEMA
     result: dict[str, dict[str, float]] = {}
     for i, obj_name in enumerate(sorted(schema)):
-        x = float(center[4 * i + 0])
-        y = float(center[4 * i + 1])
-        sin_z = float(center[4 * i + 2])
-        cos_z = float(center[4 * i + 3])
-        z_rot = float(np.arctan2(sin_z, cos_z))
-        result[obj_name] = {"x": x, "y": y, "z_rot": z_rot}
+        base = FEATURE_DIM_PER_OBJECT * i
+        x = float(center[base + 0])
+        y = float(center[base + 1])
+        z = float(center[base + 2])
+        qw = float(center[base + 3])
+        qx = float(center[base + 4])
+        qy = float(center[base + 5])
+        qz = float(center[base + 6])
+        norm = float(np.sqrt(qw * qw + qx * qx + qy * qy + qz * qz))
+        if norm > 1e-9:
+            qw /= norm; qx /= norm; qy /= norm; qz /= norm
+        else:
+            qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
+        z_rot = _yaw_from_quat(qw, qx, qy, qz)
+        result[obj_name] = {
+            "x": x, "y": y, "z": z,
+            "qw": qw, "qx": qx, "qy": qy, "qz": qz,
+            "z_rot": z_rot,
+        }
     return result
 
 

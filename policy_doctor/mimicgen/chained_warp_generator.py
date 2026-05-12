@@ -44,38 +44,47 @@ import numpy as np
 class IntermediateConstraint:
     """A "the object must be near pose T after subtask N completes" target.
 
+    Full SE(3): translation in xyz and orientation as a quaternion. Slack
+    is per-translation-axis plus a single ``rotation`` scalar (max angular
+    distance in radians).
+
     Attributes:
         subtask_idx:   0-based subtask index. The check happens after the
-                       subtask at this index *completes*, i.e. at the start
+                       subtask at this index completes, i.e. at the start
                        of subtask ``subtask_idx + 1``.
-        target_pose:   Per-object target ``{obj_name: {"x": float, "y": float,
-                       "z_rot": float}}``. World-frame absolute.
-        slack:         Per-object slack box ``{obj_name: {"x": float,
-                       "y": float, "z_rot": float}}``. ± offsets from target.
+        target_pose:   Per-object SE(3) target ``{obj_name: {"x", "y", "z",
+                       "qw", "qx", "qy", "qz"}}``. World frame, quaternion
+                       in wxyz convention.
+        slack:         Per-object slack ``{obj_name: {"x", "y", "z",
+                       "rotation"}}``. ± offsets in metres on x/y/z; ``rotation``
+                       is a max angular distance in radians. Any axis whose
+                       slack value is ``None`` or absent is *not* checked
+                       (treated as "don't care").
         slack_widen_factor: Multiplier applied to slack when the outer caller
-                       retries after enough rejections (see
-                       ``ChainedWarpDataGenerator.last_outcome``).
-        objects:       Subset of objects to actually constrain. None ⇒ all.
+                       retries after enough rejections.
+        objects:       Subset of objects to actually constrain. None ⇒ all
+                       in ``target_pose``.
 
-    Both target_pose and slack are in world coordinates. The check is:
-        |achieved.x - target.x| ≤ slack.x   (and same for y / z_rot)
-
-    z_rot is wrapped to [-pi, pi] before comparison so that 3.13 and -3.13
-    are treated as ~0.02 apart, not ~6.26.
+    Distance metrics:
+        translation:  |achieved.x - target.x|  per axis (same for y, z)
+        rotation:     min-angle between achieved and target quaternions,
+                      i.e. 2 * arccos(|achieved · target|)
     """
 
     subtask_idx: int
     target_pose: dict[str, dict[str, float]]
-    slack: dict[str, dict[str, float]]
+    slack: dict[str, dict[str, "float | None"]]
     slack_widen_factor: float = 2.0
     objects: Optional[list[str]] = None
 
     def widen(self, factor: float) -> "IntermediateConstraint":
-        """Return a copy with slack multiplied by ``factor``."""
-        widened: dict[str, dict[str, float]] = {
-            obj: {axis: v * factor for axis, v in axes.items()}
-            for obj, axes in self.slack.items()
-        }
+        """Return a copy with slack multiplied by ``factor`` (None values preserved)."""
+        widened: dict[str, dict[str, "float | None"]] = {}
+        for obj, axes in self.slack.items():
+            widened[obj] = {
+                axis: (None if v is None else float(v) * factor)
+                for axis, v in axes.items()
+            }
         return IntermediateConstraint(
             subtask_idx=self.subtask_idx,
             target_pose=self.target_pose,
@@ -85,15 +94,17 @@ class IntermediateConstraint:
         )
 
     def is_satisfied(self, achieved_pose: dict[str, dict[str, float]]) -> tuple[bool, dict[str, float]]:
-        """Check whether ``achieved_pose`` lies within this constraint's slack box.
+        """Check whether ``achieved_pose`` lies within this constraint's slack.
 
         Args:
-            achieved_pose: ``{obj_name: {"x", "y", "z_rot"}}`` from the sim
-                after the constrained subtask completed.
+            achieved_pose: ``{obj_name: {"x", "y", "z", "qw", "qx", "qy", "qz"}}``
+                from the sim after the constrained subtask completed. Each
+                object's pose must include xyz and quaternion (wxyz).
 
         Returns:
-            ``(satisfied, distances)``. ``distances`` is the worst-case axis
-            distance per object, useful for telemetry / debugging.
+            ``(satisfied, worst_ratios)`` where ``worst_ratios[obj]`` is the
+            max (axis-distance / axis-slack) across all checked axes for that
+            object — a value ≤1 means satisfied, ``inf`` means missing data.
         """
         check_objs = self.objects or list(self.target_pose.keys())
         worst: dict[str, float] = {}
@@ -104,21 +115,27 @@ class IntermediateConstraint:
             slack = self.slack[obj]
             achieved = achieved_pose.get(obj)
             if achieved is None:
-                # Object not in observation — be conservative and fail.
                 worst[obj] = float("inf")
                 return False, worst
-            dx = abs(achieved["x"] - target["x"])
-            dy = abs(achieved["y"] - target["y"])
-            dth = _wrap_angle(achieved["z_rot"] - target["z_rot"])
-            # Normalise each axis by its slack; the worst normalised axis
-            # tells us how close to the boundary we are.
-            sx = slack.get("x", 0.0)
-            sy = slack.get("y", 0.0)
-            sz = slack.get("z_rot", 0.0)
-            ratios = []
-            if sx > 0: ratios.append(dx / sx)
-            if sy > 0: ratios.append(dy / sy)
-            if sz > 0: ratios.append(abs(dth) / sz)
+
+            ratios: list[float] = []
+            # Translation axes (xyz).
+            for axis in ("x", "y", "z"):
+                s = slack.get(axis)
+                if s is None or s <= 0:
+                    continue
+                if axis not in achieved or axis not in target:
+                    continue
+                d = abs(float(achieved[axis]) - float(target[axis]))
+                ratios.append(d / float(s))
+
+            # Orientation: single scalar angular slack.
+            sr = slack.get("rotation")
+            if sr is not None and sr > 0:
+                ang = _quaternion_angle(achieved, target)
+                if ang is not None:
+                    ratios.append(ang / float(sr))
+
             if not ratios:
                 continue
             worst[obj] = float(max(ratios))
@@ -128,8 +145,30 @@ class IntermediateConstraint:
 
 
 def _wrap_angle(theta: float) -> float:
-    """Wrap to [-pi, pi]. Pure float math so the dataclass stays dependency-thin."""
+    """Wrap to [-pi, pi]."""
     return float(np.arctan2(np.sin(theta), np.cos(theta)))
+
+
+def _quaternion_angle(
+    achieved: dict[str, float],
+    target: dict[str, float],
+) -> "float | None":
+    """Min-angle between two unit quaternions, in radians.
+
+    Both inputs must carry ``qw``/``qx``/``qy``/``qz`` keys (wxyz convention).
+    Returns ``None`` if either side is missing the orientation entries — the
+    caller decides what to do (typically: skip the rotation check).
+
+    Uses ``2 * acos(|dot|)``, clamped to [0, π] so the constraint can't blow
+    up on floating-point dot products that drift slightly outside [-1, 1].
+    """
+    keys = ("qw", "qx", "qy", "qz")
+    if not all(k in achieved and k in target for k in keys):
+        return None
+    dot = sum(float(achieved[k]) * float(target[k]) for k in keys)
+    # |dot| handles the q vs -q ambiguity (q and -q represent the same rotation).
+    dot = max(-1.0, min(1.0, abs(dot)))
+    return float(2.0 * np.arccos(dot))
 
 
 # ---------------------------------------------------------------------------
@@ -447,30 +486,68 @@ def make_chained_warp_generator_class():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _datagen_info_to_xy_yaw(datagen_info) -> dict[str, dict[str, float]]:
-    """Pull ``{obj: {x, y, z_rot}}`` from a MimicGen datagen_info.
+def _rot_to_quat_wxyz(R: np.ndarray) -> tuple[float, float, float, float]:
+    """3x3 rotation matrix → unit quaternion (wxyz), canonical hemisphere (qw ≥ 0).
+
+    Uses the standard Shepperd-style branch on the maximum diagonal/trace to
+    avoid numerical issues near 180° rotations.
+    """
+    trace = float(R[0, 0] + R[1, 1] + R[2, 2])
+    if trace > 0.0:
+        s = float(np.sqrt(trace + 1.0)) * 2.0
+        qw = 0.25 * s
+        qx = float(R[2, 1] - R[1, 2]) / s
+        qy = float(R[0, 2] - R[2, 0]) / s
+        qz = float(R[1, 0] - R[0, 1]) / s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = float(np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])) * 2.0
+        qw = float(R[2, 1] - R[1, 2]) / s
+        qx = 0.25 * s
+        qy = float(R[0, 1] + R[1, 0]) / s
+        qz = float(R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = float(np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])) * 2.0
+        qw = float(R[0, 2] - R[2, 0]) / s
+        qx = float(R[0, 1] + R[1, 0]) / s
+        qy = 0.25 * s
+        qz = float(R[1, 2] + R[2, 1]) / s
+    else:
+        s = float(np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])) * 2.0
+        qw = float(R[1, 0] - R[0, 1]) / s
+        qx = float(R[0, 2] + R[2, 0]) / s
+        qy = float(R[1, 2] + R[2, 1]) / s
+        qz = 0.25 * s
+    if qw < 0:
+        qw, qx, qy, qz = -qw, -qx, -qy, -qz
+    return qw, qx, qy, qz
+
+
+def _datagen_info_to_pose7(datagen_info) -> dict[str, dict[str, float]]:
+    """Pull ``{obj: {x, y, z, qw, qx, qy, qz}}`` from a MimicGen datagen_info.
 
     object_poses is a dict mapping ``obj_name`` → 4x4 pose matrix in world frame.
-    z_rot is extracted from the rotation part as yaw (atan2(R[1,0], R[0,0])).
+    The quaternion is in canonical (qw ≥ 0) hemisphere.
     """
     out: dict[str, dict[str, float]] = {}
     obj_poses = getattr(datagen_info, "object_poses", {}) or {}
     items = obj_poses.items() if hasattr(obj_poses, "items") else []
     for obj_name, pose in items:
         arr = np.asarray(pose)
-        if arr.ndim == 2 and arr.shape == (4, 4):
-            x = float(arr[0, 3])
-            y = float(arr[1, 3])
-            z_rot = float(np.arctan2(arr[1, 0], arr[0, 0]))
-        elif arr.ndim == 1 and arr.shape[0] >= 3:
-            # Fallback if object_poses is already (x, y, z_rot[, ...]).
-            x = float(arr[0])
-            y = float(arr[1])
-            z_rot = float(arr[2]) if arr.shape[0] >= 3 else 0.0
-        else:
+        if arr.ndim != 2 or arr.shape != (4, 4):
             continue
-        out[obj_name] = {"x": x, "y": y, "z_rot": z_rot}
+        x = float(arr[0, 3])
+        y = float(arr[1, 3])
+        z = float(arr[2, 3])
+        qw, qx, qy, qz = _rot_to_quat_wxyz(arr[:3, :3])
+        out[obj_name] = {
+            "x": x, "y": y, "z": z,
+            "qw": qw, "qx": qx, "qy": qy, "qz": qz,
+        }
     return out
+
+
+# Back-compat alias for any external callers (now returns the full SE(3) dict).
+_datagen_info_to_xy_yaw = _datagen_info_to_pose7
 
 
 def _empty_result(initial_state) -> dict[str, Any]:
@@ -495,10 +572,10 @@ def cluster_to_chained_warp_constraint(
     *,
     slack_alpha: float = 1.5,
     slack_widen_factor: float = 2.0,
-    min_slack_xy: float = 0.003,
-    max_slack_xy: float = 0.03,
-    min_slack_z_rot: float = 0.05,
-    max_slack_z_rot: float = 0.5,
+    min_slack_xyz: float = 0.003,
+    max_slack_xyz: float = 0.03,
+    min_slack_rotation: float = 0.05,
+    max_slack_rotation: float = 0.5,
     objects: "list[str] | None" = None,
 ) -> dict:
     """Build a ``chained_warp_constraint`` dict from a node-cluster's center + stddev.
@@ -507,40 +584,50 @@ def cluster_to_chained_warp_constraint(
     ``scripts/run_mimicgen_generate.py --chained_warp_constraint=...``.
 
     Args:
-        center_feature:    Cluster centre in (x, y, sinθ, cosθ) feature space.
-                           Shape ``(4 * n_objects,)``.
-        stddev_feature:    Per-dim stddev for the cluster.
-        state_schema:      Object → qpos-index mapping (only used for the
-                           object name list; values are ignored here).
+        center_feature:    Cluster centre in 7-dim per-object feature space
+                           ``[x, y, z, qw, qx, qy, qz]`` (see
+                           :func:`policy_doctor.mimicgen.failure_targeting._state_to_cluster_features`).
+                           Shape ``(7 * n_objects,)``.
+        stddev_feature:    Per-dim stddev for the cluster (same shape).
+        state_schema:      Object → qpos-index mapping. Only the object names
+                           and ordering matter here; indices aren't used.
         subtask_idx:       MimicGen subtask boundary to constrain on (the
                            constraint fires after this subtask completes).
         slack_alpha:       Multiplier on stddev when deriving slack box.
         slack_widen_factor: Carried into the constraint dict for the generator
                            to use during retries.
-        min/max slack:     Clamp to a manipulation-realistic range.
+        min/max slack:     Clamp to a manipulation-realistic range (xyz in
+                           metres, rotation in radians).
         objects:           Restrict checking to a subset of object names. None
                            ⇒ all objects in ``state_schema``.
 
     Returns:
-        ``{"subtask_idx": int, "target_pose": {obj: {x, y, z_rot}},
-            "slack": {obj: {x, y, z_rot}}, "slack_widen_factor": float,
-            "objects": [...] | None}``
+        ``{"subtask_idx": int,
+            "target_pose": {obj: {x, y, z, qw, qx, qy, qz}},
+            "slack":       {obj: {x, y, z, rotation}},
+            "slack_widen_factor": float, "objects": [...] | None}``
     """
     from policy_doctor.mimicgen.failure_targeting import (
         cluster_center_to_object_poses,
     )
-    target_pose = cluster_center_to_object_poses(
+    target_pose_full = cluster_center_to_object_poses(
         np.asarray(center_feature, dtype=np.float64),
         state_schema=state_schema,
     )
+    # Strip the auxiliary "z_rot" key — it's only there for legacy IC-range
+    # consumers; the SE(3) constraint compares quaternions directly.
+    target_pose = {
+        obj: {k: v for k, v in pose.items() if k != "z_rot"}
+        for obj, pose in target_pose_full.items()
+    }
     slack = derive_slack_from_stddev(
         stddev_feature,
         state_schema=state_schema,
         alpha=slack_alpha,
-        min_slack_xy=min_slack_xy,
-        max_slack_xy=max_slack_xy,
-        min_slack_z_rot=min_slack_z_rot,
-        max_slack_z_rot=max_slack_z_rot,
+        min_slack_xyz=min_slack_xyz,
+        max_slack_xyz=max_slack_xyz,
+        min_slack_rotation=min_slack_rotation,
+        max_slack_rotation=max_slack_rotation,
     )
     out = {
         "subtask_idx": int(subtask_idx),
@@ -557,43 +644,47 @@ def derive_slack_from_stddev(
     stddev_feature: list[float] | np.ndarray,
     state_schema: dict[str, dict[str, int]],
     alpha: float = 1.5,
-    min_slack_xy: float = 0.003,    # 3 mm — below this the warp's own noise dominates
-    max_slack_xy: float = 0.03,     # 3 cm — bigger than this isn't a meaningful target
-    min_slack_z_rot: float = 0.05,  # ~3°
-    max_slack_z_rot: float = 0.5,   # ~29° — keeps the cluster centered, not "anywhere"
+    min_slack_xyz: float = 0.003,        # 3 mm — below this the warp's own noise dominates
+    max_slack_xyz: float = 0.03,         # 3 cm — bigger than this isn't a meaningful target
+    min_slack_rotation: float = 0.05,    # ~3°
+    max_slack_rotation: float = 0.5,     # ~29° — keeps the cluster centered, not "anywhere"
 ) -> dict[str, dict[str, float]]:
-    """Per-object slack box from a node-cluster's per-dim stddev.
+    """Per-object slack from a node-cluster's per-dim stddev (full SE(3)).
 
-    The cluster's center/stddev are in our (x, y, sin(z_rot), cos(z_rot))
-    feature space. We convert back to angular slack via the
-    Pythagorean-on-sin/cos heuristic — adequate for the order-of-magnitude
-    we need (the user explicitly allowed loose matching).
+    The cluster's center/stddev are in the 7-dim feature space
+    ``[x, y, z, qw, qx, qy, qz]`` per object (see :func:`_state_to_cluster_features`).
+    Translation slack is the per-axis 1-D stddev scaled by ``alpha``;
+    rotation slack is derived from the L2 norm of the quaternion-component
+    stddev: for small dispersions, ``||Δq||_2 ≈ θ/2``, so we use
+    ``angular_stddev ≈ 2 × ||q_stddev||_2``.
 
     Args:
-        stddev_feature: 4 * n_objects-dim per-dim stddev for the cluster.
-        state_schema:   Used only for object names / ordering. Matches the
-                        encoding used by ``_state_to_cluster_features``.
+        stddev_feature: 7 * n_objects per-dim stddev for the cluster.
+        state_schema:   Used only for object names / ordering.
         alpha:          Slack multiplier on stddev. 1.5 ≈ a 1.5-sigma window.
-        min_slack_*:    Lower clamp — prevents pathological tightness when
-                        a cluster collapses to a single point.
-        max_slack_*:    Upper clamp — prevents pathological looseness when
-                        the cluster is essentially uniform across the workspace.
+        min_slack_xyz / max_slack_xyz:           Clamp on translation slack (metres).
+        min_slack_rotation / max_slack_rotation: Clamp on rotation slack (radians).
 
     Returns:
-        ``{obj_name: {"x": slack_x, "y": slack_y, "z_rot": slack_z_rot}}``,
-        same shape as ``IntermediateConstraint.slack``.
+        ``{obj_name: {"x", "y", "z", "rotation"}}`` — matches
+        ``IntermediateConstraint.slack``.
     """
     arr = np.asarray(stddev_feature, dtype=np.float64)
     out: dict[str, dict[str, float]] = {}
     for i, obj_name in enumerate(sorted(state_schema)):
-        std_x = float(arr[4 * i + 0])
-        std_y = float(arr[4 * i + 1])
-        std_sin = float(arr[4 * i + 2])
-        std_cos = float(arr[4 * i + 3])
-        # Convert (sin, cos) stddev pair → angular stddev (rough Pythagorean proxy).
-        std_z_rot = float(np.sqrt(std_sin ** 2 + std_cos ** 2))
-        slack_x = float(np.clip(alpha * std_x, min_slack_xy, max_slack_xy))
-        slack_y = float(np.clip(alpha * std_y, min_slack_xy, max_slack_xy))
-        slack_z_rot = float(np.clip(alpha * std_z_rot, min_slack_z_rot, max_slack_z_rot))
-        out[obj_name] = {"x": slack_x, "y": slack_y, "z_rot": slack_z_rot}
+        base = 7 * i
+        std_x = float(arr[base + 0])
+        std_y = float(arr[base + 1])
+        std_z = float(arr[base + 2])
+        std_qw = float(arr[base + 3])
+        std_qx = float(arr[base + 4])
+        std_qy = float(arr[base + 5])
+        std_qz = float(arr[base + 6])
+        q_norm = float(np.sqrt(std_qw ** 2 + std_qx ** 2 + std_qy ** 2 + std_qz ** 2))
+        std_rotation = 2.0 * q_norm   # see docstring
+        slack_x = float(np.clip(alpha * std_x, min_slack_xyz, max_slack_xyz))
+        slack_y = float(np.clip(alpha * std_y, min_slack_xyz, max_slack_xyz))
+        slack_z = float(np.clip(alpha * std_z, min_slack_xyz, max_slack_xyz))
+        slack_rot = float(np.clip(alpha * std_rotation, min_slack_rotation, max_slack_rotation))
+        out[obj_name] = {"x": slack_x, "y": slack_y, "z": slack_z, "rotation": slack_rot}
     return out
