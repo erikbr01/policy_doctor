@@ -333,7 +333,14 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         # without MimicGen-registered environments (e.g. cupid_torch2) works.
         if self.env is None:
             try:
-                self.env = AsyncVectorEnv(self.env_fns, dummy_env_fn=self.dummy_env_fn)
+                # shared_memory=False: MimicGen uses a custom Box observation space that
+                # AsyncVectorEnv's shared-memory path can't batch ("non-standard Gym
+                # observation spaces ... only compatible with default Gym spaces").
+                self.env = AsyncVectorEnv(
+                    self.env_fns,
+                    dummy_env_fn=self.dummy_env_fn,
+                    shared_memory=False,
+                )
             except Exception as e:
                 print(f"[MimicgenLowdimRunner] WARNING: could not create env ({e}). "
                       "Skipping rollout evaluation (env not registered in this conda env).")
