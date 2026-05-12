@@ -274,13 +274,21 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                         print(f"    path {path_idx} ic_cluster {ci}: selection failed: {e}")
                         continue
 
-                    opr = ic_cluster.get("suggested_object_pose_ranges")
+                    # Free up z_rot in the IC range — the cluster-center z_rot can be
+                    # very different from the source demos' z_rot, giving MimicGen poor
+                    # nearest-neighbor matches. Setting z_rot=null lets _constrained_bounds
+                    # skip the axis and use the env's default (0, 2π) range, giving full
+                    # orientation freedom for trajectory warping.
+                    opr_base = ic_cluster.get("suggested_object_pose_ranges") or {}
+                    opr = {
+                        obj: {k: (None if k == "z_rot" else v) for k, v in comps.items()}
+                        for obj, comps in opr_base.items()
+                    } or None
 
-                    # Compute IC cluster center as {obj: {x, y, z_rot}} for the nut.
-                    # This is stored as per_seed_ic_center_poses and used by
-                    # generate_mimicgen_demos as the nut anchor in --seed_object_poses
-                    # (the peg is added from the global seed HDF5 to avoid
-                    # RandomizationError in Square_D1 where the peg is also randomized).
+                    # Compute IC cluster center as {obj: {x, y}} for the nut.
+                    # z_rot is omitted so _constrained_bounds leaves orientation free.
+                    # The peg is added from the global seed HDF5 to avoid RandomizationError
+                    # in Square_D1 where the peg is also randomized.
                     ic_center_pose: dict | None = None
                     center_feat = ic_cluster.get("center_feature")
                     if center_feat is not None:
@@ -288,7 +296,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                             _np.array(center_feat, dtype=_np.float32), state_schema
                         )
                         ic_center_pose = {
-                            obj: {"x": p["x"], "y": p["y"], "z_rot": p["z_rot"]}
+                            obj: {"x": p["x"], "y": p["y"]}  # no z_rot: leave env default
                             for obj, p in full_pose.items()
                         }
 
