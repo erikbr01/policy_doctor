@@ -61,6 +61,8 @@ ALL_STEPS: List[str] = [
     "mimicgen_budget_rep_sweep",
     # Failure-targeting arm (graph-guided IC + intermediate state constraints):
     "mimicgen_failure_targeting",
+    # Ablation: failure-state IC targeting only (no intermediate chained-warp constraint):
+    "mimicgen_failure_ic_only",
     # Flat steps (standalone / legacy runs):
     "select_mimicgen_seed_from_graph",
     "select_mimicgen_seed",
@@ -116,6 +118,7 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         MimicgenDiversity20Rep2ArmStep,
         MimicgenDiversity20Rep3ArmStep,
         MimicgenFailureTargetingArmStep,
+        MimicgenFailureICOnlyArmStep,
     )
     from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
         AnalyzeFailureStatesStep,
@@ -168,6 +171,7 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,
         "train_on_combined_data": TrainOnCombinedDataStep,
         "mimicgen_failure_targeting": MimicgenFailureTargetingArmStep,
+        "mimicgen_failure_ic_only": MimicgenFailureICOnlyArmStep,
         "analyze_failure_states": AnalyzeFailureStatesStep,
     }
     return registry

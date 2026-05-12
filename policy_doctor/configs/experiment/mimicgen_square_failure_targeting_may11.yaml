@@ -167,4 +167,5 @@ steps:
   - run_clustering
   - mimicgen_random
   - mimicgen_failure_targeting
+  - mimicgen_failure_ic_only
   - eval_baseline
