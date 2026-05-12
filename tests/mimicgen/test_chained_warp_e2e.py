@@ -146,9 +146,9 @@ def _object_pose_at_subtask_boundary(
         signal_keys = list(signals.keys())
         # MimicGen schemas use names like "grasp", "place". Just take the first one.
         sig = np.asarray(signals[signal_keys[subtask_term_signal_value]])
-        # The boundary timestep is the LAST step where the signal == 1.
+        # The boundary timestep is the FIRST step where the signal transitions to 1.
         on_idxs = np.flatnonzero(sig)
-        boundary_t = int(on_idxs[-1]) if len(on_idxs) > 0 else len(sig) - 1
+        boundary_t = int(on_idxs[0]) if len(on_idxs) > 0 else len(sig) - 1
         for obj_name in di["object_poses"].keys():
             pose_t = di["object_poses"][obj_name][boundary_t]
             out[obj_name] = np.asarray(pose_t)
@@ -192,7 +192,11 @@ class TestChainedWarpE2E(unittest.TestCase):
             assert len(signal_keys) >= 1, "Square should have at least 1 subtask signal"
             sig0 = np.asarray(signals[signal_keys[0]])
             on_idxs = np.flatnonzero(sig0)
-            cls.boundary_t = int(on_idxs[-1]) if len(on_idxs) > 0 else len(sig0) - 1
+            # MimicGen's subtask 0 boundary is the FIRST 0→1 transition of the
+            # term-signal — i.e. when the grasp first activates, the nut is still
+            # at its IC. on_idxs[-1] would be the *placement* moment (signal stays
+            # on until release), which is NOT the subtask boundary.
+            cls.boundary_t = int(on_idxs[0]) if len(on_idxs) > 0 else len(sig0) - 1
             obj_name = list(di["object_poses"].keys())[0]
             cls.obj_name = obj_name
             cls.seed_boundary_pose = np.asarray(di["object_poses"][obj_name][cls.boundary_t])
@@ -226,26 +230,35 @@ class TestChainedWarpE2E(unittest.TestCase):
         out_dir = self.tmp / "loose"
         out_dir.mkdir(exist_ok=True)
         # Use the seed's own boundary pose as target — should be naturally hit.
+        # Realistic-but-meaningful slack: ±5 cm on x/y (still cm-scale on the
+        # 30-cm Square workspace, not the workspace-wide no-op 0.5 m would be),
+        # and ±0.8 rad on z_rot (~46°) which is significantly tighter than the
+        # full ±π IC randomization. The constraint should still reject some
+        # trials (verified by debug logs in earlier iterations).
+        slack_xy = 0.05
+        slack_z_rot = 0.8
         constraint = {
             "subtask_idx": 0,
             "target_pose": {self.obj_name: {
                 "x": self.seed_x, "y": self.seed_y, "z_rot": self.seed_z_rot,
             }},
-            "slack": {self.obj_name: {"x": 0.5, "y": 0.5, "z_rot": 3.14}},
+            "slack": {self.obj_name: {"x": slack_xy, "y": slack_xy, "z_rot": slack_z_rot}},
         }
         stats = _run_generate(
             seed_hdf5=self.seed_hdf5, output_dir=out_dir,
-            num_trials=3, chained_warp_constraint=constraint,
+            num_trials=12, chained_warp_constraint=constraint,
         )
-        # At least one successful trial.
+        # At least one successful trial — the warp's natural precision at this
+        # boundary is sub-cm per the empirical 5-trial run (2/5 within 5 mm).
+        # Need enough trials to clear both the (now-real) constraint AND task success.
         n_success = int(stats.get("num_success", 0))
         self.assertGreater(n_success, 0, msg=f"stats={stats}")
 
         # Walk demo.hdf5 to confirm every successful demo's boundary pose
-        # actually lies inside the configured slack box.
+        # is actually inside the configured slack box (cm not m).
         demo_path = out_dir / "demo.hdf5"
         self.assertTrue(demo_path.is_file())
-        violations = 0
+        violations: list[tuple[str, float, float, float]] = []
         with h5py.File(demo_path, "r") as f:
             for demo_key in f["data"].keys():
                 ep = f["data"][demo_key]
@@ -257,16 +270,18 @@ class TestChainedWarpE2E(unittest.TestCase):
                     demo_path, demo_key, subtask_term_signal_value=0
                 )
                 x, y, z_rot = _xy_yaw_from_4x4(pose[self.obj_name])
-                if (
-                    abs(x - self.seed_x) > 0.5
-                    or abs(y - self.seed_y) > 0.5
-                    or abs(np.arctan2(np.sin(z_rot - self.seed_z_rot),
-                                       np.cos(z_rot - self.seed_z_rot))) > 3.14
-                ):
-                    violations += 1
+                dx = abs(x - self.seed_x)
+                dy = abs(y - self.seed_y)
+                dth = abs(np.arctan2(
+                    np.sin(z_rot - self.seed_z_rot),
+                    np.cos(z_rot - self.seed_z_rot),
+                ))
+                if dx > slack_xy or dy > slack_xy or dth > slack_z_rot:
+                    violations.append((demo_key, float(dx), float(dy), float(dth)))
         self.assertEqual(
-            violations, 0,
-            msg=f"{violations} demos had boundary poses outside the slack box",
+            violations, [],
+            msg=(f"{len(violations)} demos had boundary poses outside the "
+                 f"tight (±{slack_xy}m, ±{slack_z_rot}rad) slack box: {violations}"),
         )
 
 

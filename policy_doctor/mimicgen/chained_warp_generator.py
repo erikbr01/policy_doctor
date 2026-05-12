@@ -255,6 +255,20 @@ def make_chained_warp_generator_class():
                     constraint_met_so_far = satisfied
                     constraint_distances = worst
                     constraint_worst_ratio = max(worst.values()) if worst else 0.0
+                    # Optional per-trial debug print (set CW_DEBUG=1).
+                    import os as _os
+                    if _os.environ.get("CW_DEBUG"):
+                        for _obj, _t in constraint.target_pose.items():
+                            _a = achieved.get(_obj, {})
+                            print(
+                                f"[CW] subtask {subtask_ind - 1} done | obj={_obj} | "
+                                f"achieved=({_a.get('x', 0):.4f}, {_a.get('y', 0):.4f}, "
+                                f"{_a.get('z_rot', 0):+.3f}) | "
+                                f"target=({_t['x']:.4f}, {_t['y']:.4f}, {_t['z_rot']:+.3f}) | "
+                                f"worst_ratio={constraint_worst_ratio:.3f} | "
+                                f"satisfied={satisfied}",
+                                flush=True,
+                            )
                     if not satisfied:
                         # Early-abort: skip executing subtasks N+1..M-1 entirely.
                         self.last_outcome = GenerationOutcome(
@@ -477,10 +491,10 @@ def derive_slack_from_stddev(
     stddev_feature: list[float] | np.ndarray,
     state_schema: dict[str, dict[str, int]],
     alpha: float = 1.5,
-    min_slack_xy: float = 0.005,
-    max_slack_xy: float = 0.1,
-    min_slack_z_rot: float = 0.05,
-    max_slack_z_rot: float = 1.5,
+    min_slack_xy: float = 0.003,    # 3 mm — below this the warp's own noise dominates
+    max_slack_xy: float = 0.03,     # 3 cm — bigger than this isn't a meaningful target
+    min_slack_z_rot: float = 0.05,  # ~3°
+    max_slack_z_rot: float = 0.5,   # ~29° — keeps the cluster centered, not "anywhere"
 ) -> dict[str, dict[str, float]]:
     """Per-object slack box from a node-cluster's per-dim stddev.
 

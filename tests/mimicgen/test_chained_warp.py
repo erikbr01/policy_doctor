@@ -147,11 +147,22 @@ class TestDeriveSlackFromStddev(unittest.TestCase):
         stddev = [10.0, 10.0, 1.0, 1.0]
         slack = derive_slack_from_stddev(
             stddev, state_schema=DEFAULT_SQUARE_STATE_SCHEMA, alpha=2.0,
-            max_slack_xy=0.1, max_slack_z_rot=1.5,
+            max_slack_xy=0.05, max_slack_z_rot=1.0,
         )
-        self.assertEqual(slack["nut"]["x"], 0.1)
-        self.assertEqual(slack["nut"]["y"], 0.1)
-        self.assertEqual(slack["nut"]["z_rot"], 1.5)
+        self.assertEqual(slack["nut"]["x"], 0.05)
+        self.assertEqual(slack["nut"]["y"], 0.05)
+        self.assertEqual(slack["nut"]["z_rot"], 1.0)
+
+    def test_default_clamps_are_realistic_for_manipulation(self):
+        # Default upper bound for xy should be O(cm), not O(workspace).
+        stddev = [10.0, 10.0, 1.0, 1.0]
+        slack = derive_slack_from_stddev(
+            stddev, state_schema=DEFAULT_SQUARE_STATE_SCHEMA,
+        )
+        # 3 cm is the upper bound — anything larger is a no-op constraint on
+        # a typical 30-cm tabletop workspace.
+        self.assertLessEqual(slack["nut"]["x"], 0.03 + 1e-9)
+        self.assertLessEqual(slack["nut"]["y"], 0.03 + 1e-9)
 
 
 # ---------------------------------------------------------------------------
