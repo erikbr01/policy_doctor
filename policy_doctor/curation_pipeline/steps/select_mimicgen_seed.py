@@ -138,19 +138,119 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         )
         fa_step = AnalyzeFailureStatesStep(self.cfg, self.parent_run_dir)
         fa_result = fa_step.load() if fa_step.is_done() else None
+        fa_mode = (fa_result or {}).get("mode", "prefailure_node")
         use_failure_analysis = (
             fa_result is not None
             and fa_result.get("enabled", False)
-            and fa_result.get("clusters")
+            and (
+                fa_result.get("clusters")  # legacy prefailure_node
+                or fa_result.get("paths")  # path_based
+            )
         )
 
+        # Subtask-boundary index that the new chained-warp constraint should fire at
+        # (path_based mode only). Comes from failure_analysis.subtask_constraint_idx.
+        fa_cfg = OmegaConf.select(self.cfg, "mimicgen_datagen.failure_analysis") or {}
+        cw_subtask_idx_raw = OmegaConf.select(fa_cfg, "subtask_constraint_idx")
+        cw_subtask_idx: int | None = (
+            int(cw_subtask_idx_raw) if cw_subtask_idx_raw is not None else None
+        )
+        cw_slack_alpha = float(OmegaConf.select(fa_cfg, "slack_alpha") or 1.5)
+        cw_slack_widen_factor = float(OmegaConf.select(fa_cfg, "slack_widen_factor") or 2.0)
+
         results: list[SeedSelectionResult] = []
-        # per_seed_object_pose_ranges[i] and per_seed_subtask_constraints[i] carry
-        # per-seed constraint suggestions derived from the failure cluster of that seed.
+        # per_seed_*[i] carry per-seed constraint suggestions derived from the
+        # failure cluster of that seed.
         per_seed_object_pose_ranges: list[dict | None] = []
         per_seed_subtask_constraints: list[dict | None] = []
+        per_seed_chained_warp_constraints: list[dict | None] = []
 
-        if use_failure_analysis:
+        if use_failure_analysis and fa_mode == "path_based":
+            from policy_doctor.mimicgen.chained_warp_generator import (
+                cluster_to_chained_warp_constraint,
+            )
+            from policy_doctor.mimicgen.failure_targeting import (
+                DEFAULT_SQUARE_STATE_SCHEMA,
+            )
+            state_schema_cfg = OmegaConf.select(fa_cfg, "state_schema")
+            state_schema = (
+                OmegaConf.to_container(state_schema_cfg, resolve=True)
+                if state_schema_cfg is not None else DEFAULT_SQUARE_STATE_SCHEMA
+            )
+            paths = fa_result.get("paths") or []
+            print(
+                f"  [select_mimicgen_seed] path_based failure analysis: "
+                f"{len(paths)} path(s)"
+            )
+            for path_entry in paths:
+                path_idx = path_entry.get("path_idx", -1)
+                ic_pool = path_entry.get("ic_pool") or {}
+                ic_clusters = ic_pool.get("clusters") or []
+                if not ic_clusters:
+                    print(f"    path {path_idx}: empty IC pool — skipped")
+                    continue
+                intermediate_pool = path_entry.get("intermediate_pool")
+
+                # Build the (single) chained-warp constraint for this path from the
+                # dominant intermediate cluster (largest by n_states). v1 keeps one
+                # per path; later we can pair IC ↔ intermediate clusters more carefully.
+                chained_warp_for_path: dict | None = None
+                if (
+                    cw_subtask_idx is not None
+                    and intermediate_pool
+                    and intermediate_pool.get("clusters")
+                ):
+                    mid_clusters = intermediate_pool["clusters"]
+                    dominant = max(mid_clusters, key=lambda c: int(c.get("n_states", 0)))
+                    chained_warp_for_path = cluster_to_chained_warp_constraint(
+                        center_feature=dominant["center_feature"],
+                        stddev_feature=dominant["stddev_feature"],
+                        state_schema=state_schema,
+                        subtask_idx=cw_subtask_idx,
+                        slack_alpha=cw_slack_alpha,
+                        slack_widen_factor=cw_slack_widen_factor,
+                    )
+                    print(
+                        f"    path {path_idx}: chained-warp target on subtask {cw_subtask_idx} "
+                        f"from intermediate cluster (n={dominant['n_states']})"
+                    )
+
+                for ic_cluster in ic_clusters:
+                    ci = ic_cluster["cluster_idx"]
+                    budget = int(ic_cluster.get("budget_per_cluster", 1))
+                    eligible = ic_cluster.get("eligible_rollout_idxs") or None
+
+                    heuristic = build_heuristic(
+                        heuristic_name,
+                        top_k_paths=top_k_paths,
+                        min_path_probability=min_path_probability,
+                        success_only=success_only,
+                        random_seed=random_seed,
+                        eligible_rollout_idxs=eligible,
+                    )
+                    try:
+                        cluster_results = heuristic.select_multiple(
+                            n=budget,
+                            cluster_labels=labels,
+                            metadata=metadata,
+                            rollout_hdf5_path=str(rollouts_hdf5),
+                            level=level,
+                        )
+                    except RuntimeError as e:
+                        print(f"    path {path_idx} ic_cluster {ci}: selection failed: {e}")
+                        continue
+
+                    opr = ic_cluster.get("suggested_object_pose_ranges")
+                    for r in cluster_results:
+                        results.append(r)
+                        per_seed_object_pose_ranges.append(opr)
+                        per_seed_subtask_constraints.append(None)  # legacy slot stays empty
+                        per_seed_chained_warp_constraints.append(chained_warp_for_path)
+                    print(
+                        f"    path {path_idx} ic_cluster {ci}: selected {len(cluster_results)} "
+                        f"seeds from {len(eligible or [])} eligible rollouts"
+                    )
+        elif use_failure_analysis:
             clusters = fa_result["clusters"]
             print(
                 f"  [select_mimicgen_seed] failure analysis active: "
@@ -187,6 +287,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                     results.append(r)
                     per_seed_object_pose_ranges.append(opr)
                     per_seed_subtask_constraints.append(sc)
+                    per_seed_chained_warp_constraints.append(None)
                 print(
                     f"    cluster {ci}: selected {len(cluster_results)} seeds "
                     f"from {len(eligible or [])} eligible rollouts"
@@ -209,6 +310,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             )
             per_seed_object_pose_ranges = [None] * len(results)
             per_seed_subtask_constraints = [None] * len(results)
+            per_seed_chained_warp_constraints = [None] * len(results)
 
         for r in results:
             print(
@@ -250,4 +352,6 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
             result["per_seed_object_pose_ranges"] = per_seed_object_pose_ranges
         if any(v is not None for v in per_seed_subtask_constraints):
             result["per_seed_subtask_constraints"] = per_seed_subtask_constraints
+        if any(v is not None for v in per_seed_chained_warp_constraints):
+            result["per_seed_chained_warp_constraints"] = per_seed_chained_warp_constraints
         return result

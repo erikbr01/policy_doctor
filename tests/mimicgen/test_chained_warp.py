@@ -19,6 +19,7 @@ from policy_doctor.mimicgen.chained_warp_generator import (
     IntermediateConstraint,
     _datagen_info_to_xy_yaw,
     _wrap_angle,
+    cluster_to_chained_warp_constraint,
     derive_slack_from_stddev,
 )
 from policy_doctor.mimicgen.failure_targeting import DEFAULT_SQUARE_STATE_SCHEMA
@@ -209,6 +210,64 @@ class TestGenerationOutcome(unittest.TestCase):
         o = GenerationOutcome(task_success=True, constraint_met=True, failure_reason=None)
         self.assertEqual(o.subtasks_executed, 0)
         self.assertEqual(o.distances, {})
+
+
+# ---------------------------------------------------------------------------
+# cluster_to_chained_warp_constraint
+# ---------------------------------------------------------------------------
+
+class TestClusterToChainedWarpConstraint(unittest.TestCase):
+    def test_builds_constraint_from_cluster(self):
+        # Cluster center: nut at x=0.10, y=0.20, z_rot=0 (sin=0, cos=1).
+        center = [0.10, 0.20, 0.0, 1.0]
+        # Reasonable stddev: 1 cm xy, small angular spread.
+        stddev = [0.01, 0.01, 0.05, 0.05]
+        cw = cluster_to_chained_warp_constraint(
+            center_feature=center,
+            stddev_feature=stddev,
+            state_schema=DEFAULT_SQUARE_STATE_SCHEMA,
+            subtask_idx=0,
+            slack_alpha=1.5,
+        )
+        self.assertEqual(cw["subtask_idx"], 0)
+        self.assertEqual(cw["slack_widen_factor"], 2.0)
+        # Target pose recovered from sin/cos.
+        self.assertAlmostEqual(cw["target_pose"]["nut"]["x"], 0.10, places=4)
+        self.assertAlmostEqual(cw["target_pose"]["nut"]["y"], 0.20, places=4)
+        self.assertAlmostEqual(cw["target_pose"]["nut"]["z_rot"], 0.0, places=4)
+        # Slack derived from stddev × 1.5, clamped.
+        self.assertAlmostEqual(cw["slack"]["nut"]["x"], 0.015, places=4)
+        self.assertAlmostEqual(cw["slack"]["nut"]["y"], 0.015, places=4)
+        # Angular slack from sqrt(0.05² + 0.05²) × 1.5 ≈ 0.106
+        self.assertAlmostEqual(cw["slack"]["nut"]["z_rot"], 1.5 * math.sqrt(0.005), places=3)
+
+    def test_objects_filter_passthrough(self):
+        center = [0.0, 0.0, 0.0, 1.0]
+        stddev = [0.001, 0.001, 0.0, 0.0]
+        cw = cluster_to_chained_warp_constraint(
+            center_feature=center,
+            stddev_feature=stddev,
+            state_schema=DEFAULT_SQUARE_STATE_SCHEMA,
+            subtask_idx=1,
+            objects=["nut"],
+        )
+        self.assertEqual(cw["objects"], ["nut"])
+
+    def test_satisfiable_by_perfect_match(self):
+        # Build a constraint and verify it's satisfied by its own target.
+        center = [0.10, 0.20, 0.0, 1.0]
+        stddev = [0.005, 0.005, 0.02, 0.02]
+        cw = cluster_to_chained_warp_constraint(
+            center_feature=center, stddev_feature=stddev,
+            state_schema=DEFAULT_SQUARE_STATE_SCHEMA, subtask_idx=0,
+        )
+        c = IntermediateConstraint(
+            subtask_idx=cw["subtask_idx"],
+            target_pose=cw["target_pose"],
+            slack=cw["slack"],
+        )
+        sat, _ = c.is_satisfied(cw["target_pose"])
+        self.assertTrue(sat)
 
 
 if __name__ == "__main__":

@@ -487,6 +487,72 @@ def _empty_result(initial_state) -> dict[str, Any]:
     )
 
 
+def cluster_to_chained_warp_constraint(
+    center_feature: "list[float] | np.ndarray",
+    stddev_feature: "list[float] | np.ndarray",
+    state_schema: dict[str, dict[str, int]],
+    subtask_idx: int,
+    *,
+    slack_alpha: float = 1.5,
+    slack_widen_factor: float = 2.0,
+    min_slack_xy: float = 0.003,
+    max_slack_xy: float = 0.03,
+    min_slack_z_rot: float = 0.05,
+    max_slack_z_rot: float = 0.5,
+    objects: "list[str] | None" = None,
+) -> dict:
+    """Build a ``chained_warp_constraint`` dict from a node-cluster's center + stddev.
+
+    The output matches the schema consumed by
+    ``scripts/run_mimicgen_generate.py --chained_warp_constraint=...``.
+
+    Args:
+        center_feature:    Cluster centre in (x, y, sinθ, cosθ) feature space.
+                           Shape ``(4 * n_objects,)``.
+        stddev_feature:    Per-dim stddev for the cluster.
+        state_schema:      Object → qpos-index mapping (only used for the
+                           object name list; values are ignored here).
+        subtask_idx:       MimicGen subtask boundary to constrain on (the
+                           constraint fires after this subtask completes).
+        slack_alpha:       Multiplier on stddev when deriving slack box.
+        slack_widen_factor: Carried into the constraint dict for the generator
+                           to use during retries.
+        min/max slack:     Clamp to a manipulation-realistic range.
+        objects:           Restrict checking to a subset of object names. None
+                           ⇒ all objects in ``state_schema``.
+
+    Returns:
+        ``{"subtask_idx": int, "target_pose": {obj: {x, y, z_rot}},
+            "slack": {obj: {x, y, z_rot}}, "slack_widen_factor": float,
+            "objects": [...] | None}``
+    """
+    from policy_doctor.mimicgen.failure_targeting import (
+        cluster_center_to_object_poses,
+    )
+    target_pose = cluster_center_to_object_poses(
+        np.asarray(center_feature, dtype=np.float64),
+        state_schema=state_schema,
+    )
+    slack = derive_slack_from_stddev(
+        stddev_feature,
+        state_schema=state_schema,
+        alpha=slack_alpha,
+        min_slack_xy=min_slack_xy,
+        max_slack_xy=max_slack_xy,
+        min_slack_z_rot=min_slack_z_rot,
+        max_slack_z_rot=max_slack_z_rot,
+    )
+    out = {
+        "subtask_idx": int(subtask_idx),
+        "target_pose": target_pose,
+        "slack": slack,
+        "slack_widen_factor": float(slack_widen_factor),
+    }
+    if objects is not None:
+        out["objects"] = list(objects)
+    return out
+
+
 def derive_slack_from_stddev(
     stddev_feature: list[float] | np.ndarray,
     state_schema: dict[str, dict[str, int]],

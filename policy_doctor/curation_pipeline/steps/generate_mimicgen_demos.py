@@ -503,6 +503,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         # instead of the globally-configured ones.
         per_seed_opr: list | None = None
         per_seed_sc: list | None = None
+        per_seed_cw: list | None = None     # path_based chained-warp constraints
         new_select_result_for_constraints: dict | None = None
         from policy_doctor.curation_pipeline.steps.select_mimicgen_seed import SelectMimicgenSeedStep
         _sel_step = SelectMimicgenSeedStep(self.cfg, self.run_dir)
@@ -510,6 +511,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             _sel_result = _sel_step.load()
             per_seed_opr = _sel_result.get("per_seed_object_pose_ranges")
             per_seed_sc = _sel_result.get("per_seed_subtask_constraints")
+            per_seed_cw = _sel_result.get("per_seed_chained_warp_constraints")
             new_select_result_for_constraints = _sel_result
 
         # Read global subtask_constraints from config (overrides per-seed when set globally).
@@ -556,16 +558,33 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                         else effective_opr
                     )
                     cmd += ["--object_pose_ranges", json.dumps(ranges_plain)]
-            # Subtask constraints: per-seed override > global config > nothing.
-            effective_sc = None
-            if subtask_constraints_global is not None:
-                effective_sc = OmegaConf.to_container(subtask_constraints_global, resolve=True)
-            if per_seed_sc is not None and seed_idx is not None:
-                sc_for_seed = per_seed_sc[seed_idx] if seed_idx < len(per_seed_sc) else None
-                if sc_for_seed is not None:
-                    effective_sc = sc_for_seed
-            if effective_sc:
-                cmd += ["--subtask_constraints", json.dumps(effective_sc)]
+            # Constraint priority: per-seed chained_warp > per-seed legacy
+            # subtask_constraints > global subtask_constraints > nothing.
+            # chained_warp and legacy subtask_constraints are mutually exclusive
+            # in run_mimicgen_generate.py — chained_warp wins when set.
+            effective_cw = None
+            if per_seed_cw is not None and seed_idx is not None:
+                cw_for_seed = per_seed_cw[seed_idx] if seed_idx < len(per_seed_cw) else None
+                if cw_for_seed is not None:
+                    effective_cw = cw_for_seed
+
+            if effective_cw is not None:
+                cw_plain = (
+                    OmegaConf.to_container(effective_cw, resolve=True)
+                    if hasattr(effective_cw, "_metadata")
+                    else effective_cw
+                )
+                cmd += ["--chained_warp_constraint", json.dumps(cw_plain)]
+            else:
+                effective_sc = None
+                if subtask_constraints_global is not None:
+                    effective_sc = OmegaConf.to_container(subtask_constraints_global, resolve=True)
+                if per_seed_sc is not None and seed_idx is not None:
+                    sc_for_seed = per_seed_sc[seed_idx] if seed_idx < len(per_seed_sc) else None
+                    if sc_for_seed is not None:
+                        effective_sc = sc_for_seed
+                if effective_sc:
+                    cmd += ["--subtask_constraints", json.dumps(effective_sc)]
             return cmd
 
         print(f"    action_noise={action_noise}  offset=({offset_lo},{offset_hi})  nn_k={nn_k}")

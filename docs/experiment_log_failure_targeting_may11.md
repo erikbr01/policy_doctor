@@ -396,3 +396,51 @@ Phase 2 is empirically validated. Ready to plumb the Phase-1 result JSON
 into `generate_mimicgen_demos.py` so the failure-targeting arm runs end-to-end.
 
 ---
+
+## 2026-05-12 — Phase 3: per-cluster → per-seed wiring
+
+The Phase-1 `analyze_failure_states` result (path_based mode) describes per-path
+IC pools and intermediate pools, each with k clusters carrying centre and
+stddev features. Phase 3 turns that into concrete per-seed generation
+parameters.
+
+**`SelectMimicgenSeedStep` (path_based branch):**
+- Detects `fa_result["mode"] == "path_based"` and iterates `paths`.
+- For each path, picks the dominant intermediate cluster (largest by `n_states`)
+  and builds one `chained_warp_constraint` template via
+  `cluster_to_chained_warp_constraint(center, stddev, schema, subtask_idx)`.
+- Then iterates the path's IC clusters; for each IC cluster:
+  - calls the existing `NearFailurePathHeuristic.select_multiple` with
+    `eligible_rollout_idxs` from the cluster,
+  - attaches `suggested_object_pose_ranges` from the IC cluster as the IC
+    constraint, and the path's `chained_warp_for_path` template as the
+    intermediate constraint.
+- Adds a new `per_seed_chained_warp_constraints` list to the step result.
+- Legacy `prefailure_node` branch unchanged; the new constraint list is filled
+  with `None` for non-path_based runs.
+
+**`GenerateMimicgenDemosStep`:** reads `per_seed_chained_warp_constraints` and
+passes `--chained_warp_constraint <json>` to `run_mimicgen_generate.py` per
+seed. Mutually exclusive with the legacy `--subtask_constraints`; the path-based
+constraint wins when set.
+
+**New helper:** `cluster_to_chained_warp_constraint()` in
+`chained_warp_generator.py` — single entry point for "cluster center+stddev →
+constraint dict" with sin/cos→z_rot conversion and the same clamp policy as
+`derive_slack_from_stddev`.
+
+**Config:** the may11 experiment YAML now sets
+`failure_analysis.subtask_constraint_idx: 0` (Square's grasp boundary is the
+only useful intermediate target — subtask 1 is the placement, where the task
+just ends) and exposes `slack_alpha: 1.5`, `slack_widen_factor: 2.0`.
+
+**Tests:** 42 unit + 2 integration (was 39+2 before Phase 3). New cases cover:
+- building a constraint from a cluster's centre/stddev features,
+- sin/cos → z_rot recovery in `target_pose`,
+- that the constraint built from cluster X is satisfied by X's centre.
+
+With this in place, an `mimicgen_failure_targeting` arm run with `path_based`
+mode flows: analyze → per-cluster → per-seed → generate-with-chained-warp →
+train-on-combined → eval. Ready to launch once the upstream pipeline finishes.
+
+---

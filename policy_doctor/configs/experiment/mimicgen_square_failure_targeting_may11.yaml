@@ -121,9 +121,18 @@ mimicgen_datagen:
     slack_y: 0.03
     slack_z_rot: 0.5
 
-    # Subtask constraint (null = disabled)
-    subtask_constraint_idx: null
+    # Subtask boundary to constrain on (path_based mode → chained_warp_constraint
+    # target fires at the END of this subtask). For Square: subtask 0 ends at
+    # grasp, subtask 1 ends at placement. Setting to 0 means "force the
+    # post-grasp nut pose to lie near the failure-trajectory intermediate cluster
+    # centre." null disables the chained-warp constraint entirely.
+    subtask_constraint_idx: 0
     subtask_constraint_slack: 1.5
+    # Multiplier on per-cluster stddev to derive slack box; widen factor governs
+    # graceful degradation on outer retries (currently unused — generator
+    # always uses the same slack until budget exhausted).
+    slack_alpha: 1.5
+    slack_widen_factor: 2.0
 
 # ---------------------------------------------------------------------------
 # Steps — full pipeline (no apr23 outputs to skip past on this machine)
