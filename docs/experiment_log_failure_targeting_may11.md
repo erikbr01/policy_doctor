@@ -288,3 +288,68 @@ Phase 2 (chained-warp constraint enforcement) is next, after the upstream pipeli
 producing the actual clustering result we can run failure-targeting against.
 
 ---
+
+## 2026-05-12 — Phase 2: ChainedWarpDataGenerator
+
+**Mechanism**: subclass `mimicgen.datagen.data_generator.DataGenerator`, intercept the subtask
+loop, and check the constraint after subtask `N` completes (the boundary is observed via
+`env_interface.get_datagen_info()` at the *start* of subtask `N+1`). If the achieved object pose
+lies outside the configured slack box, the trial early-aborts and returns an empty result.
+The outer trial-budget loop in MimicGen's `generate_dataset` already resamples + retries.
+
+When the constraint *is* met, the remaining subtasks run normally — MimicGen's per-subtask
+warp transforms the seed segments using the current (constrained) object pose. That's the
+"chained-warp" effect the user described: Run-1's achieved-near-target pose becomes the IC
+for Run-2 without any explicit splitting.
+
+**Why this beats the old rejection-after-full-trajectory mechanism:**
+- Early abort skips executing subtasks N+1..M-1 on doomed trials — cuts wasted compute.
+- Slack box is built from data (`slack = α × cluster_stddev`, with min/max clamps) instead
+  of a global guess.
+- Slack widens by `slack_widen_factor=2×` on retry-loop signal, allowing graceful degradation.
+
+**Files:**
+- `policy_doctor/mimicgen/chained_warp_generator.py`:
+  - `IntermediateConstraint` (target_pose / slack / objects, with `is_satisfied()` and
+    `widen()`).
+  - `GenerationOutcome` (what the outer loop reads off `last_outcome`).
+  - `make_chained_warp_generator_class()` — lazy factory; sim imports happen only when called.
+  - `derive_slack_from_stddev()` — feature-space stddev → world slack with sin/cos→angular
+    conversion + clamping.
+  - `_datagen_info_to_xy_yaw()` + `_wrap_angle()` helpers.
+
+- `scripts/run_mimicgen_generate.py`: new `--chained_warp_constraint` JSON flag (mutually
+  exclusive with the legacy `--subtask_constraints`). When set, swaps the bound subclass into
+  `mimicgen.datagen.data_generator.DataGenerator` and
+  `mimicgen.scripts.generate_dataset.DataGenerator` before `generate_dataset()` runs.
+
+**Tests:**
+- `tests/mimicgen/test_chained_warp.py` — 16 unit tests covering `is_satisfied` (inside/on
+  boundary/outside, angle wraparound, missing objects, `objects` filter), `widen`,
+  `derive_slack_from_stddev` (typical / clamp-low / clamp-high), `_wrap_angle`,
+  `_datagen_info_to_xy_yaw` (4x4 pose extraction, empty), `GenerationOutcome` defaults.
+- `tests/mimicgen/test_chained_warp_e2e.py` — gated on `MIMICGEN_E2E=1` and sim-dep
+  imports. Copies one demo from `~/data/mimicgen_data/source/square.hdf5`, runs
+  `run_mimicgen_generate.py` as a subprocess with two constraints:
+    1. impossible target at (9, 9) with tight slack → expect zero successes.
+    2. loose slack around the seed's own subtask-0-end pose → expect some successes;
+       walks the produced `demo.hdf5` and verifies the boundary pose of every successful
+       demo is inside the slack box.
+
+Run the e2e test with:
+```
+MIMICGEN_E2E=1 conda run -n mimicgen_torch2 --no-capture-output \
+  python -m unittest tests.mimicgen.test_chained_warp_e2e -v
+```
+
+Currently the GPU is busy with the baseline training; we'll run the e2e once that finishes
+or in parallel on a CPU-only mode.
+
+**Not yet done:**
+- Plumbing the path-based clusters (Phase 1 result JSON) into the actual generation call —
+  i.e. translating each per-cluster constraint dict into an `IntermediateConstraint` and
+  invoking `run_mimicgen_generate.py --chained_warp_constraint=...` from
+  `generate_mimicgen_demos.py`. This is the last step before the failure-targeting arm
+  end-to-end. Will land next.
+
+---

@@ -121,7 +121,24 @@ def main(argv: list[str] | None = None) -> None:
                              '(rejected). Uses same world→relative coordinate conversion as '
                              '--object_pose_ranges. Disabled when null (default).')
 
+    # --- Phase-2 chained-warp constraint ---------------------------------
+    # When set, swaps in policy_doctor's ChainedWarpDataGenerator: the trial
+    # is *early-aborted* the moment subtask <subtask_idx> ends outside the
+    # slack box. Later subtasks then warp naturally around the achieved
+    # (within-slack) end pose — that's the chained-warp behaviour.
+    parser.add_argument("--chained_warp_constraint", type=str, default=None,
+                        help='JSON dict for the new constraint-aware generator. '
+                             'Schema: {"subtask_idx": int, '
+                             '         "target_pose": {obj: {x, y, z_rot}}, '
+                             '         "slack":       {obj: {x, y, z_rot}}}. '
+                             'Mutually exclusive with --subtask_constraints. '
+                             'When set, slack values are world-absolute (NOT relative to seed).')
+
     args = parser.parse_args(argv)
+    if args.chained_warp_constraint and args.subtask_constraints:
+        parser.error(
+            "--chained_warp_constraint and --subtask_constraints are mutually exclusive"
+        )
 
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
@@ -447,6 +464,48 @@ def main(argv: list[str] | None = None) -> None:
                     for si, c in subtask_constraints.items()
                 )
             )
+
+    # --- Optional: install the chained-warp data generator -----------------
+    # Replaces the default mimicgen DataGenerator with a subclass that aborts
+    # the trial early if the constrained subtask's object pose lands outside
+    # the slack box. Outer trial-budget loop in generate_dataset() handles the
+    # retry.
+    if args.chained_warp_constraint:
+        import json as _json3
+        from policy_doctor.mimicgen.chained_warp_generator import (
+            IntermediateConstraint,
+            make_chained_warp_generator_class,
+        )
+        import mimicgen.datagen.data_generator as _dg_mod
+        import mimicgen.scripts.generate_dataset as _gd_mod
+
+        _cw = _json3.loads(args.chained_warp_constraint)
+        constraint = IntermediateConstraint(
+            subtask_idx=int(_cw["subtask_idx"]),
+            target_pose=_cw["target_pose"],
+            slack=_cw["slack"],
+            slack_widen_factor=float(_cw.get("slack_widen_factor", 2.0)),
+            objects=_cw.get("objects"),
+        )
+        _BaseDG = _dg_mod.DataGenerator
+        _ChainedWarpClass = make_chained_warp_generator_class()
+        # Pre-bind the constraint via a thin factory so the rest of MimicGen
+        # can instantiate it just like the base DataGenerator.
+
+        class _BoundCW(_ChainedWarpClass):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, constraint=constraint, **kw)
+
+        # Swap in both spots that import DataGenerator by name.
+        _dg_mod.DataGenerator = _BoundCW  # type: ignore[assignment]
+        if hasattr(_gd_mod, "DataGenerator"):
+            _gd_mod.DataGenerator = _BoundCW  # type: ignore[assignment]
+
+        print(
+            f"[run_mimicgen_generate] chained-warp constraint installed: "
+            f"subtask={constraint.subtask_idx}  "
+            f"objects={list(constraint.target_pose.keys())}"
+        )
 
     print(f"[run_mimicgen_generate] generate_dataset: num_trials={args.num_trials}")
     stats = generate_dataset(cfg, auto_remove_exp=True, render=False, video_path=None)
