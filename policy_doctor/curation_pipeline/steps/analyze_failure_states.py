@@ -52,14 +52,21 @@ from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.data.clustering_loader import load_clustering_result_from_path
 from policy_doctor.mimicgen.failure_targeting import (
     DEFAULT_SQUARE_STATE_SCHEMA,
+    NodeClusterResult,
     StateClusterResult,
     cluster_center_to_object_poses,
     cluster_target_states,
     collect_failed_initial_states,
+    collect_failure_trajectory_states_by_node,
     collect_states_at_node,
     derive_subtask_constraints,
+    enumerate_failure_paths,
     find_pre_failure_nodes,
+    intermediate_nodes_for_path,
+    match_failure_trajectories_to_paths,
     object_poses_to_pose_ranges,
+    pick_intermediate_target_node,
+    silhouette_kmeans,
 )
 
 # Re-use the rollout HDF5 resolver from the existing graph step.
@@ -90,6 +97,13 @@ class AnalyzeFailureStatesStep(PipelineStep[dict]):
             return {"enabled": False, "n_clusters": 0, "pre_failure_nodes": [], "clusters": []}
 
         # --- Config ---
+        # mode selects which pipeline to run:
+        #   "prefailure_node" (default, legacy): pool states from pre-failure graph nodes
+        #     across all trajectories that visited them.
+        #   "path_based": pick the top-K most-probable START→FAILURE paths, match each to
+        #     the failure trajectories that follow it, collect states from those
+        #     trajectories per node along the path.
+        mode: str = str(OmegaConf.select(fa_cfg, "mode") or "prefailure_node")
         value_threshold: float = float(OmegaConf.select(fa_cfg, "value_threshold") or 0.0)
         min_transition_prob: float = float(OmegaConf.select(fa_cfg, "min_transition_prob") or 0.05)
         n_clusters: int = int(OmegaConf.select(fa_cfg, "n_clusters") or 5)
@@ -106,6 +120,16 @@ class AnalyzeFailureStatesStep(PipelineStep[dict]):
         subtask_constraint_slack: float = float(
             OmegaConf.select(fa_cfg, "subtask_constraint_slack") or 1.5
         )
+        # Path-based-only knobs.
+        top_k_paths: int = int(OmegaConf.select(fa_cfg, "top_k_paths") or 5)
+        path_min_edge_probability: float = float(
+            OmegaConf.select(fa_cfg, "path_min_edge_probability") or 0.0
+        )
+        intermediate_heuristic: str = str(
+            OmegaConf.select(fa_cfg, "intermediate_heuristic") or "closest_to_failure"
+        )
+        kmeans_k_min: int = int(OmegaConf.select(fa_cfg, "kmeans_k_min") or 2)
+        kmeans_k_max: int = int(OmegaConf.select(fa_cfg, "kmeans_k_max") or 10)
 
         # State schema (configurable, defaults to Square task layout).
         state_schema_cfg = OmegaConf.select(fa_cfg, "state_schema")
@@ -151,6 +175,35 @@ class AnalyzeFailureStatesStep(PipelineStep[dict]):
             f"  [analyze_failure_states] graph: {len(graph.nodes)} nodes, "
             f"{graph.num_episodes} episodes"
         )
+
+        # --- Dispatch on mode ---
+        if mode == "path_based":
+            return self._compute_path_based(
+                graph=graph,
+                node_values=node_values,
+                labels=labels,
+                metadata=metadata,
+                level=level,
+                rollouts_hdf5=rollouts_hdf5,
+                state_schema=state_schema,
+                top_k_paths=top_k_paths,
+                path_min_edge_probability=path_min_edge_probability,
+                intermediate_heuristic=intermediate_heuristic,
+                kmeans_k_min=kmeans_k_min,
+                kmeans_k_max=kmeans_k_max,
+                slack_x=slack_x,
+                slack_y=slack_y,
+                slack_z_rot=slack_z_rot,
+                subtask_constraint_idx=subtask_constraint_idx,
+                subtask_constraint_slack=subtask_constraint_slack,
+                budget_per_cluster=budget_per_cluster,
+                cluster_target_mode=cluster_target_mode,
+            )
+        if mode != "prefailure_node":
+            raise ValueError(
+                f"analyze_failure_states: unknown mode={mode!r}. "
+                "Valid modes: 'prefailure_node' (default), 'path_based'."
+            )
 
         # --- Find pre-failure edges ---
         pre_failure_edges = find_pre_failure_nodes(
@@ -273,7 +326,207 @@ class AnalyzeFailureStatesStep(PipelineStep[dict]):
 
         return {
             "enabled": True,
+            "mode": "prefailure_node",
             "n_clusters": cluster_result.n_clusters,
             "pre_failure_nodes": [[src, tgt, float(p)] for src, tgt, p in pre_failure_edges],
+            "clusters": clusters_out,
+        }
+
+    # ------------------------------------------------------------------
+    # Path-based mode (Phase 1 rewrite)
+    # ------------------------------------------------------------------
+
+    def _compute_path_based(
+        self,
+        *,
+        graph: Any,
+        node_values: dict[int, float],
+        labels: np.ndarray,
+        metadata: list[dict[str, Any]],
+        level: str,
+        rollouts_hdf5: str,
+        state_schema: dict[str, dict[str, int]],
+        top_k_paths: int,
+        path_min_edge_probability: float,
+        intermediate_heuristic: str,
+        kmeans_k_min: int,
+        kmeans_k_max: int,
+        slack_x: float,
+        slack_y: float,
+        slack_z_rot: float,
+        subtask_constraint_idx: int | None,
+        subtask_constraint_slack: float,
+        budget_per_cluster: int,
+        cluster_target_mode: str,
+    ) -> dict[str, Any]:
+        """Path-based failure targeting (see module docstring for design)."""
+        # 1. Top-K failure paths.
+        paths_with_prob = enumerate_failure_paths(
+            graph,
+            top_k=top_k_paths,
+            min_edge_probability=path_min_edge_probability,
+        )
+        print(
+            f"  [analyze_failure_states/path_based] {len(paths_with_prob)} failure paths "
+            f"(top_k={top_k_paths})"
+        )
+        for i, (path, prob) in enumerate(paths_with_prob):
+            print(f"    path {i}: p={prob:.3f}  nodes={path}")
+
+        if not paths_with_prob:
+            return {
+                "enabled": True,
+                "mode": "path_based",
+                "paths": [],
+            }
+
+        # 2. Match each path to failure trajectories.
+        path_only = [p for p, _ in paths_with_prob]
+        matched = match_failure_trajectories_to_paths(
+            labels, metadata, path_only, level=level
+        )
+        print(
+            "  [analyze_failure_states/path_based] matched episodes/path: "
+            f"{[len(m) for m in matched]}"
+        )
+
+        paths_out: list[dict[str, Any]] = []
+        for path_idx, ((path, prob), matched_eps) in enumerate(zip(paths_with_prob, matched)):
+            if not matched_eps:
+                print(f"    path {path_idx}: no matched failure trajectories — skipped")
+                continue
+
+            # 3. Per-node state collection from failure trajectories.
+            per_node = collect_failure_trajectory_states_by_node(
+                str(rollouts_hdf5),
+                labels,
+                metadata,
+                matched_episodes=matched_eps,
+                state_schema=state_schema,
+                level=level,
+            )
+
+            # 4. Pick the IC node + the intermediate node to constrain on.
+            from policy_doctor.behaviors.behavior_graph import START_NODE_ID
+
+            ic_node = START_NODE_ID
+            intermediate_node = pick_intermediate_target_node(
+                path, intermediate_heuristic
+            )
+
+            path_entry: dict[str, Any] = {
+                "path_idx": path_idx,
+                "path": [int(n) for n in path],
+                "probability": float(prob),
+                "matched_episodes": [int(e) for e in matched_eps],
+                "intermediate_node_id": (
+                    int(intermediate_node) if intermediate_node is not None else None
+                ),
+                "intermediate_heuristic": intermediate_heuristic,
+                "ic_pool": None,
+                "intermediate_pool": None,
+            }
+
+            # 5. Cluster the IC pool with silhouette-k.
+            ic_feats, ic_tags = per_node.get(
+                ic_node, (np.zeros((0, 4 * len(state_schema)), dtype=np.float32), [])
+            )
+            ic_result = silhouette_kmeans(
+                ic_feats, ic_tags, node_id=ic_node,
+                k_min=kmeans_k_min, k_max=kmeans_k_max,
+            )
+            path_entry["ic_pool"] = self._serialize_node_cluster(
+                ic_result, state_schema=state_schema,
+                slack_x=slack_x, slack_y=slack_y, slack_z_rot=slack_z_rot,
+                subtask_constraint_idx=None,
+                subtask_constraint_slack=subtask_constraint_slack,
+                budget_per_cluster=budget_per_cluster,
+                cluster_target_mode=cluster_target_mode,
+            )
+
+            # 6. Cluster the intermediate pool (only if a node was picked).
+            if intermediate_node is not None and intermediate_node in per_node:
+                mid_feats, mid_tags = per_node[intermediate_node]
+                mid_result = silhouette_kmeans(
+                    mid_feats, mid_tags, node_id=intermediate_node,
+                    k_min=kmeans_k_min, k_max=kmeans_k_max,
+                )
+                path_entry["intermediate_pool"] = self._serialize_node_cluster(
+                    mid_result, state_schema=state_schema,
+                    slack_x=slack_x, slack_y=slack_y, slack_z_rot=slack_z_rot,
+                    subtask_constraint_idx=subtask_constraint_idx,
+                    subtask_constraint_slack=subtask_constraint_slack,
+                    budget_per_cluster=budget_per_cluster,
+                    cluster_target_mode=cluster_target_mode,
+                )
+
+            print(
+                f"    path {path_idx}: matched={len(matched_eps)}  "
+                f"IC k={path_entry['ic_pool']['k'] if path_entry['ic_pool'] else 0}  "
+                f"intermediate node={intermediate_node} "
+                f"k={path_entry['intermediate_pool']['k'] if path_entry['intermediate_pool'] else 0}"
+            )
+
+            paths_out.append(path_entry)
+
+        return {
+            "enabled": True,
+            "mode": "path_based",
+            "paths": paths_out,
+        }
+
+    @staticmethod
+    def _serialize_node_cluster(
+        result: NodeClusterResult,
+        *,
+        state_schema: dict[str, dict[str, int]],
+        slack_x: float,
+        slack_y: float,
+        slack_z_rot: float,
+        subtask_constraint_idx: int | None,
+        subtask_constraint_slack: float,
+        budget_per_cluster: int,
+        cluster_target_mode: str,
+    ) -> dict[str, Any]:
+        """Render a :class:`NodeClusterResult` as JSON-serializable per-cluster constraints."""
+        clusters_out: list[dict[str, Any]] = []
+        for ci in range(result.k):
+            center_feat = result.centers[ci]
+            stddev_feat = result.stddevs[ci]
+
+            # cluster_target_mode is currently always treated as "centroid" in path-based mode.
+            # Sampling a member as the target would require carrying raw features through
+            # NodeClusterResult; revisit if needed.
+            _ = cluster_target_mode
+            pose_center = cluster_center_to_object_poses(center_feat, state_schema)
+            suggested_pose_ranges = object_poses_to_pose_ranges(
+                pose_center, slack_x=slack_x, slack_y=slack_y, slack_z_rot=slack_z_rot
+            )
+            suggested_subtask: dict | None = None
+            if subtask_constraint_idx is not None:
+                suggested_subtask = derive_subtask_constraints(
+                    pose_center,
+                    subtask_idx=subtask_constraint_idx,
+                    slack_multiplier=subtask_constraint_slack,
+                    slack_x=slack_x,
+                    slack_y=slack_y,
+                    slack_z_rot=slack_z_rot,
+                )
+            clusters_out.append({
+                "cluster_idx": ci,
+                "n_states": int((result.labels == ci).sum()),
+                "eligible_rollout_idxs": result.cluster_episode_indices[ci],
+                "budget_per_cluster": budget_per_cluster,
+                "center_feature": [float(v) for v in center_feat],
+                "stddev_feature": [float(v) for v in stddev_feat],
+                "suggested_object_pose_ranges": suggested_pose_ranges,
+                "suggested_subtask_constraints": suggested_subtask,
+            })
+
+        return {
+            "node_id": int(result.node_id),
+            "n_states": int(result.n_states),
+            "k": int(result.k),
+            "silhouette": float(result.silhouette) if result.silhouette == result.silhouette else None,
             "clusters": clusters_out,
         }
