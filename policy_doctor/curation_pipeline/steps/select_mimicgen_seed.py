@@ -136,7 +136,7 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
             AnalyzeFailureStatesStep,
         )
-        fa_step = AnalyzeFailureStatesStep(self.cfg, self.parent_run_dir)
+        fa_step = AnalyzeFailureStatesStep(self.cfg, self.run_dir)
         fa_result = fa_step.load() if fa_step.is_done() else None
         fa_mode = (fa_result or {}).get("mode", "prefailure_node")
         use_failure_analysis = (
@@ -240,15 +240,20 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                 for ic_cluster in ic_clusters:
                     ci = ic_cluster["cluster_idx"]
                     budget = int(ic_cluster.get("budget_per_cluster", 1))
-                    eligible = ic_cluster.get("eligible_rollout_idxs") or None
 
+                    # eligible_rollout_idxs from the IC cluster are FAILURE trajectories
+                    # (the initial states that led to failure). They cannot be used to
+                    # filter seed selection because MimicGen needs success trajectories
+                    # as seeds. The IC constraint (object_pose_ranges) is what directs
+                    # generation toward the failure region; the seed just provides
+                    # subtask structure.
                     heuristic = build_heuristic(
                         heuristic_name,
                         top_k_paths=top_k_paths,
                         min_path_probability=min_path_probability,
                         success_only=success_only,
                         random_seed=random_seed,
-                        eligible_rollout_idxs=eligible,
+                        eligible_rollout_idxs=None,
                     )
                     try:
                         cluster_results = heuristic.select_multiple(
