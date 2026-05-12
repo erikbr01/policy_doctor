@@ -192,10 +192,6 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                 cluster_center_to_object_poses,
             )
             import numpy as _np
-            # Slack for IC constraint (from failure_analysis config).
-            _slack_x = float(OmegaConf.select(fa_cfg, "slack_x") or 0.03)
-            _slack_y = float(OmegaConf.select(fa_cfg, "slack_y") or 0.03)
-            _slack_z_rot = float(OmegaConf.select(fa_cfg, "slack_z_rot") or 0.5)
             state_schema_cfg = OmegaConf.select(fa_cfg, "state_schema")
             state_schema = (
                 OmegaConf.to_container(state_schema_cfg, resolve=True)
@@ -278,52 +274,36 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
                         print(f"    path {path_idx} ic_cluster {ci}: selection failed: {e}")
                         continue
 
-                    # Compute cluster center world-frame pose.
+                    opr = ic_cluster.get("suggested_object_pose_ranges")
+
+                    # Compute IC cluster center as {obj: {x, y, z_rot}} for the nut.
+                    # This is stored as per_seed_ic_center_poses and used by
+                    # generate_mimicgen_demos as the nut anchor in --seed_object_poses
+                    # (the peg is added from the global seed HDF5 to avoid
+                    # RandomizationError in Square_D1 where the peg is also randomized).
+                    ic_center_pose: dict | None = None
                     center_feat = ic_cluster.get("center_feature")
-                    cluster_pose: dict | None = None
                     if center_feat is not None:
                         full_pose = cluster_center_to_object_poses(
                             _np.array(center_feat, dtype=_np.float32), state_schema
                         )
-                        cluster_pose = {
+                        ic_center_pose = {
                             obj: {"x": p["x"], "y": p["y"], "z_rot": p["z_rot"]}
                             for obj, p in full_pose.items()
                         }
 
                     for r in cluster_results:
                         results.append(r)
+                        per_seed_object_pose_ranges.append(opr)
                         per_seed_subtask_constraints.append(None)  # legacy slot stays empty
                         per_seed_chained_warp_constraints.append(chained_warp_for_path)
-                        per_seed_ic_center_poses.append(None)  # not using IC center as seed_object_poses
-
-                        # Build per-seed IC range corrected for the offset between
-                        # the seed's actual initial pose and the cluster center.
-                        # _constrained_bounds applies ranges as offsets FROM --seed_object_poses,
-                        # so to target cluster_center ± slack we need:
-                        #   range_x = [cluster_x - seed_x - slack_x, cluster_x - seed_x + slack_x]
-                        # This ensures generated ICs land at cluster_center ± slack regardless
-                        # of where the seed started.
-                        corrected_opr: dict | None = None
-                        if cluster_pose is not None:
-                            seed_state = r.trajectory.states[0]
-                            corrected_opr = {}
-                            for obj_name, cp in cluster_pose.items():
-                                x_idx = state_schema.get(obj_name, {}).get("x_idx", 10)
-                                y_idx = state_schema.get(obj_name, {}).get("y_idx", 11)
-                                seed_x = float(seed_state[x_idx])
-                                seed_y = float(seed_state[y_idx])
-                                corrected_opr[obj_name] = {
-                                    "x": [cp["x"] - seed_x - _slack_x, cp["x"] - seed_x + _slack_x],
-                                    "y": [cp["y"] - seed_y - _slack_y, cp["y"] - seed_y + _slack_y],
-                                    "z_rot": [-_slack_z_rot, _slack_z_rot],
-                                }
-                        per_seed_object_pose_ranges.append(corrected_opr)
+                        per_seed_ic_center_poses.append(ic_center_pose)
 
                     n_eligible = len(ic_cluster.get("eligible_rollout_idxs") or [])
                     print(
                         f"    path {path_idx} ic_cluster {ci}: selected {len(cluster_results)} "
                         f"seeds (IC cluster has {n_eligible} failure trajectories, "
-                        f"cluster_center={cluster_pose})"
+                        f"ic_center={ic_center_pose})"
                     )
         elif use_failure_analysis:
             clusters = fa_result["clusters"]
