@@ -504,7 +504,6 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         per_seed_opr: list | None = None
         per_seed_sc: list | None = None
         per_seed_cw: list | None = None     # path_based chained-warp constraints
-        per_seed_ic_ctr: list | None = None  # IC cluster center poses for --seed_object_poses
         new_select_result_for_constraints: dict | None = None
         from policy_doctor.curation_pipeline.steps.select_mimicgen_seed import SelectMimicgenSeedStep
         _sel_step = SelectMimicgenSeedStep(self.cfg, self.run_dir)
@@ -513,7 +512,6 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             per_seed_opr = _sel_result.get("per_seed_object_pose_ranges")
             per_seed_sc = _sel_result.get("per_seed_subtask_constraints")
             per_seed_cw = _sel_result.get("per_seed_chained_warp_constraints")
-            per_seed_ic_ctr = _sel_result.get("per_seed_ic_center_poses")
             new_select_result_for_constraints = _sel_result
 
         # Read global subtask_constraints from config (overrides per-seed when set globally).
@@ -546,16 +544,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             if transform_first:
                 cmd.append("--transform_first_robot_pose")
             if fix_initial_object_poses and seed_object_poses:
-                # Per-seed IC center pose overrides the HDF5 initial pose as the
-                # anchor for --seed_object_poses.  This ensures the ±slack range
-                # in object_pose_ranges is centred at the failure cluster center,
-                # not at the seed trajectory's (possibly distant) starting pose.
-                effective_seed_poses = seed_object_poses
-                if per_seed_ic_ctr is not None and seed_idx is not None:
-                    ic_ctr = per_seed_ic_ctr[seed_idx] if seed_idx < len(per_seed_ic_ctr) else None
-                    if ic_ctr is not None:
-                        effective_seed_poses = ic_ctr
-                cmd += ["--seed_object_poses", json.dumps(effective_seed_poses)]
+                cmd += ["--seed_object_poses", json.dumps(seed_object_poses)]
                 # Prefer per-seed range (from failure analysis) if available for this seed.
                 effective_opr = object_pose_ranges
                 if per_seed_opr is not None and seed_idx is not None:
