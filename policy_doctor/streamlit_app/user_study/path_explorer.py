@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+import plotly.graph_objects as go
+import streamlit as st
+
+from policy_doctor.behaviors.behavior_graph import (
+    BehaviorGraph,
+    END_NODE_ID,
+    FAILURE_NODE_ID,
+    START_NODE_ID,
+    SUCCESS_NODE_ID,
+)
+from policy_doctor.streamlit_app.components.mp4_player import mp4_player
+
+_SPECIAL_IDS = frozenset({START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
+
+
+def _node_display_name(node_id: int, graph: BehaviorGraph) -> str:
+    if node_id == START_NODE_ID:
+        return "START"
+    if node_id == SUCCESS_NODE_ID:
+        return "SUCCESS"
+    if node_id == FAILURE_NODE_ID:
+        return "FAILURE"
+    if node_id == END_NODE_ID:
+        return "END"
+    node = graph.nodes.get(node_id)
+    name = node.name if node else str(node_id)
+    return f"Node {node_id}: {name}"
+
+
+def _format_path(path_nodes: list[int], graph: BehaviorGraph) -> str:
+    parts = []
+    for nid in path_nodes:
+        if nid == START_NODE_ID:
+            parts.append("START")
+        elif nid == SUCCESS_NODE_ID:
+            parts.append("✓ SUCCESS")
+        elif nid == FAILURE_NODE_ID:
+            parts.append("✗ FAILURE")
+        elif nid == END_NODE_ID:
+            parts.append("END")
+        else:
+            node = graph.nodes.get(nid)
+            name = node.name if node else str(nid)
+            parts.append(f"Node {nid}: {name}")
+    return " → ".join(parts)
+
+
+def _get_episodes_for_path(
+    path_nodes: list[int],
+    labels: np.ndarray,
+    metadata: list[dict],
+) -> list[int]:
+    required = [n for n in path_nodes if n not in _SPECIAL_IDS]
+    if not required:
+        return []
+
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
+
+    ep_sequences: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for i, meta in enumerate(metadata):
+        ep_idx = meta.get(ep_key)
+        if ep_idx is None:
+            continue
+        label = int(labels[i])
+        if label == -1:
+            continue
+        ts = meta.get("timestep", meta.get("window_start", 0))
+        ep_sequences[ep_idx].append((ts, label))
+
+    for ep_idx in ep_sequences:
+        ep_sequences[ep_idx].sort(key=lambda x: x[0])
+
+    matching: list[int] = []
+    for ep_idx, seq in ep_sequences.items():
+        seq_labels = [lab for _, lab in seq]
+        cursor = 0
+        found_all = True
+        for req in required:
+            found = False
+            while cursor < len(seq_labels):
+                if seq_labels[cursor] == req:
+                    cursor += 1
+                    found = True
+                    break
+                cursor += 1
+            if not found:
+                found_all = False
+                break
+        if found_all:
+            matching.append(ep_idx)
+
+    return sorted(matching)
+
+
+def _find_mp4_episode(ep_idx: int, mp4_index: dict) -> Optional[dict]:
+    for ep in mp4_index.get("episodes", []):
+        if ep.get("index") == ep_idx:
+            return ep
+    return None
+
+
+def _episode_node_range(
+    ep_idx: int,
+    node_id: int,
+    labels: np.ndarray,
+    metadata: list[dict],
+) -> Optional[tuple[int, int]]:
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
+    timesteps = [
+        meta.get("timestep", meta.get("window_start", 0))
+        for i, meta in enumerate(metadata)
+        if meta.get(ep_key) == ep_idx and int(labels[i]) == node_id
+    ]
+    if not timesteps:
+        return None
+    return min(timesteps), max(timesteps)
+
+
+def render_path_explorer(
+    graph: BehaviorGraph,
+    labels: np.ndarray,
+    metadata: list[dict],
+    mp4_dir: Path,
+    mp4_index: dict,
+    key_prefix: str = "pex",
+) -> None:
+    st.subheader("Top Paths Through Behavior Graph")
+
+    max_paths = st.slider(
+        "Max paths to show",
+        min_value=1,
+        max_value=20,
+        value=10,
+        key=f"{key_prefix}_max_paths",
+    )
+
+    all_paths = graph.enumerate_paths(max_paths=max_paths)
+    terminal_paths = [
+        (path, prob, loops)
+        for path, prob, loops in all_paths
+        if path and path[-1] in {SUCCESS_NODE_ID, FAILURE_NODE_ID}
+    ]
+
+    if not terminal_paths:
+        st.info("No paths ending in SUCCESS or FAILURE found.")
+        return
+
+    path_labels = []
+    path_probs = []
+    path_colors = []
+    for path, prob, _ in terminal_paths:
+        terminal = path[-1]
+        label = _format_path(path, graph)
+        path_labels.append(label)
+        path_probs.append(prob)
+        path_colors.append("#2ca02c" if terminal == SUCCESS_NODE_ID else "#d62728")
+
+    fig_paths = go.Figure(
+        go.Bar(
+            x=path_probs,
+            y=path_labels,
+            orientation="h",
+            marker_color=path_colors,
+        )
+    )
+    fig_paths.update_layout(
+        height=max(120, 36 * len(path_labels) + 60),
+        margin=dict(l=0, r=20, t=20, b=20),
+        xaxis=dict(title="Path probability", range=[0, max(path_probs) * 1.1]),
+        yaxis=dict(title=None, autorange="reversed"),
+    )
+    st.plotly_chart(fig_paths, use_container_width=True, key=f"{key_prefix}_paths_chart")
+
+    st.divider()
+
+    def _path_select_label(i: int, path: list[int], prob: float) -> str:
+        terminal = path[-1]
+        outcome = "SUCCESS" if terminal == SUCCESS_NODE_ID else "FAILURE"
+        short = " → ".join(_node_display_name(n, graph) for n in path)
+        return f"Path {i + 1} (p={prob:.3f}, {outcome}) — {short}"
+
+    select_options = [
+        _path_select_label(i, path, prob)
+        for i, (path, prob, _) in enumerate(terminal_paths)
+    ]
+    selected_label = st.selectbox(
+        "Explore path:",
+        options=select_options,
+        key=f"{key_prefix}_path_select",
+    )
+    selected_path_idx = select_options.index(selected_label)
+    selected_path, selected_prob, _ = terminal_paths[selected_path_idx]
+
+    terminal_id = selected_path[-1]
+    outcome_str = "SUCCESS" if terminal_id == SUCCESS_NODE_ID else "FAILURE"
+    outcome_color = "#2ca02c" if terminal_id == SUCCESS_NODE_ID else "#d62728"
+
+    flow_parts = []
+    for nid in selected_path:
+        if nid == START_NODE_ID:
+            part = "<span style='background:#eee;padding:4px 10px;border-radius:4px;font-weight:bold;'>START</span>"
+        elif nid == SUCCESS_NODE_ID:
+            part = f"<span style='background:{outcome_color};color:white;padding:4px 10px;border-radius:4px;font-weight:bold;'>✓ SUCCESS</span>"
+        elif nid == FAILURE_NODE_ID:
+            part = f"<span style='background:{outcome_color};color:white;padding:4px 10px;border-radius:4px;font-weight:bold;'>✗ FAILURE</span>"
+        elif nid == END_NODE_ID:
+            part = "<span style='background:#888;color:white;padding:4px 10px;border-radius:4px;'>END</span>"
+        else:
+            node = graph.nodes.get(nid)
+            name = node.name if node else str(nid)
+            part = f"<span style='background:#1f77b4;color:white;padding:4px 10px;border-radius:4px;'>Node {nid}: {name}</span>"
+        flow_parts.append(part)
+
+    arrow = " <span style='color:#aaa;font-size:1.2em;'>→</span> "
+    st.markdown(arrow.join(flow_parts), unsafe_allow_html=True)
+    st.caption(f"Path probability: {selected_prob:.4f} | Outcome: {outcome_str}")
+
+    matching_episodes = _get_episodes_for_path(selected_path, labels, metadata)
+    show_eps = matching_episodes[:5]
+
+    if not show_eps:
+        st.info("No episodes found matching this path.")
+        return
+
+    st.markdown(f"**{len(matching_episodes)} matching episode(s)** (showing up to 5)")
+
+    intermediate_nodes = [n for n in selected_path if n not in _SPECIAL_IDS]
+
+    for ep_idx in show_eps:
+        ep_entry = _find_mp4_episode(ep_idx, mp4_index)
+        if ep_entry is None:
+            st.caption(f"Episode {ep_idx} — video not found in index.")
+            continue
+        success = ep_entry.get("success")
+        status = "✓ Success" if success is True else "✗ Failure" if success is False else "Unknown"
+        with st.expander(f"Episode {ep_idx} — {status}"):
+            video_path = mp4_dir / ep_entry["path"]
+            total_frames = ep_entry.get("frame_count")
+            if intermediate_nodes:
+                first_node = intermediate_nodes[0]
+                last_node = intermediate_nodes[-1]
+                first_range = _episode_node_range(ep_idx, first_node, labels, metadata)
+                last_range = _episode_node_range(ep_idx, last_node, labels, metadata)
+                slice_start = first_range[0] if first_range else None
+                slice_end = last_range[1] if last_range else None
+            else:
+                slice_start = slice_end = None
+            mp4_player(
+                video_path,
+                label="",
+                slice_start=slice_start,
+                slice_end=slice_end,
+                total_frames=total_frames,
+                key=f"{key_prefix}_vid_{selected_path_idx}_{ep_idx}",
+            )
