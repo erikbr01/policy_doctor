@@ -37,6 +37,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             cond_predict_scale=True,
             obs_encoder_group_norm=False,
             eval_fixed_crop=False,
+            pretrained_backbone=False,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -75,6 +76,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         with config.unlocked():
             # set config with shape_meta
             config.observation.modalities.obs = obs_config
+
+            if pretrained_backbone:
+                config.observation.encoder.rgb.core_kwargs.backbone_kwargs.pretrained = True
 
             if crop_shape is None:
                 for key, modality in config.observation.encoder.items():

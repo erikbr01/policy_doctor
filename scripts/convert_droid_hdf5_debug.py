@@ -259,7 +259,7 @@ def main() -> None:
         default="/mnt/ssdB/erik/zed_settings",
         help="Directory containing SN<serial>.conf calibration files",
     )
-    p.add_argument("--image_size", nargs=2, type=int, default=[180, 320], metavar=("H", "W"))
+    p.add_argument("--image_size", nargs=2, type=int, default=[256, 256], metavar=("H", "W"))
     p.add_argument("--train_frac", type=float, default=0.5)
     p.add_argument("--val_frac", type=float, default=0.3)
     args = p.parse_args()
