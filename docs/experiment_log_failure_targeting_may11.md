@@ -508,3 +508,161 @@ case rejects 100%; loose-target case yields successes with boundary poses
 inside the constraint. Same as Phase 3 but now full-orientation.
 
 ---
+
+## 2026-05-12 — IC-only ablation arm added
+
+Added `MimicgenFailureICOnlyArmStep` (step name `mimicgen_failure_ic_only`). Identical to
+`MimicgenFailureTargetingArmStep` except `failure_analysis.subtask_constraint_idx=None`,
+which disables the chained-warp intermediate constraint entirely. Generated data is
+constrained to the failure IC region but not forced through a specific intermediate pose.
+
+Purpose: isolate IC-constraint contribution (this arm) vs IC + intermediate constraint
+combined (the `mimicgen_failure_targeting` arm).
+
+Registered in `pipeline.py`, added to the may11 experiment yaml steps list, 12 unit tests.
+
+---
+
+## 2026-05-12–13 — Generation debugging: 7 bugs found and fixed
+
+Launching generation for the first time revealed a cascade of bugs, all fixed before
+work was paused. Listed in discovery order.
+
+### Bug 1 — `analyze_failure_states` lookup uses wrong run directory
+
+`SelectMimicgenSeedStep` looked for the `AnalyzeFailureStatesStep` result in
+`self.parent_run_dir` (the top-level run root), but inside a composite arm the analyze
+step lives in the arm's own sub-directory (`self.run_dir`). `is_done()` always returned
+`False` → `use_failure_analysis = False` → silent fallback to the plain 20-seed
+`near_failure` heuristic with no IC or chained-warp constraints.
+
+Fix: `AnalyzeFailureStatesStep(self.cfg, self.run_dir)`.
+
+### Bug 2 — IC cluster's eligible rollout indices passed to seed selection
+
+The IC cluster stores `eligible_rollout_idxs` — the failure trajectory indices whose
+initial state was in that cluster. These were passed directly to `NearFailurePathHeuristic`
+as a filter. But MimicGen requires **success** trajectories as seeds (failure trajectories
+have no complete task execution to warp from), so the heuristic raised `RuntimeError`:
+"no rollout matched any of the top-30 near-failure paths."
+
+Fix: pass `eligible_rollout_idxs=None` to the heuristic. The IC constraint
+(`object_pose_ranges`) directs *generation* to the failure region; the seed trajectory
+only needs to provide subtask structure.
+
+### Bug 3 — Leftover `eligible` variable in print statement
+
+After removing the `eligible` assignment in Bug 2's fix, a print statement still
+referenced the variable → `UnboundLocalError`.
+
+### Bug 4 — IC ranges not centred at cluster centre; seed_object_poses anchored to wrong demo
+
+`object_pose_ranges` stores ±slack offsets that `_constrained_bounds` applies relative to
+`--seed_object_poses`. The seed poses were read once from the main `seed.hdf5` demo_0,
+but each IC cluster has a different centre. Seeds from cluster 1 (y ≈ −0.111) were being
+constrained ±3 cm around seed demo_0's initial pose (y ≈ −0.001), not around the failure
+cluster centre.
+
+Fix: compute the IC cluster centre in world-frame `{x, y}` from `cluster_center_to_object_poses`
+and pass it as the nut component of `--seed_object_poses`. This anchors the ±slack box at the
+correct location.
+
+### Bug 5 — RandomizationError when IC centre passed without peg
+
+`Square_D1` randomises the peg once at `_load_model` time and fixes it in the XML (no free
+joint). With `--seed_object_poses` containing only `{"nut": ...}`, the peg bounds were
+unrestricted; if the peg was sampled inside the nut's IC zone, `_reset_internal`'s 5000-retry
+collision loop always failed.
+
+Initially tried to pin the peg by including it from the seed HDF5 datagen_info.
+This worked for cluster 0 seeds (peg at y = −0.082, nut zone at y ∈ (0.057, 0.117) — no
+overlap) but crashed for cluster 1 seeds (peg at y = −0.082 is directly inside the nut zone
+y ∈ (−0.141, −0.081) — every trial failed).
+
+Correct fix: restrict the *peg's* placement bounds inside `_constrained_bounds` to the
+"safe" half that lies outside the nut IC zone. Buffer must exceed
+`nut_horizontal_radius + peg_horizontal_radius = 0.11 + 0.023 = 0.133 m`. Used 0.15 m.
+
+```python
+excl_lo = nut_world_y_lo - peg_ref_y - 0.15
+excl_hi = nut_world_y_hi - peg_ref_y + 0.15
+safe_neg = (peg_y_orig[0], min(excl_lo, peg_y_orig[1]))
+safe_pos = (max(excl_hi, peg_y_orig[0]), peg_y_orig[1])
+# pick wider of the two safe halves
+```
+
+For cluster 0 (nut y ≈ 0.087): peg constrained to y ∈ (−0.200, −0.093).
+For cluster 1 (nut y ≈ −0.111): peg constrained to y ∈ (0.069, 0.200).
+
+### Bug 6 — z_rot constraint forced 0 % MimicGen success
+
+IC cluster centre z_rot (e.g. −1.45 rad) was included in `--seed_object_poses` and
+`object_pose_ranges["nut"]["z_rot"] = [−0.5, 0.5]`, constraining the generated nut to a
+narrow angular band far from the source demos' typical z_rot (≈ 2.79 rad). MimicGen's
+nearest-neighbour search found no good matches → 0/75 successes on every seed.
+
+Fix: set `z_rot = null` in `object_pose_ranges` and omit z_rot from the IC centre pose.
+`_constrained_bounds` skips `null` axes, leaving the env's default rotation range (0, 2π)
+intact. MimicGen can then choose any orientation for trajectory warping.
+
+Result: IC cluster 0 seeds rose from 0 % to ≈ 10–12 % success rate.
+
+### Bug 7 — Peg exclusion buffer too small (5 cm vs required 13.3 cm)
+
+The first implementation used `_peg_buf = 0.05`. `SquareNut.horizontal_radius = 0.11 m`
+(much larger than expected), giving a collision threshold of 0.133 m. With a 5 cm buffer,
+the "safe" peg zone still included positions within the 13.3 cm collision radius. After
+≈ 50 trials the peg eventually ended up close enough to the nut's IC zone to trigger
+`RandomizationError`.
+
+Fix: increase to `_peg_buf = 0.15 m`.
+
+---
+
+## 2026-05-13 — Generation status at pause (switching machines)
+
+Work paused mid-generation; all code pushed to `feat/mimicgen-targeted-generation`.
+
+**What was completed:** full upstream pipeline (train_baseline → eval_policies →
+compute_infembed → run_clustering) for the 100-demo Square D1 baseline. Baseline at
+epoch ≈ 500/1751, score 0.44.
+
+**Behavior-graph findings:**
+- Only **1 failure path** found: START → node 1 → FAILURE (top-5 was requested; the graph
+  had low path diversity at 15 clusters with this 100-demo policy).
+- **2 IC clusters:** cluster 0 (nut initial y ≈ 0.087, 10 failure eps),
+  cluster 1 (nut initial y ≈ −0.111, 9 failure eps).
+- **1 intermediate node** (node 1): post-grasp cluster centre at y ≈ −0.104.
+- Budget: 4 seeds × 2 IC clusters = **8 seeds**, `success_budget = 200`.
+
+**Generation observations:**
+- `mimicgen_failure_ic_only` (IC constraint, no chained-warp): ≈ 10 % success rate on
+  cluster 0 seeds. Cluster 1 not yet reached at pause.
+- `mimicgen_failure_targeting` (IC + chained-warp): **0 %** on cluster 0 seeds — the
+  intermediate constraint (post-grasp nut at y ≈ −0.104) is geometrically incompatible
+  with a cluster 0 start at y = 0.087 (≈ 19 cm separation). Cluster 1 seeds (y ≈ −0.111,
+  only 7 mm from intermediate target) are expected to succeed.
+
+**To resume on new machine:**
+
+```bash
+export MUJOCO_GL=egl
+conda run -n policy_doctor --no-capture-output \
+  python -m policy_doctor.scripts.run_pipeline \
+    data_source=mimicgen_square \
+    experiment=mimicgen_square_failure_targeting_may11 \
+    run_dir=data/pipeline_runs/20260511_232113 \
+    steps=[mimicgen_failure_targeting] &
+
+conda run -n policy_doctor --no-capture-output \
+  python -m policy_doctor.scripts.run_pipeline \
+    data_source=mimicgen_square \
+    experiment=mimicgen_square_failure_targeting_may11 \
+    run_dir=data/pipeline_runs/20260511_232113 \
+    steps=[mimicgen_failure_ic_only] &
+```
+
+The pipeline uses `skip_if_done=True` sentinels throughout and resumes from the last
+completed seed within each pass.
+
+---
