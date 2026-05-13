@@ -271,7 +271,9 @@ def main(argv: list[str] | None = None) -> None:
                 # range, _reset_internal's collision check rejects every nut sample and
                 # raises RandomizationError after 5000 retries. We prevent this by
                 # restricting the peg y to the "safe" half of its original range.
-                _peg_buf = 0.05  # clearance buffer beyond nut IC range
+                # Clearance buffer beyond nut IC range boundary.
+                # Must exceed peg_radius + nut_radius ≈ 0.023 + 0.11 = 0.133m in Square.
+                _peg_buf = 0.15
                 for bounds_key in bounds:
                     if "peg" not in bounds_key.lower():
                         continue
