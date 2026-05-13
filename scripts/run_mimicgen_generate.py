@@ -218,6 +218,8 @@ def main(argv: list[str] | None = None) -> None:
                 _orig=_orig_bounds,
             ):
                 bounds = _orig(self)
+                # --- Step 1: apply IC constraint to the nut ---
+                nut_world_y_lo = nut_world_y_hi = None
                 for bounds_key in bounds:
                     # Match bounds_key to a seed object: exact match or substring
                     matched_seed = next(
@@ -257,6 +259,39 @@ def main(argv: list[str] | None = None) -> None:
                         else:
                             seed_rel = matched_seed[axis]
                         bounds[bounds_key][axis] = (seed_rel + lo_offset, seed_rel + hi_offset)
+                        # Track world-frame nut y range for peg exclusion below.
+                        if axis == "y" and "nut" in bounds_key.lower():
+                            ref_val_y = float(bounds[bounds_key]["reference"][1])
+                            nut_world_y_lo = bounds[bounds_key]["y"][0] + ref_val_y
+                            nut_world_y_hi = bounds[bounds_key]["y"][1] + ref_val_y
+
+                # --- Step 2: keep peg away from the nut IC zone ---
+                # In Square_D1 the peg is randomised ONCE at _load_model time via
+                # _get_initial_placement_bounds(). If the peg lands inside the nut IC
+                # range, _reset_internal's collision check rejects every nut sample and
+                # raises RandomizationError after 5000 retries. We prevent this by
+                # restricting the peg y to the "safe" half of its original range.
+                _peg_buf = 0.05  # clearance buffer beyond nut IC range
+                for bounds_key in bounds:
+                    if "peg" not in bounds_key.lower():
+                        continue
+                    if nut_world_y_lo is None:
+                        continue
+                    peg_ref_y = float(bounds[bounds_key]["reference"][1])
+                    peg_y_orig = bounds[bounds_key].get("y", (-0.2, 0.2))
+                    excl_lo = nut_world_y_lo - peg_ref_y - _peg_buf
+                    excl_hi = nut_world_y_hi - peg_ref_y + _peg_buf
+                    # Pick the wider safe half of peg y that avoids [excl_lo, excl_hi].
+                    safe_neg = (peg_y_orig[0], min(excl_lo, peg_y_orig[1]))
+                    safe_pos = (max(excl_hi, peg_y_orig[0]), peg_y_orig[1])
+                    width_neg = max(0.0, safe_neg[1] - safe_neg[0])
+                    width_pos = max(0.0, safe_pos[1] - safe_pos[0])
+                    if width_neg >= width_pos and width_neg > 0:
+                        bounds[bounds_key]["y"] = safe_neg
+                    elif width_pos > 0:
+                        bounds[bounds_key]["y"] = safe_pos
+                    # else: can't avoid — leave peg bounds unchanged (last resort)
+
                 return bounds
 
             env_cls._get_initial_placement_bounds = _constrained_bounds
