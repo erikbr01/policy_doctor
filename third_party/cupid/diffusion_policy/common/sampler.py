@@ -667,6 +667,8 @@ def get_dataset_masks(
             dataset_name = "hardware"
         elif "pusht" in path_lower:
             dataset_name = "pusht"
+        elif "droid" in path_lower:
+            dataset_name = "droid"
     if dataset_name in ["robomimic", "hardware"]:
         task_name = dataset_path.parts[-3]
         task_type = dataset_path.parts[-2]
@@ -685,6 +687,10 @@ def get_dataset_masks(
         task_type = "ph_real"
     elif "libero" in path_str.lower() or dataset_name == "libero":
         # LIBERO benchmarks: same i.i.d. train/val/holdout as ph.
+        task_name = ""
+        task_type = "ph"
+    elif dataset_name == "droid":
+        # DROID real-robot datasets: i.i.d. train/val/holdout split.
         task_name = ""
         task_type = "ph"
     elif not dataset_name:
