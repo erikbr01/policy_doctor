@@ -610,13 +610,29 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                         _build_cmd(seed_i_hdf5, pass_out_dir, trials_per_seed)
                     )
                     if res.returncode != 0:
+                        # Count only actual attempts, not the requested budget, so that
+                        # early subprocess crashes (e.g. RandomizationError on reset)
+                        # don't consume the full trials_per_seed from total_trials.
+                        s_path = pass_out_dir / "stats.json"
+                        n_att_crashed = (
+                            json.loads(s_path.read_text()).get("num_attempts", 0)
+                            if s_path.exists() else 0
+                        )
+                        n_succ_crashed = (
+                            json.loads(s_path.read_text()).get("num_success", 0)
+                            if s_path.exists() else 0
+                        )
                         print(
                             f"  [generate_mimicgen_demos] ERROR: seed {seed_i} "
                             f"pass {pass_num} subprocess failed "
-                            f"(exit={res.returncode}), skipping this seed/pass."
+                            f"(exit={res.returncode}, actual_attempts={n_att_crashed}), "
+                            "skipping this seed/pass."
                         )
                         failed_seed_passes.append((seed_i, pass_num))
-                        total_trials += trials_per_seed  # count as used
+                        total_trials += max(n_att_crashed, 1)  # count actual attempts (min 1)
+                        total_successes += n_succ_crashed
+                        if (pass_out_dir / "demo.hdf5").exists():
+                            per_seed_hdf5s.append(pass_out_dir / "demo.hdf5")
                         continue
 
                     s_path = pass_out_dir / "stats.json"
