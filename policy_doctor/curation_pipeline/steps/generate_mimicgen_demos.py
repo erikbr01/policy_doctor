@@ -555,15 +555,13 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                 if per_seed_ic_ctr is not None and seed_idx is not None:
                     ic_ctr = per_seed_ic_ctr[seed_idx] if seed_idx < len(per_seed_ic_ctr) else None
                     if ic_ctr is not None:
-                        # ic_ctr has "nut" key; seed_object_poses has "square_nut"+"square_peg".
-                        # Build merged dict: nut from IC center (fuzzy match wins),
-                        # peg from seed_object_poses (pinned).
-                        merged: dict = {}
-                        merged.update(ic_ctr)  # e.g. {"nut": {x, y, z_rot}}
-                        for key, val in seed_object_poses.items():
-                            if "peg" in key.lower():
-                                merged[key] = val  # pin peg from global seed
-                        effective_seed_poses = merged
+                        # Use only the nut IC center — do NOT pin the peg.
+                        # Pinning the peg at the seed HDF5's demo_0 position can cause
+                        # RandomizationError when the peg ends up inside the nut's IC range
+                        # (e.g. IC cluster 1 nut y≈-0.111 with peg pinned at y=-0.082).
+                        # With a free peg, _reset_internal's 5000-retry loop reliably
+                        # finds non-overlapping placements (~60% hit rate per retry).
+                        effective_seed_poses = dict(ic_ctr)  # {"nut": {x, y}}
                 cmd += ["--seed_object_poses", json.dumps(effective_seed_poses)]
                 # Prefer per-seed range (from failure analysis) if available for this seed.
                 effective_opr = object_pose_ranges
