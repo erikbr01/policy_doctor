@@ -31,29 +31,90 @@ _graph_component = components.declare_component("behavior_graph", path=str(_COMP
 
 
 def _compute_layout(graph: BehaviorGraph) -> dict[int, tuple[float, float]]:
-    """Kamada-Kawai layout on the undirected version of the graph."""
+    """BFS-layered layout with barycenter refinement (adapted from the main plotting module).
+
+    Nodes are columns by BFS depth from START; terminals pinned to the far right.
+    10 passes of barycenter + spread give a clean, crossing-minimised layout.
+    """
     import networkx as nx
+    from collections import defaultdict
 
     G = nx.DiGraph()
     for nid in graph.nodes:
         G.add_node(nid)
     for src, targets in graph.transition_probs.items():
         for tgt, prob in targets.items():
-            if src in graph.nodes and tgt in graph.nodes and prob >= 0.01:
+            if src in graph.nodes and tgt in graph.nodes and prob > 0:
                 G.add_edge(src, tgt, weight=prob)
 
-    U = G.to_undirected()
-    raw = nx.kamada_kawai_layout(U, weight=None, scale=2.0)
+    terminal_ids = {n for n in G.nodes() if n in _SPECIAL_IDS and n != START_NODE_ID}
 
-    # Orient so START is on the left of the cluster mass
-    cluster_xs = [raw[n][0] for n in graph.nodes if n not in _SPECIAL_IDS and n in raw]
-    if cluster_xs:
-        median_x = float(np.median(cluster_xs))
-        start_pos = raw.get(START_NODE_ID)
-        if start_pos is not None and start_pos[0] > median_x:
-            raw = {n: (-x, y) for n, (x, y) in raw.items()}
+    try:
+        distances = dict(nx.single_source_shortest_path_length(G, START_NODE_ID))
+    except nx.NodeNotFound:
+        distances = {START_NODE_ID: 0}
 
-    return {nid: (float(xy[0]), float(xy[1])) for nid, xy in raw.items()}
+    # Reverse-BFS for unreachable nodes
+    rev_distances: dict[int, int] = {}
+    for term_id in terminal_ids:
+        try:
+            rd = dict(nx.single_source_shortest_path_length(G.reverse(), term_id))
+            for n, d in rd.items():
+                if n not in rev_distances or d < rev_distances[n]:
+                    rev_distances[n] = d
+        except (nx.NodeNotFound, nx.NetworkXError):
+            pass
+
+    max_fwd = max((d for n, d in distances.items() if n not in terminal_ids), default=1)
+    for node in G.nodes():
+        if node not in distances:
+            distances[node] = (max_fwd + 1 - rev_distances[node]) if node in rev_distances else max_fwd // 2 + 1
+
+    end_layer = max((d for n, d in distances.items() if n not in terminal_ids), default=1) + 1
+    for term_id in terminal_ids:
+        distances[term_id] = end_layer
+
+    layers: dict[int, list] = defaultdict(list)
+    for node, d in distances.items():
+        layers[d].append(node)
+    for layer_idx in layers:
+        layers[layer_idx].sort(key=lambda n: (n in _SPECIAL_IDS, n))
+
+    total_layers = max(layers.keys()) if layers else 1
+    x_min, x_max = -2.5, 2.5
+
+    pos: dict[int, tuple[float, float]] = {}
+    for layer_idx, nodes in layers.items():
+        x = x_min + (x_max - x_min) * layer_idx / max(total_layers, 1)
+        n = len(nodes)
+        y_spacing = max(1.0, 1.2 - 0.05 * n)
+        for i, node in enumerate(nodes):
+            pos[node] = (x, (i - (n - 1) / 2) * y_spacing)
+
+    # Barycenter refinement
+    min_gap = 0.8
+    for _ in range(10):
+        for layer_idx in sorted(layers.keys()):
+            nodes = layers[layer_idx]
+            if len(nodes) <= 1:
+                continue
+            for node in nodes:
+                neighbours = list(G.predecessors(node)) + list(G.successors(node))
+                ys = [pos[nb][1] for nb in neighbours if nb in pos]
+                if ys:
+                    pos[node] = (pos[node][0], 0.6 * float(np.mean(ys)) + 0.4 * pos[node][1])
+            nodes_sorted = sorted(nodes, key=lambda n: pos[n][1])
+            for i in range(1, len(nodes_sorted)):
+                py = pos[nodes_sorted[i - 1]][1]
+                cy = pos[nodes_sorted[i]][1]
+                if cy - py < min_gap:
+                    pos[nodes_sorted[i]] = (pos[nodes_sorted[i]][0], py + min_gap)
+            ys = [pos[n][1] for n in nodes_sorted]
+            center = float(np.mean(ys))
+            for n in nodes_sorted:
+                pos[n] = (pos[n][0], pos[n][1] - center)
+
+    return pos
 
 
 def _build_graph_json(graph: BehaviorGraph, pos: dict[int, tuple[float, float]]) -> str:
@@ -114,11 +175,16 @@ def render_graph_component(
     graph: BehaviorGraph,
     height: int = 580,
     key: str = "behavior_graph",
+    highlighted_path: Optional[list[int]] = None,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
-    Returns the node_id that was clicked, or None if nothing was clicked yet.
-    Persists the last clicked node in session state.
+    Args:
+        highlighted_path: List of node IDs forming a path to highlight.
+            Edges on the path are drawn in orange; off-path elements are dimmed.
+
+    Returns:
+        The node_id that was clicked, or the previously selected node.
     """
     pos = _compute_layout(graph)
     graph_json = _build_graph_json(graph, pos)
@@ -128,6 +194,7 @@ def render_graph_component(
         graph_json=graph_json,
         height=height,
         selected_node_id=selected,
+        highlighted_path=highlighted_path,
         key=key,
         default=None,
     )

@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+  body { background: transparent; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+  html, svg { background: transparent; }
   svg { display: block; width: 100%; height: 100%; cursor: default; }
 
   .node-circle {
@@ -17,9 +18,9 @@
 
   .node-label {
     pointer-events: none;
-    font-size: 11px;
-    fill: #333;
-    font-weight: 500;
+    font-size: 10px;
+    fill: #ccc;
+    font-weight: 400;
     text-anchor: middle;
     dominant-baseline: auto;
     user-select: none;
@@ -48,7 +49,7 @@
     left: 50%;
     transform: translateX(-50%);
     font-size: 11px;
-    color: #999;
+    color: #666;
     pointer-events: none;
     white-space: nowrap;
   }
@@ -84,6 +85,7 @@ function setHeight(h) {
 // ── Graph state ───────────────────────────────────────────────────────────
 let graphData = null;
 let selectedNodeId = null;
+let highlightedPath = null; // array of node IDs forming the highlighted path
 
 // ── Layout helpers ────────────────────────────────────────────────────────
 function toSvgCoords(pos, svgW, svgH, padding) {
@@ -117,12 +119,20 @@ function render(data, svgW, svgH) {
   const maxEpisodes = Math.max(...data.nodes.map(n => n.num_episodes), 1);
 
   // ── defs: arrowhead marker ─────────────────────────────────────────────
+  const pathSet = highlightedPath ? new Set(highlightedPath.map(String)) : null;
+  const hasPath = pathSet && pathSet.size > 0;
+
   const defs = svgEl("defs");
+  // Default arrowhead
   const marker = svgEl("marker", { id: "arrow", markerWidth: "6", markerHeight: "6",
     refX: "5", refY: "3", orient: "auto" });
-  const poly = svgEl("polygon", { points: "0 0, 6 3, 0 6", fill: "rgba(100,100,100,0.5)" });
-  marker.appendChild(poly);
+  marker.appendChild(svgEl("polygon", { points: "0 0, 6 3, 0 6", fill: "rgba(180,180,180,0.7)" }));
   defs.appendChild(marker);
+  // Highlighted path arrowhead
+  const markerHL = svgEl("marker", { id: "arrow-hl", markerWidth: "7", markerHeight: "7",
+    refX: "5", refY: "3.5", orient: "auto" });
+  markerHL.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#f5a623" }));
+  defs.appendChild(markerHL);
   svg.appendChild(defs);
 
   // ── edges ─────────────────────────────────────────────────────────────
@@ -147,14 +157,31 @@ function render(data, svgW, svgH) {
       ox = -uy * 5; oy = ux * 5;
     }
 
-    const opacity = 0.2 + edge.prob * 0.65;
-    const width = 0.8 + edge.prob * 4;
+    const onPath = hasPath &&
+      pathSet.has(String(edge.src)) && pathSet.has(String(edge.tgt)) &&
+      highlightedPath.indexOf(edge.src) < highlightedPath.indexOf(edge.tgt);
+
+    let stroke, strokeW, markerEnd;
+    if (onPath) {
+      stroke = "rgba(245,166,35,0.95)";
+      strokeW = (1.5 + edge.prob * 5).toFixed(1);
+      markerEnd = "url(#arrow-hl)";
+    } else if (hasPath) {
+      // Dim non-path edges when a path is highlighted
+      stroke = `rgba(120,120,120,${(0.1 + edge.prob * 0.15).toFixed(2)})`;
+      strokeW = (0.5 + edge.prob * 2).toFixed(1);
+      markerEnd = "url(#arrow)";
+    } else {
+      stroke = `rgba(180,180,180,${(0.25 + edge.prob * 0.55).toFixed(2)})`;
+      strokeW = (0.8 + edge.prob * 4).toFixed(1);
+      markerEnd = "url(#arrow)";
+    }
+
     const line = svgEl("line", {
       class: "edge",
       x1: sx + ox, y1: sy + oy, x2: ex + ox, y2: ey + oy,
-      stroke: `rgba(80,80,80,${opacity.toFixed(2)})`,
-      "stroke-width": width.toFixed(1),
-      "marker-end": "url(#arrow)",
+      stroke, "stroke-width": strokeW,
+      "marker-end": markerEnd,
     });
     edgeGroup.appendChild(line);
   }
@@ -209,6 +236,11 @@ function render(data, svgW, svgH) {
       });
     }
 
+    // Dim nodes not on the highlighted path
+    if (hasPath && !pathSet.has(String(node.id))) {
+      g.setAttribute("opacity", "0.25");
+    }
+
     // Invisible hit-area circle (larger, for easier clicking)
     const hit = svgEl("circle", { r: Math.max(r + 8, 18), fill: "transparent", class: "node-circle", cursor: "pointer" });
 
@@ -246,8 +278,8 @@ function render(data, svgW, svgH) {
 }
 
 function nodeRadius(node, maxEpisodes) {
-  if (!node || node.is_special) return 14;
-  return Math.round(14 + 14 * Math.sqrt(node.num_episodes / maxEpisodes));
+  if (!node || node.is_special) return 12;
+  return Math.round(10 + 16 * Math.sqrt(node.num_episodes / maxEpisodes));
 }
 
 function svgEl(tag, attrs = {}) {
@@ -274,6 +306,7 @@ window.addEventListener("message", (event) => {
     const graphJson = args.graph_json;
     const height = args.height || 600;
     selectedNodeId = args.selected_node_id !== undefined ? args.selected_node_id : null;
+    highlightedPath = args.highlighted_path || null;  // list of node IDs
 
     document.body.style.height = height + "px";
     document.getElementById("graph").style.height = height + "px";

@@ -50,15 +50,20 @@ def render_graph_full_width(
     mp4_dir: Path,
     mp4_index: dict,
     key_prefix: str = "gex",
+    highlighted_path: list[int] | None = None,
 ) -> None:
-    """Full-width clickable behavior graph. Clicking a node opens a details modal."""
+    """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
     st.caption(
         "**Click any node** to explore it — larger circles = more episodes. "
         "Arrow thickness = transition probability. ★ = success, ✕ = failure."
     )
 
-    clicked_node_id = render_graph_component(graph, height=580, key=f"{key_prefix}_graph")
+    clicked_node_id = render_graph_component(
+        graph, height=650,
+        key=f"{key_prefix}_graph",
+        highlighted_path=highlighted_path,
+    )
 
     # Inline node detail panel
     if clicked_node_id is not None and clicked_node_id in graph.nodes:

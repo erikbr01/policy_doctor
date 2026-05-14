@@ -150,6 +150,8 @@ st.markdown(
     "Use the selector below the graph to pick a node and watch example videos from that mode."
 )
 
+highlighted_path = st.session_state.get("gb_pex_highlighted_path")
+
 render_graph_full_width(
     graph=graph,
     labels=labels,
@@ -157,6 +159,7 @@ render_graph_full_width(
     mp4_dir=mp4_dir,
     mp4_index=index,
     key_prefix="gb_gex",
+    highlighted_path=highlighted_path,
 )
 
 # ── Section 3: Path explorer ──────────────────────────────────────────────────
@@ -164,7 +167,7 @@ st.divider()
 st.header("Step 3 — Common Paths")
 st.markdown(
     "Each path through the graph represents a sequence of behavioral modes that episodes "
-    "tend to follow. The chart below ranks paths by how often they occur. "
+    "tend to follow. **Selecting a path highlights it in the graph above.** "
     "Select a path to watch episodes that follow it."
 )
 
