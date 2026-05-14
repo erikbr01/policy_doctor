@@ -563,6 +563,121 @@ used to compare Phase A vs Phase B arms.
 
 ---
 
+---
+
+## K Robustness Experiment
+
+**Goal:** Show that the `few modes` (behavior-graph) heuristic result is not sensitive to
+the choice of K in K-means clustering. Run the full tight-constraint pipeline at multiple
+K values (same UMAP, different K-means) and compare downstream policy performance.
+
+**Design:**
+- K values: `[5, 10, 15, 20, 25]`
+- UMAP is fit once per seed (expensive step); K-means is re-fit for each K (cheap)
+- Each K produces its own clustering directory under `run_clustering/clustering/k{K}/`
+- Downstream steps pick a specific K via `clustering_n_clusters`
+- Base experiment: D60 baseline, tight constraint, budget=300, n=3 reps (same as the
+  tight-constraint experiment above)
+
+### Step 1 — Run `run_clustering` with the sweep
+
+Add `clustering_n_clusters_sweep` to the pipeline config or as a CLI override:
+
+```bash
+conda activate policy_doctor
+python -m policy_doctor.scripts.run_pipeline \
+  +experiment=mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight \
+  steps=[run_clustering] \
+  "clustering_n_clusters_sweep=[5,10,15,20,25]" \
+  clustering_n_clusters=15
+```
+
+`clustering_n_clusters=15` sets the default K that `clustering_dirs` points to (used as
+fallback by any step that doesn't explicitly select K). The sweep runs UMAP once per seed
+and K-means five times per seed.
+
+**Output layout:**
+
+```
+data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight/
+  run_clustering/
+    clustering/
+      k5/
+        mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_seed0_kmeans_k5/
+          manifest.yaml, cluster_labels.npy, metadata.json,
+          embeddings_reduced.npy, clustering_models.pkl
+      k10/  ...
+      k15/  ...   ← default K (clustering_dirs points here)
+      k20/  ...
+      k25/  ...
+    result.json   ← contains both clustering_dirs and clustering_dirs_by_k
+```
+
+`result.json` shape:
+```json
+{
+  "clustering_dirs":      {"0": "...k15/..."},
+  "clustering_dirs_by_k": {
+    "5":  {"0": "...k5/..."},
+    "10": {"0": "...k10/..."},
+    "15": {"0": "...k15/..."},
+    "20": {"0": "...k20/..."},
+    "25": {"0": "...k25/..."}
+  }
+}
+```
+
+### Step 2 — Run the full pipeline for each K
+
+For each K value, run the remaining pipeline steps with `clustering_n_clusters=K`.
+The `select_mimicgen_seed` step will resolve the clustering directory from
+`clustering_dirs_by_k[str(K)]`, then generation and training proceed as normal.
+
+```bash
+for K in 5 10 15 20 25; do
+  python -m policy_doctor.scripts.run_pipeline \
+    +experiment=mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight \
+    steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data] \
+    clustering_n_clusters=${K} \
+    mimicgen_datagen.policy_seed=0
+done
+```
+
+**Note:** each K value needs its own pipeline run directory (so results don't overwrite
+each other). Either use separate `run_name` overrides per K, or use the experiment config
+mechanism to create separate run dirs:
+
+```bash
+python -m policy_doctor.scripts.run_pipeline \
+  +experiment=mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight \
+  steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data] \
+  clustering_n_clusters=10 \
+  run_name=mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k10
+```
+
+### Step 3 — Aggregate results
+
+```bash
+conda activate policy_doctor
+python scripts/aggregate_sweep_results.py \
+  --run_dirs \
+    data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k5 \
+    data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k10 \
+    data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k15 \
+    data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k20 \
+    data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k25
+```
+
+### What to look for
+
+- `few modes` top5_mean should be broadly stable (±5 pp) across K=5…25
+- If a specific K makes the behavior graph degenerate (e.g. K=5 collapses to 2 useful
+  nodes), the heuristic may pick a poor seed — this would show up as high variance or
+  a clear outlier at that K
+- `random` should be unaffected by K (it ignores the graph), serving as a flat baseline
+
+---
+
 ## Notes / Incidents
 
 - 2026-05-07: D60 b=100 nut-constrained run launched. Watching for failures.
