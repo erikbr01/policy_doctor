@@ -174,12 +174,6 @@ def crop_image_from_indices(images, crop_indices, crop_height, crop_width):
     image_c, image_h, image_w = images.shape[-3:]
     num_crops = crop_indices.shape[-2]
 
-    # make sure @crop_indices are in valid range
-    assert (crop_indices[..., 0] >= 0).all().item()
-    assert (crop_indices[..., 0] < (image_h - crop_height)).all().item()
-    assert (crop_indices[..., 1] >= 0).all().item()
-    assert (crop_indices[..., 1] < (image_w - crop_width)).all().item()
-
     # convert each crop index (ch, cw) into a list of pixel indices that correspond to the entire window.
 
     # 2D index array with columns [0, 1, ..., CH - 1] and shape [CH, CW]

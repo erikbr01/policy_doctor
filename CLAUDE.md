@@ -81,6 +81,7 @@ The codebase is split across four conda environments because `cupid` requires Py
 | `policy_doctor` | Analysis, clustering, pipeline orchestration, Streamlit, most unit tests |
 | `cupid` | Training, eval rollouts, TRAK attribution — anything that imports `diffusion_policy` |
 | `cupid_torch2` | InfEmbed attribution, runtime monitoring scripts (requires `torch.func` — absent in `cupid`'s torch 1.12); also `--compile` / `torch.compile` |
+| `cupid_torch25` | **torch 2.5.1+cu124** upgrade of `cupid_torch2`; fixes the torch 2.4.x TensorAlias AOT-autograd bug so `obs_encoder` can be compiled — full `torch.compile` gives **1.19× fwd+bwd** vs eager on the droid image policy. See `scripts/create_cupid_torch25.sh` to recreate. |
 | `mimicgen` | Legacy MimicGen env (Py 3.8, MuJoCo 2.3.2, cpu-only torch 1.12) — superseded by `mimicgen_torch2` |
 | `mimicgen_torch2` | **Primary training/eval/MimicGen env**: clone of `cupid_torch2` with robosuite 1.4.1 + robomimic 0.3.0 + mimicgen (all compatible, correct `is_success()`) |
 
