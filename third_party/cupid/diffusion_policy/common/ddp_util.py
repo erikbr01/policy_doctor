@@ -163,14 +163,14 @@ def compile_policy(policy) -> None:
     if not hasattr(torch, "compile"):
         return  # silently skip on older torch
 
-    # obs_encoder: robomimic's base_nets view operations trigger a TensorAlias
-    # bug in AOT autograd backward (torch 2.4.x).  Forward-only compilation
-    # also requires fullgraph=False due to set.issubset() in ObservationEncoder.
-    # The encoder is cheaper than the UNet, so skipping compile here is low-cost.
-    # Re-enable once robomimic / torch is updated:
-    #   policy.obs_encoder = torch.compile(
-    #       policy.obs_encoder, fullgraph=False, dynamic=False
-    #   )
+    # obs_encoder: fullgraph=False required due to set.issubset() in
+    # ObservationEncoder and Tensor.item() calls in crop_randomizer (removed).
+    # Requires torch 2.5+ — torch 2.4.x had a TensorAlias bug in AOT autograd
+    # backward that caused a crash here (fixed upstream in 2.5.0).
+    if hasattr(policy, "obs_encoder"):
+        policy.obs_encoder = torch.compile(
+            policy.obs_encoder, fullgraph=False, dynamic=False
+        )
 
     if hasattr(policy, "model"):
         policy.model = torch.compile(
