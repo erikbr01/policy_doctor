@@ -172,7 +172,8 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
 
         # Subtask-boundary index that the new chained-warp constraint should fire at
         # (path_based mode only). Comes from failure_analysis.subtask_constraint_idx.
-        fa_cfg = OmegaConf.select(self.cfg, "mimicgen_datagen.failure_analysis") or {}
+        _fa_cfg_raw = OmegaConf.select(self.cfg, "mimicgen_datagen.failure_analysis")
+        fa_cfg = _fa_cfg_raw if _fa_cfg_raw is not None else OmegaConf.create({})
         cw_subtask_idx_raw = OmegaConf.select(fa_cfg, "subtask_constraint_idx")
         cw_subtask_idx: int | None = (
             int(cw_subtask_idx_raw) if cw_subtask_idx_raw is not None else None
