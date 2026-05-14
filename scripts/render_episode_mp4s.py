@@ -61,8 +61,59 @@ def _write_video(frames: List[np.ndarray], output_path: pathlib.Path, fps: int):
 
 
 def _episode_number(path: pathlib.Path) -> int:
-    m = re.search(r"ep(\d+)\.pkl$", path.name)
+    # handles ep0000_succ.pkl, ep0000_fail.pkl, ep0.pkl, ep42.pkl
+    m = re.search(r"ep(\d+)", path.name)
     return int(m.group(1)) if m else -1
+
+
+def _success_from_filename(path: pathlib.Path) -> Optional[bool]:
+    name = path.stem  # e.g. ep0000_succ, ep0001_fail
+    if "_succ" in name:
+        return True
+    if "_fail" in name:
+        return False
+    return None
+
+
+def _load_frames_and_success(
+    pkl_path: pathlib.Path, obs_key: str
+) -> tuple[List[np.ndarray], Optional[bool]]:
+    """Load frames and success flag from a pickle that may be a dict or DataFrame."""
+    import pickle as _pickle
+    with open(pkl_path, "rb") as f:
+        data = _pickle.load(f)
+
+    # DataFrame format (e.g. transport_mh_jan28)
+    try:
+        import pandas as pd
+        if isinstance(data, pd.DataFrame):
+            frames_raw = list(data[obs_key]) if obs_key in data.columns else []
+            success = _success_from_filename(pkl_path)
+            if success is None and "success" in data.columns:
+                s = data["success"].iloc[-1]
+                success = bool(s) if s is not None else None
+            return frames_raw, success
+    except ImportError:
+        pass
+
+    # Dict format
+    if isinstance(data, dict):
+        raw = data.get(obs_key)
+        if raw is None:
+            return [], None
+        if hasattr(raw, "tolist"):
+            frames_raw = list(raw)
+        elif hasattr(raw, "__iter__") and not isinstance(raw, np.ndarray):
+            frames_raw = list(raw)
+        else:
+            frames_raw = [raw[i] for i in range(len(raw))]
+        success = _success_from_filename(pkl_path)
+        if success is None:
+            s = data.get("success")
+            success = bool(s) if s is not None else None
+        return frames_raw, success
+
+    return [], None
 
 
 def main():
@@ -93,26 +144,14 @@ def main():
         mp4_path = args.output_dir / mp4_name
 
         if mp4_path.exists() and not args.overwrite:
-            print(f"Skipping {mp4_name} (already exists, use --overwrite to replace)")
-            # Still need to read success / frame_count for the index
+            print(f"Skipping {mp4_name} (already exists)")
             try:
-                with open(pkl_path, "rb") as f:
-                    data = pickle.load(f)
-                raw = data.get(args.obs_key)
-                if hasattr(raw, "tolist"):
-                    frames_list = list(raw)
-                elif hasattr(raw, "__iter__"):
-                    frames_list = list(raw)
-                else:
-                    frames_list = [raw]
-                frame_count = len(frames_list)
-                success = data.get("success", None)
-                if success is not None:
-                    success = bool(success)
+                frames_raw, success = _load_frames_and_success(pkl_path, args.obs_key)
+                frame_count = len(frames_raw)
             except Exception as e:
-                print(f"Warning: could not read {pkl_path.name} for index: {e}")
+                print(f"  Warning: could not read for index: {e}")
                 frame_count = 0
-                success = None
+                success = _success_from_filename(pkl_path)
             index_entries.append(
                 {"index": ep_num, "path": mp4_name, "frame_count": frame_count, "success": success}
             )
@@ -121,26 +160,14 @@ def main():
         print(f"Processing {pkl_path.name} -> {mp4_name}")
 
         try:
-            with open(pkl_path, "rb") as f:
-                data = pickle.load(f)
+            frames_raw, success = _load_frames_and_success(pkl_path, args.obs_key)
         except Exception as e:
-            print(f"Warning: failed to load {pkl_path.name}: {e}, skipping")
+            print(f"  Warning: failed to load: {e}, skipping")
             continue
 
-        if args.obs_key not in data:
-            print(f"Warning: key '{args.obs_key}' not found in {pkl_path.name}, skipping")
+        if not frames_raw:
+            print(f"  Warning: no frames found (key '{args.obs_key}'), skipping")
             continue
-
-        raw = data[args.obs_key]
-
-        # Handle pandas Series or any iterable of frames
-        if hasattr(raw, "tolist"):
-            frames_raw = list(raw)
-        elif hasattr(raw, "__iter__") and not isinstance(raw, np.ndarray):
-            frames_raw = list(raw)
-        else:
-            # numpy array: treat first axis as frames
-            frames_raw = [raw[i] for i in range(len(raw))]
 
         frames: List[np.ndarray] = []
         for frame in frames_raw:
@@ -149,20 +176,16 @@ def main():
                 frames.append(normalized)
 
         if not frames:
-            print(f"Warning: no valid frames in {pkl_path.name}, skipping")
+            print(f"  Warning: no valid frames after normalization, skipping")
             continue
 
         try:
             _write_video(frames, mp4_path, args.fps)
         except Exception as e:
-            print(f"Warning: failed to write {mp4_name}: {e}, skipping")
+            print(f"  Warning: failed to write video: {e}, skipping")
             continue
 
-        success = data.get("success", None)
-        if success is not None:
-            success = bool(success)
-
-        print(f"  Wrote {len(frames)} frames -> {mp4_path}")
+        print(f"  Wrote {len(frames)} frames  success={success}")
         index_entries.append(
             {"index": ep_num, "path": mp4_name, "frame_count": len(frames), "success": success}
         )

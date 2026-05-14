@@ -8,8 +8,7 @@ import numpy as np
 import streamlit as st
 
 from policy_doctor.behaviors.behavior_graph import BehaviorGraph
-from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_explorer
-from policy_doctor.streamlit_app.user_study.initial_conditions import render_initial_conditions
+from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
 from policy_doctor.streamlit_app.user_study.path_explorer import render_path_explorer
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
@@ -20,13 +19,6 @@ from policy_doctor.streamlit_app.user_study.video_browser import render_video_br
 
 st.set_page_config(page_title="User Study — Group B", layout="wide")
 
-st.title("User Study: Data Collection Strategy Design")
-st.markdown(
-    "**Group B** — You have access to a behavior graph that shows how the robot's policy "
-    "clusters into distinct behavioral modes, alongside rollout videos. Use both to inform "
-    "how you would allocate a data collection budget."
-)
-
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.header("Configuration")
 
@@ -36,7 +28,7 @@ study_config_input = st.sidebar.text_input("Study config YAML", value="")
 clustering_dir_input = st.sidebar.text_input(
     "Clustering directory",
     value="",
-    help="Directory containing cluster_labels.npy, metadata.json, and optionally coords.npy",
+    help="Directory containing cluster_labels.npy, metadata.json, and optionally embeddings_reduced.npy",
 )
 
 if st.sidebar.button("Load"):
@@ -73,7 +65,6 @@ if st.sidebar.button("Load"):
         st.session_state["gb_budget"] = cfg.get("budget", {}).get("total_demos", 500)
         st.session_state["gb_alloc_step"] = cfg.get("budget", {}).get("allocation_step", 25)
         st.session_state["gb_mp4_dir"] = str(mp4_dir)
-        st.session_state["gb_config"] = str(config_path)
 
         labels = np.load(str(labels_path))
         with open(meta_path) as f:
@@ -82,10 +73,7 @@ if st.sidebar.button("Load"):
         st.session_state["gb_metadata"] = metadata
 
         coords_path = clust_dir / "embeddings_reduced.npy"
-        if coords_path.exists():
-            st.session_state["gb_coords"] = np.load(str(coords_path))
-        else:
-            st.session_state.pop("gb_coords", None)
+        st.session_state["gb_coords"] = np.load(str(coords_path)) if coords_path.exists() else None
 
         graph = BehaviorGraph.from_cluster_assignments(
             labels,
@@ -96,10 +84,9 @@ if st.sidebar.button("Load"):
         st.sidebar.success("Loaded.")
 
 if "gb_index" in st.session_state:
-    st.sidebar.caption(
-        f"{len(st.session_state['gb_index']['episodes'])} episodes | "
-        f"{len(set(st.session_state['gb_labels'].tolist()) - {-1})} clusters"
-    )
+    n_ep = len(st.session_state["gb_index"]["episodes"])
+    n_cl = len(set(st.session_state["gb_labels"].tolist()) - {-1})
+    st.sidebar.caption(f"{n_ep} episodes | {n_cl} clusters")
 
 index = st.session_state.get("gb_index")
 strategies = st.session_state.get("gb_strategies")
@@ -107,116 +94,137 @@ mp4_dir_str = st.session_state.get("gb_mp4_dir")
 labels = st.session_state.get("gb_labels")
 metadata = st.session_state.get("gb_metadata")
 graph: BehaviorGraph | None = st.session_state.get("gb_graph")
-coords = st.session_state.get("gb_coords")
 
 if index is None or strategies is None or graph is None:
-    st.info(
-        "Use the sidebar to load an MP4 directory, study config, and clustering directory, "
-        "then click **Load**."
+    st.title("User Study: Data Collection Strategy Design")
+    st.markdown(
+        "**Group B** — You have access to rollout videos and a behavior graph. "
+        "Use the sidebar to load data, then follow the guided steps below."
     )
+    st.info("Use the sidebar to load an MP4 directory, study config, and clustering directory, then click **Load**.")
     st.stop()
 
 mp4_dir = Path(mp4_dir_str)
 total_budget = st.session_state.get("gb_budget", 500)
 alloc_step = st.session_state.get("gb_alloc_step", 25)
 
-# ── Exploration tabs ──────────────────────────────────────────────────────────
-tab_graph, tab_paths, tab_ic, tab_videos, tab_strategy = st.tabs([
-    "Graph Explorer",
-    "Path Explorer",
-    "Initial Conditions",
-    "Rollout Videos",
-    "Design Strategy",
-])
+# Compute overall success rate for header stats
+n_success = sum(1 for ep in index["episodes"] if ep.get("success") is True)
+n_total = len(index["episodes"])
 
-with tab_graph:
-    st.markdown(
-        "Explore the behavior graph. Select a node to see which rollout episodes pass "
-        "through it and watch video clips from those episodes."
+# ── Guided flow ───────────────────────────────────────────────────────────────
+st.title("User Study: Data Collection Strategy Design")
+st.markdown(
+    "**Group B** — Work through the sections below in order. Each section gives you a "
+    "different lens on the robot's current behavior. At the end, allocate your data "
+    "collection budget across the available strategies."
+)
+
+# ── Section 1: Task & base policy overview ────────────────────────────────────
+st.header("Step 1 — Understand the Task & Base Policy")
+st.markdown(
+    "The robot must pick up an object and transport it to a goal location. "
+    "The videos below show rollouts from the **base policy** — the starting point "
+    "we want to improve with additional data."
+)
+
+ov_c1, ov_c2, ov_c3 = st.columns(3)
+ov_c1.metric("Total rollouts", n_total)
+ov_c2.metric("Successes", n_success)
+ov_c3.metric("Success rate", f"{n_success / n_total:.0%}" if n_total else "—")
+
+st.markdown("Browse a sample of rollouts to get a feel for what the policy does and where it struggles.")
+render_video_browser(mp4_dir, index, page_size=4, key_prefix="gb_vbrow")
+
+# ── Section 2: Behavior graph ────────────────────────────────────────────────
+st.divider()
+st.header("Step 2 — Behavior Graph")
+st.markdown(
+    "We clustered the policy's rollouts into **behavioral modes** — recurring movement "
+    "patterns that appear across many episodes. The graph below shows how the policy "
+    "transitions between these modes, and which transitions tend to lead to success or failure."
+)
+st.markdown(
+    "> **How to read it:** Each circle is a behavioral mode. "
+    "Arrows show how often the policy moves from one mode to another. "
+    "Use the selector below the graph to pick a node and watch example videos from that mode."
+)
+
+render_graph_full_width(
+    graph=graph,
+    labels=labels,
+    metadata=metadata,
+    mp4_dir=mp4_dir,
+    mp4_index=index,
+    key_prefix="gb_gex",
+)
+
+# ── Section 3: Path explorer ──────────────────────────────────────────────────
+st.divider()
+st.header("Step 3 — Common Paths")
+st.markdown(
+    "Each path through the graph represents a sequence of behavioral modes that episodes "
+    "tend to follow. The chart below ranks paths by how often they occur. "
+    "Select a path to watch episodes that follow it."
+)
+
+render_path_explorer(
+    graph=graph,
+    labels=labels,
+    metadata=metadata,
+    mp4_dir=mp4_dir,
+    mp4_index=index,
+    key_prefix="gb_pex",
+)
+
+# ── Section 4: Strategy design ────────────────────────────────────────────────
+st.divider()
+st.header("Step 4 — Design Your Data Collection Strategy")
+st.markdown(
+    "Based on what you observed above, allocate your **{} demo budget** across the "
+    "strategies below. Each strategy targets a specific data collection protocol. "
+    "You can leave some budget unallocated.".format(total_budget)
+)
+
+allocations = render_strategy_allocator(
+    strategies,
+    total_budget=total_budget,
+    allocation_step=alloc_step,
+    key_prefix="gb_alloc",
+)
+render_strategy_summary(allocations, strategies, total_budget)
+
+# ── Section 5: Submit ─────────────────────────────────────────────────────────
+st.divider()
+st.header("Step 5 — Submit")
+
+notes = st.text_area(
+    "Any additional notes or reasoning about your choices",
+    value="",
+    height=120,
+    placeholder="e.g. I noticed failures often occur when the arm approaches from the left, so I focused on...",
+)
+
+if st.button("Submit", type="primary"):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = mp4_dir / "study_responses"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"group_b_{timestamp}.json"
+
+    result = {
+        "participant_id": participant_id,
+        "group": "B",
+        "allocations": allocations,
+        "notes": notes,
+        "timestamp": timestamp,
+    }
+    with open(out_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+    st.success(f"Response saved to {out_path}")
+    st.download_button(
+        label="Download your response",
+        data=json.dumps(result, indent=2),
+        file_name=f"group_b_{timestamp}.json",
+        mime="application/json",
     )
-    render_graph_explorer(
-        graph=graph,
-        labels=labels,
-        metadata=metadata,
-        mp4_dir=mp4_dir,
-        mp4_index=index,
-        key_prefix="gb_gex",
-    )
-
-with tab_paths:
-    st.markdown(
-        "View the most common paths through the graph from START to SUCCESS or FAILURE. "
-        "Select a path to see matching episode videos."
-    )
-    render_path_explorer(
-        graph=graph,
-        labels=labels,
-        metadata=metadata,
-        mp4_dir=mp4_dir,
-        mp4_index=index,
-        key_prefix="gb_pex",
-    )
-
-with tab_ic:
-    st.markdown(
-        "Each episode is plotted at its first timestep's embedding coordinate. "
-        "This shows how the distribution of initial conditions relates to behavioral "
-        "clusters and outcomes."
-    )
-    render_initial_conditions(
-        graph=graph,
-        labels=labels,
-        metadata=metadata,
-        coords=coords,
-        mp4_index=index,
-        key_prefix="gb_ic",
-    )
-
-with tab_videos:
-    st.markdown("Browse all rollout videos from the base policy.")
-    render_video_browser(mp4_dir, index, page_size=5, key_prefix="gb_vbrow")
-
-with tab_strategy:
-    st.header("Design Your Data Collection Strategy")
-    st.markdown(
-        """
-Allocate your data collection budget across the strategies below.
-Use what you learned from the graph and video explorations above to guide your choices.
-"""
-    )
-    allocations = render_strategy_allocator(
-        strategies,
-        total_budget=total_budget,
-        allocation_step=alloc_step,
-        key_prefix="gb_alloc",
-    )
-    render_strategy_summary(allocations, strategies, total_budget)
-
-    st.divider()
-    st.header("Submit")
-
-    notes = st.text_area("Any additional notes or reasoning", value="", height=120)
-
-    if st.button("Submit", type="primary"):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = mp4_dir / "study_responses"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"group_b_{timestamp}.json"
-
-        result = {
-            "participant_id": participant_id,
-            "group": "B",
-            "allocations": allocations,
-            "notes": notes,
-            "timestamp": timestamp,
-        }
-        with open(out_path, "w") as f:
-            json.dump(result, f, indent=2)
-
-        st.success(f"Response saved to {out_path}")
-        st.download_button(
-            label="Download your response",
-            data=json.dumps(result, indent=2),
-            file_name=f"group_b_{timestamp}.json",
-            mime="application/json",
-        )
