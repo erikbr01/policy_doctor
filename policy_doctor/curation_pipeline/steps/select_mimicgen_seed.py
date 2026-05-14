@@ -89,9 +89,18 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         )
 
         # --- Load clustering result ---
-        # Use parent_run_dir so this step finds RunClusteringStep when running
-        # inside a CompositeStep (where run_dir is the composite's sub-directory).
-        prior = RunClusteringStep(self.cfg, self.parent_run_dir).load()
+        # clustering_run_dir allows K-sweep downstream runs to point at a different
+        # run dir where run_clustering already completed (e.g. the original experiment
+        # run dir when this step runs in a per-K sub-run dir).
+        _clustering_run_dir_override = OmegaConf.select(self.cfg, "clustering_run_dir")
+        _clustering_lookup_dir = (
+            Path(_clustering_run_dir_override)
+            if _clustering_run_dir_override
+            else self.parent_run_dir
+        )
+        if _clustering_run_dir_override and not _clustering_lookup_dir.is_absolute():
+            _clustering_lookup_dir = (self.repo_root / _clustering_lookup_dir).resolve()
+        prior = RunClusteringStep(self.cfg, _clustering_lookup_dir).load()
         clustering_dirs: dict[str, str] = {}
         if prior:
             n_clusters_cfg = int(OmegaConf.select(self.cfg, "clustering_n_clusters") or 20)

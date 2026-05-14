@@ -160,7 +160,15 @@ class SelectMimicgenSeedFromGraphStep(PipelineStep[dict]):
         success_only: bool = bool(OmegaConf.select(cfg_mg, "success_only") if OmegaConf.select(cfg_mg, "success_only") is not None else True)
 
         # --- Load clustering result ---
-        prior = RunClusteringStep(self.cfg, self.run_dir).load()
+        _clustering_run_dir_override = OmegaConf.select(self.cfg, "clustering_run_dir")
+        _clustering_lookup_dir = (
+            Path(_clustering_run_dir_override)
+            if _clustering_run_dir_override
+            else self.run_dir
+        )
+        if _clustering_run_dir_override and not _clustering_lookup_dir.is_absolute():
+            _clustering_lookup_dir = (self.repo_root / _clustering_lookup_dir).resolve()
+        prior = RunClusteringStep(self.cfg, _clustering_lookup_dir).load()
         clustering_dirs: dict[str, str] = {}
         if prior:
             n_clusters_cfg = int(OmegaConf.select(self.cfg, "clustering_n_clusters") or 20)
