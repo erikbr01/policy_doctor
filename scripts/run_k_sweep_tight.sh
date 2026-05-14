@@ -53,11 +53,12 @@ echo "[$(date '+%H:%M %Z')] --- Step 1: run_clustering with K sweep ---" | tee -
 conda run -n policy_doctor --no-capture-output \
     python -m policy_doctor.scripts.run_pipeline \
         data_source=mimicgen_square \
-        "+experiment=${BASE_EXPERIMENT}" \
-        steps='[run_clustering]' \
-        "clustering_n_clusters_sweep=[5,10,15,20,25]" \
-        clustering_n_clusters=15 \
-        "evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
+        "experiment=${BASE_EXPERIMENT}" \
+        "steps=[run_clustering]" \
+        "+clustering_n_clusters_sweep=[5,10,15,20,25]" \
+        "clustering_n_clusters=15" \
+        "~evaluation.eval_output_dir" \
+        "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
     2>&1 | tee -a "${LOG}"
 echo "[$(date '+%H:%M %Z')] Step 1 complete." | tee -a "${LOG}"
 
@@ -74,24 +75,26 @@ for K in "${K_VALUES[@]}"; do
     conda run -n policy_doctor --no-capture-output \
         python -m policy_doctor.scripts.run_pipeline \
             data_source=mimicgen_square \
-            "+experiment=${BASE_EXPERIMENT}" \
+            "experiment=${BASE_EXPERIMENT}" \
             steps='[mimicgen_budget_sweep]' \
             "clustering_n_clusters=${K}" \
             "clustering_run_dir=${BASE_RUN_REL}" \
             "run_name=${RUN_NAME}" \
-            "evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
+            "~evaluation.eval_output_dir" \
+            "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
 
     # Phase B: rep-2/3
     conda run -n policy_doctor --no-capture-output \
         python -m policy_doctor.scripts.run_pipeline \
             data_source=mimicgen_square \
-            "+experiment=${BASE_EXPERIMENT}" \
+            "experiment=${BASE_EXPERIMENT}" \
             steps='[mimicgen_budget_rep_sweep]' \
             "clustering_n_clusters=${K}" \
             "clustering_run_dir=${BASE_RUN_REL}" \
             "run_name=${RUN_NAME}" \
-            "evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
+            "~evaluation.eval_output_dir" \
+            "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
 
     echo "[$(date '+%H:%M %Z')] K=${K} complete." | tee -a "${LOG}"

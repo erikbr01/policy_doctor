@@ -142,8 +142,8 @@ def save_clustering_result(
     n_clusters: int,
     n_samples: int,
     embeddings_reduced: Optional[np.ndarray] = None,
-    output_dir: Path | None = None,
-    task_config: str | None = None,
+    output_dir: Optional[Path] = None,
+    task_config: Optional[str] = None,
 ) -> Path:
     """Save a clustering result to disk.
 
