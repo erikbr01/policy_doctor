@@ -78,8 +78,8 @@ for K in "${K_VALUES[@]}"; do
             "experiment=${BASE_EXPERIMENT}" \
             steps='[mimicgen_budget_sweep]' \
             "clustering_n_clusters=${K}" \
-            "clustering_run_dir=${BASE_RUN_REL}" \
-            "run_name=${RUN_NAME}" \
+            "+clustering_run_dir=${BASE_RUN_REL}" \
+            "run_dir=data/pipeline_runs/${RUN_NAME}" \
             "~evaluation.eval_output_dir" \
             "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
@@ -91,8 +91,8 @@ for K in "${K_VALUES[@]}"; do
             "experiment=${BASE_EXPERIMENT}" \
             steps='[mimicgen_budget_rep_sweep]' \
             "clustering_n_clusters=${K}" \
-            "clustering_run_dir=${BASE_RUN_REL}" \
-            "run_name=${RUN_NAME}" \
+            "+clustering_run_dir=${BASE_RUN_REL}" \
+            "run_dir=data/pipeline_runs/${RUN_NAME}" \
             "~evaluation.eval_output_dir" \
             "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
