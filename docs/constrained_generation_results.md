@@ -1,7 +1,50 @@
 # MimicGen Constrained Generation — Results
 
-**Setup:** Nut-only initial pose constraint (±50 mm x, ±200 mm y, ±90° z_rot relative to seed demo pose).
-Peg left at full D1 randomisation. Everything else identical to the apr26 unconstrained experiments.
+## Experimental design
+
+**Goal**: isolate the effect of different MimicGen *seed-selection heuristics* on
+downstream policy performance, holding everything else (env, generator parameters,
+base training data, training recipe) fixed.
+
+**Dataset provenance** (important — the "src" naming is misleading):
+- **10 human demos** exist for this task family, at Square_**D0** (the narrow variant),
+  stored at `policy_doctor/.cache/mimicgen_e2e/source/square.hdf5`. ~143 steps/demo.
+- All other Square HDF5 files (`square_d1_60.hdf5`, `demo_src_square_task_D1/demo.hdf5`
+  with 1000 demos, etc.) are **MimicGen-generated**, despite some having "src" in the
+  path. They contain `datagen_info` and `src_demo_inds` groups confirming this.
+
+**What "baseline" means in this doc**:
+- Baseline policies are trained on $N$ MimicGen-generated demos drawn from the
+  1000-demo D1 pool (`data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5`),
+  with full D1 randomization. So "D60 baseline" = 60 MimicGen-D1 demos; "D300 baseline" = 300.
+- These act as a stand-in for "no selection-heuristic intervention" — the demos were
+  generated via the default MimicGen pipeline from the 10 human source demos, without
+  any of our seed-selection heuristics applied.
+
+**What we're actually comparing**:
+- For each $(N, \text{budget})$ pair: baseline ($N$ MimicGen demos) **vs** $N$ MimicGen
+  demos + budget more MimicGen demos generated using a selection heuristic
+  (`random`, `behavior_graph` = few modes, `diversity` = diverse modes).
+- All augmented arms use the same MimicGen pipeline; only the seed-selection step differs.
+- Eval is Square D1 with 500 fixed test seeds for all arms.
+
+**Setup of this experiment**: Nut-only initial pose constraint relative to the seed
+demo pose. Peg left at full D1 randomisation. Everything else identical to the apr26
+unconstrained experiments.
+
+### Nut constraint configs used in this doc
+
+All constraints are relative to the seed demo pose; `null` = leave at env's original D1 range.
+
+| Config name | Nut x | Nut y | Nut z_rot | Peg | Used by |
+|---|---|---|---|---|---|
+| **Unconstrained** | full D1 | full D1 | full D1 | full D1 | `apr26_sweep_seed1_demos60`, `apr26_sweep_seed1_demos300` (Phase A/B sweeps) |
+| **Loose (D0-equivalent)** | ±0.05 (±50 mm) | ±0.20 (±200 mm) | ±1.57 (±90°) | full D1 | `apr26_seed1_d60_nut_constrained`, `apr26_seed1_d60_budget300_nut_constrained`, `apr26_seed1_d300_nut_constrained` |
+| **Tight** | ±0.04 (±40 mm, 8 cm total) | ±0.04 (±40 mm, 8 cm total) | ±0.524 (±30°, 60° total) | full D1 | `apr26_seed1_d60_nut_constrained_tight`, `apr26_seed1_d60_budget300_nut_constrained_tight` |
+
+Note: the "Loose" config has the same nut bounds as MimicGen's D0 task variant. The
+"Tight" config narrows substantially on every dimension: x window 8 cm vs 10 cm
+(loose was already symmetric ±5 cm), y window 8 cm vs 40 cm, and rotation 60° vs 180°.
 
 **Constraint config** (added to `mimicgen_datagen`):
 ```yaml
@@ -254,6 +297,232 @@ and `mean_all` differ for those arms; `top5_mean` is the fair comparison across 
 | | top5_mean | 0.610 ± 0.010 | 0.598 | 0.618 |
 | diversity | best | **0.691 ± 0.050** | 0.634 | 0.726 |
 | | top5_mean | **0.673 ± 0.045** | 0.625 | 0.713 |
+
+---
+
+## Comparison vs Baseline + Constrained vs Unconstrained Generation (D300)
+
+All numbers below are **top-5 mean** (mean across top-5 ckpts) for both baseline and
+augmented arms; mean ± std is computed across 3 seeds (training seeds for baseline,
+data-generation seeds for augmented).
+
+**"Baseline" here** = policy trained on $N$ MimicGen-generated D1 demos with no
+selection-heuristic intervention (5 top-k ckpts evaluated, n=3 training seeds).
+This is NOT a "no MimicGen" baseline — see [Experimental design](#experimental-design)
+section for full provenance. The actual no-MimicGen reference (10 human D0 demos)
+has not been trained on; doing so would be an interesting follow-up.
+
+- D60:  best=25.2 ± 1.4%, top5_mean=**23.9 ± 0.9%**, succ_ep_len=199.0 ± 2.1
+- D300: best=67.2 ± 1.7%, top5_mean=**65.1 ± 0.9%**, succ_ep_len=169.2 ± 3.1
+
+### D300 comparison (top5_mean)
+
+| Setup | Budget | random | few modes | diverse modes |
+|-------|--------|--------|-----------|---------------|
+| Baseline (no MimicGen) | — | 65.1 ± 0.9 | 65.1 ± 0.9 | 65.1 ± 0.9 |
+| Unconstrained | 100 | 39.5 ± 4.8 | 40.8 ± 6.8 | 39.5 ± 3.5 |
+| Unconstrained | 500 | **73.0 ± 4.6** | 61.9 ± 1.1 | 67.9 ± 4.7 |
+| Constrained   | 300 | 50.2 ± 6.0 | 55.9 ± 1.8 | 52.2 ± 6.1 |
+| Constrained   | 1000 | 67.1 ± 2.8 | 61.0 ± 1.0 | 67.3 ± 4.5 |
+
+### Findings
+
+Recall the framing: baseline = $N$ MimicGen-D1 demos with no selection heuristic; augmented
+arms add `budget` more MimicGen demos generated via a specific seed-selection heuristic.
+All differences below reflect the contribution of the selection heuristic (and any
+constraint applied at generation time), not human-vs-MimicGen.
+
+**1. Small selection-heuristic budgets ACTIVELY HURT performance.**
+At unconstrained b=100, every heuristic drops the policy from 65.1% baseline to ~40%
+(−25 pp). At constrained b=300, all three heuristics land at 50–56% (−9 to −15 pp).
+Adding a small number of heuristically-selected demos appears to act as noise/distractor
+when their volume is small relative to the 300 broad MimicGen demos already in the base
+training set.
+
+**2. Narrow-constraint generation hurts even at large budgets.**
+Random unconstrained at b=500 (73.0%) **beats** random constrained at b=1000 (67.1%) —
+with half the budget. Constrained generation narrows the nut pose distribution, so the
+augmented demos sit at a *sub-distribution* of D1, mismatched with the eval distribution.
+Adding more sub-distribution data biases the policy away from the eval distribution.
+
+**3. Only one setup gives meaningful improvement over baseline at D300.**
+Unconstrained b=500 with `random` (+7.9 pp over baseline) is the only configuration that
+clearly beats baseline. Among the heuristics, the relative ordering at D300 is
+budget-dependent and not consistent with any single mechanism we've identified:
+- Constrained b=300: `few modes` (55.9) > `diverse modes` (52.2) > `random` (50.2) —
+  but all three are well below baseline (65.1).
+- Constrained b=1000: `random` (67.1) ≈ `diverse modes` (67.3) > `few modes` (61.0).
+- Unconstrained b=500: `random` (73.0) > `diverse modes` (67.9) > `few modes` (61.9).
+
+`few modes` flips from best (b=300) to worst (b=1000), so a simple "few modes selects
+narrow trajectories which hurts" story doesn't unify these results. Possible mechanisms
+that could explain a budget-dependent effect include:
+- **Per-seed redundancy at large budgets**: each of the 10 selected seeds generates
+  `budget/10` demos. At b=300 (30/seed), variations within a focused seed might still
+  be useful; at b=1000 (100/seed), additional variations on the same trajectory may
+  saturate or bias.
+- **Seed-quality vs seed-diversity tradeoff**: few modes selects high-probability paths
+  (potentially higher gen quality per seed) while random samples more independently
+  (potentially higher overall coverage).
+- **Noise** at b=300 (std ≈ 6 pp for random and diverse), so the ranking there may not
+  be robust.
+
+We haven't directly tested these. The honest summary is: **at D300, selection-heuristic
+effects are budget-dependent in ways we don't have a clean mechanistic story for.**
+
+**4. Constrained b=1000 barely matches baseline.**
+Even with ~3× the original baseline's worth of augmentation, constrained generation arms
+land at 61.0–67.3% — at best a +2.2 pp gain over baseline (diverse modes), well within
+the std (4.5).
+
+**5. The baseline policy is faster than every augmented arm.**
+D300 baseline succ_ep_len = 169 steps. The fastest augmented arm (diverse modes b=1000)
+takes 177 steps; few modes b=1000 takes 199. The selection heuristics appear to bias
+toward seed trajectories that produce slightly longer/less-efficient rollouts than the
+unselected baseline.
+
+### Caveats
+
+- The unconstrained `apr26_sweep_seed1_demos300` run used budgets [100, 500] while the
+  constrained run used [300, 1000] — no direct apples-to-apples budget match at D300.
+- Baselines use 3 *training* seeds (model init varies); augmented arms use 3
+  *data-generation* seeds (model init fixed, MimicGen draw varies). Both are n=3 but
+  the variance sources differ.
+- **None of these results compare MimicGen vs human-quality demos.** All conditions
+  (baseline and augmented) train exclusively on MimicGen output. A clean comparison
+  to a 10-human-demo baseline (Square_D0) would be a useful follow-up.
+
+---
+
+---
+
+## D60 Baseline — Tight Constraint (budgets 100 + 300)
+
+**Launch:** 2026-05-12 18:30 (PID=186959 → 1595813 → 2010525 → 2099821 due to OOM restarts)
+**Log:** `logs/budget_rep_sweep_d60_nut_constrained_tight.log`
+**Script:** `scripts/run_budget_rep_sweep_d60_nut_constrained_tight.sh`
+**Complete:** 2026-05-14 02:55
+
+### Run directories
+
+| Experiment config | Run dir | Notes |
+|---|---|---|
+| `mimicgen_square_rep_sweep_apr26_d60_nut_constrained_tight` | `mimicgen_square_apr26_seed1_d60_nut_constrained_tight` | budget=100; `run_clustering` symlinked from `mimicgen_square_apr26_sweep_seed1_demos60` |
+| `mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight` | `mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight` | budget=300; same upstream symlink |
+
+All paths under `/mnt/ssdB/erik/cupid_data/pipeline_runs/`.
+
+### Constraint config
+
+Nut pose constrained relative to seed demo pose; peg fully unconstrained (full D1):
+- x: `[-0.04, 0.04]` (±40 mm, 8 cm total)
+- y: `[-0.04, 0.04]` (±40 mm, 8 cm total)
+- z_rot: `[-0.524, 0.524]` (±30°, 60° total)
+
+Substantially tighter than the loose/D0-equivalent constraint on all axes (y especially: 8 cm vs 40 cm).
+
+### Infrastructure fixes made during this run
+
+- **`RandomizationError` patch** (`scripts/run_mimicgen_generate.py`): monkey-patches
+  `EnvRobosuite.rollout_exceptions` to include `RandomizationError`, so tight-constraint
+  placement failures (all 5000 retries exhausted) are caught by MimicGen's existing loop
+  as `num_problematic` rather than crashing the subprocess.
+- **Budget accounting fix** (`generate_mimicgen_demos.py`): crashed subprocesses now count
+  only their actual `num_attempts` (from `stats.json`) against the trial budget, not the
+  full `trials_per_seed`.
+- **Epoch-resume fix** (`train_diffusion_unet_lowdim_workspace.py`): on checkpoint resume,
+  `num_epochs_to_run = max(0, num_epochs - self.epoch)` — prevents re-running the full
+  training budget from the resumed checkpoint. (Bug caused 3000+ epoch runs before fix.)
+- **OOM mitigation**: reduced `n_envs` from 28 → 10 in
+  `diffusion_policy/config/task/square_mimicgen_lowdim.yaml` to reduce peak memory during
+  in-training rollout eval cycles. Device pool reduced to 2 concurrent slots for budget=300
+  Phase B.
+
+### Results (n=3 replicates, from `scripts/aggregate_sweep_results.py`)
+
+D60 baseline: best=25.2 ± 1.4%, top5_mean=**23.9 ± 0.9%**, succ_ep_len=199.0 ± 2.1
+
+```
+Budget = 100  [eval success rate, n=3]
+heuristic          metric                   mean±std     min     max  n
+------------------ ------------------  -------------  ------  ------  -
+behavior_graph     best                0.367 ± 0.012  0.358  0.380  3
+                   top5_mean           0.351 ± 0.006  0.344  0.354  3
+                   succ_ep_len (steps)  199.8 ± 7.0  192.3  206.2  3
+diversity          best                0.377 ± 0.044  0.352  0.428  3
+                   top5_mean           0.345 ± 0.021  0.331  0.369  3
+                   succ_ep_len (steps)  199.8 ± 4.7  194.3  202.8  3
+random             best                0.333 ± 0.024  0.306  0.354  3
+                   top5_mean           0.314 ± 0.019  0.292  0.327  3
+                   succ_ep_len (steps)  200.2 ± 4.7  195.8  205.1  3
+
+Budget = 300  [eval success rate, n=3]
+heuristic          metric                   mean±std     min     max  n
+------------------ ------------------  -------------  ------  ------  -
+behavior_graph     best                0.507 ± 0.031  0.472  0.530  3
+                   top5_mean           0.486 ± 0.031  0.453  0.514  3
+                   succ_ep_len (steps)  193.1 ± 5.2  187.3  197.2  3
+diversity          best                0.485 ± 0.005  0.480  0.488  3
+                   top5_mean           0.463 ± 0.007  0.457  0.472  3
+                   succ_ep_len (steps)  190.6 ± 2.4  188.9  192.3  2
+random             best                0.411 ± 0.012  0.402  0.424  3
+                   top5_mean           0.398 ± 0.009  0.392  0.408  3
+                   succ_ep_len (steps)  193.6 ± 7.2  189.0  202.0  3
+```
+
+### LaTeX table
+
+```latex
+\begin{table}[t]
+\centering
+\caption{Square D1, D60 baseline, tight nut constraint ($\pm4$\,cm $x/y$, $\pm30^\circ$).
+Mean\,$\pm$\,std over $n{=}3$ replicates.
+Best in \textbf{bold} (highest Gen/Success, lowest Dur).
+Duration is in simulator steps.}
+\label{tab:square_d1_d60_tight}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{Budget = 100} & \multicolumn{3}{c}{Budget = 300} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+Heuristic & Gen \% & Success \% & Dur & Gen \% & Success \% & Dur \\
+\midrule
+Baseline       & ---                      & 23.9 $\pm$ 0.9           & ---                       & ---                      & 23.9 $\pm$ 0.9           & --- \\
+random         & 44.2 $\pm$ 17.9          & 31.4 $\pm$ 1.9           & 200.2 $\pm$ 4.7           & 32.2 $\pm$ 11.7          & 39.8 $\pm$ 0.9           & 193.6 $\pm$ 7.2 \\
+few modes      & \textbf{56.5 $\pm$ 12.3} & \textbf{35.1 $\pm$ 0.6}  & \textbf{199.8 $\pm$ 7.0} & \textbf{58.2 $\pm$ 13.3} & \textbf{48.6 $\pm$ 3.1}  & 193.1 $\pm$ 5.2 \\
+diverse modes  & 42.0 $\pm$ 1.9           & 34.5 $\pm$ 2.1           & 199.8 $\pm$ 4.7           & 40.9 $\pm$ 3.0           & 46.3 $\pm$ 0.7           & \textbf{190.6 $\pm$ 2.4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+```
+
+### Findings
+
+**1. Tight constraint helps at D60 (unlike D300).**
+Every heuristic at every budget improves substantially over the 23.9% baseline. At budget=300,
+few modes reaches 48.6% top5_mean (+25 pp). With only 60 base demos the policy is underfit,
+so even narrowly-distributed augmentation adds real signal.
+
+**2. Budget matters more than heuristic at large budgets.**
+At budget=300, few modes (48.6%) and diverse modes (46.3%) converge. At budget=100 the gap
+between heuristics is small (~4 pp). The constraint geometry and demo quantity dominate.
+
+**3. Generation rate predicts policy quality.**
+Few modes achieves the highest gen rate at both budgets (56.5% at b=100, 58.2% at b=300)
+and leads on success rate. Random has the lowest gen rate at b=300 (32.2%, high variance)
+and the worst success rate. Seed selection quality correlates with geometric feasibility
+under the tight constraint.
+
+**4. Random is unreliable under tight constraints.**
+Gen rate std of 17.9%/11.7% (b=100/b=300) reflects one rep needing ~1400 trials for 300
+successes. Random occasionally picks seeds whose geometry is incompatible with the tight
+constraint. Few modes selects seeds from high-probability behavior-graph paths, which
+correlates with feasibility.
+
+**5. Episode duration decreases with budget.**
+Budget=100 arms: ~200 steps. Budget=300 arms: ~191–194 steps. Consistent with more demo
+diversity leading to more efficient task solving. Diverse modes has the shortest duration
+at b=300 (190.6 steps).
 
 ---
 
