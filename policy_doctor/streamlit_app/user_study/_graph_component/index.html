@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+  svg { display: block; width: 100%; height: 100%; cursor: default; }
+
+  .node-circle {
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    transform-origin: center;
+  }
+  .node-circle:hover { opacity: 0.85; filter: brightness(1.1); }
+  .node-circle.selected { stroke: #1a1a1a; stroke-width: 3px; }
+
+  .node-label {
+    pointer-events: none;
+    font-size: 11px;
+    fill: #333;
+    font-weight: 500;
+    text-anchor: middle;
+    dominant-baseline: auto;
+    user-select: none;
+  }
+
+  .edge { pointer-events: none; }
+
+  #tooltip {
+    position: fixed;
+    background: rgba(0,0,0,0.82);
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+    display: none;
+    z-index: 999;
+    max-width: 220px;
+    white-space: pre-line;
+  }
+
+  #instructions {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #999;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div id="tooltip"></div>
+<svg id="graph"></svg>
+<div id="instructions">Click any node to explore it</div>
+
+<script>
+// ── Streamlit messaging ───────────────────────────────────────────────────
+const STREAMLIT_ORIGIN = window.parent !== window ? "*" : null;
+
+function sendReady() {
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+}
+
+function sendValue(value) {
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:setComponentValue",
+    value: value,
+    dataType: "json",
+  }, "*");
+}
+
+function setHeight(h) {
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h }, "*");
+}
+
+// ── Graph state ───────────────────────────────────────────────────────────
+let graphData = null;
+let selectedNodeId = null;
+
+// ── Layout helpers ────────────────────────────────────────────────────────
+function toSvgCoords(pos, svgW, svgH, padding) {
+  // pos is {nodeId: [x, y]} in data space; map to SVG pixel space
+  const xs = Object.values(pos).map(p => p[0]);
+  const ys = Object.values(pos).map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const rangeX = maxX - minX || 1;
+  const rangeY = maxY - minY || 1;
+  const result = {};
+  for (const [id, [x, y]] of Object.entries(pos)) {
+    result[id] = [
+      padding + ((x - minX) / rangeX) * (svgW - 2 * padding),
+      padding + ((y - minY) / rangeY) * (svgH - 2 * padding),
+    ];
+  }
+  return result;
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+function render(data, svgW, svgH) {
+  graphData = data;
+  const svg = document.getElementById("graph");
+  svg.setAttribute("viewBox", `0 0 ${svgW} ${svgH}`);
+  svg.innerHTML = "";
+
+  const padding = 60;
+  const pixPos = toSvgCoords(data.positions, svgW, svgH, padding);
+
+  const maxEpisodes = Math.max(...data.nodes.map(n => n.num_episodes), 1);
+
+  // ── defs: arrowhead marker ─────────────────────────────────────────────
+  const defs = svgEl("defs");
+  const marker = svgEl("marker", { id: "arrow", markerWidth: "6", markerHeight: "6",
+    refX: "5", refY: "3", orient: "auto" });
+  const poly = svgEl("polygon", { points: "0 0, 6 3, 0 6", fill: "rgba(100,100,100,0.5)" });
+  marker.appendChild(poly);
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  // ── edges ─────────────────────────────────────────────────────────────
+  const edgeGroup = svgEl("g", { class: "edges" });
+  for (const edge of data.edges) {
+    const [x0, y0] = pixPos[edge.src] || [0, 0];
+    const [x1, y1] = pixPos[edge.tgt] || [0, 0];
+    if (!pixPos[edge.src] || !pixPos[edge.tgt]) continue;
+
+    // Shorten line so it doesn't overlap node markers
+    const rSrc = nodeRadius(data.nodes.find(n => n.id === edge.src), maxEpisodes);
+    const rTgt = nodeRadius(data.nodes.find(n => n.id === edge.tgt), maxEpisodes);
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ux = dx/len, uy = dy/len;
+    const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
+    const ex = x1 - ux * (rTgt + 6), ey = y1 - uy * (rTgt + 6);
+
+    // Bidirectional offset
+    let ox = 0, oy = 0;
+    if (data.edges.some(e => e.src === edge.tgt && e.tgt === edge.src)) {
+      ox = -uy * 5; oy = ux * 5;
+    }
+
+    const opacity = 0.2 + edge.prob * 0.65;
+    const width = 0.8 + edge.prob * 4;
+    const line = svgEl("line", {
+      class: "edge",
+      x1: sx + ox, y1: sy + oy, x2: ex + ox, y2: ey + oy,
+      stroke: `rgba(80,80,80,${opacity.toFixed(2)})`,
+      "stroke-width": width.toFixed(1),
+      "marker-end": "url(#arrow)",
+    });
+    edgeGroup.appendChild(line);
+  }
+  svg.appendChild(edgeGroup);
+
+  // ── nodes ─────────────────────────────────────────────────────────────
+  const nodeGroup = svgEl("g", { class: "nodes" });
+  for (const node of data.nodes) {
+    const [cx, cy] = pixPos[node.id] || [0, 0];
+    const r = nodeRadius(node, maxEpisodes);
+    const g = svgEl("g", { class: "node-group", transform: `translate(${cx},${cy})` });
+
+    // Main circle/shape
+    let shape;
+    if (node.symbol === "diamond") {
+      const s = r * 1.3;
+      shape = svgEl("polygon", {
+        points: `0,${-s} ${s},0 0,${s} ${-s},0`,
+        fill: node.color,
+        stroke: "white",
+        "stroke-width": "2",
+        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
+      });
+    } else if (node.symbol === "star") {
+      shape = svgEl("text", {
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+        "font-size": r * 2.2,
+        "user-select": "none",
+        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
+      });
+      shape.textContent = "★";
+      shape.style.fill = node.color;
+    } else if (node.symbol === "x") {
+      shape = svgEl("text", {
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+        "font-size": r * 2.4,
+        "user-select": "none",
+        "font-weight": "bold",
+        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
+      });
+      shape.textContent = "✕";
+      shape.style.fill = node.color;
+    } else {
+      shape = svgEl("circle", {
+        r: r,
+        fill: node.color,
+        stroke: node.id === selectedNodeId ? "#1a1a1a" : "white",
+        "stroke-width": node.id === selectedNodeId ? "3" : "2",
+        class: "node-circle",
+      });
+    }
+
+    // Invisible hit-area circle (larger, for easier clicking)
+    const hit = svgEl("circle", { r: Math.max(r + 8, 18), fill: "transparent", class: "node-circle", cursor: "pointer" });
+
+    g.appendChild(shape);
+    g.appendChild(hit);
+
+    // Label
+    const label = svgEl("text", {
+      class: "node-label",
+      x: 0,
+      y: r + 13,
+    });
+    label.textContent = node.label;
+    g.appendChild(label);
+
+    // Click + tooltip
+    const tooltip = document.getElementById("tooltip");
+    g.addEventListener("mouseenter", (e) => {
+      tooltip.style.display = "block";
+      tooltip.textContent = node.tooltip;
+      positionTooltip(e);
+    });
+    g.addEventListener("mousemove", positionTooltip);
+    g.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+    g.addEventListener("click", () => {
+      selectedNodeId = node.id;
+      sendValue(node.id);
+      // Re-render to update selection highlight
+      render(graphData, svgW, svgH);
+    });
+
+    nodeGroup.appendChild(g);
+  }
+  svg.appendChild(nodeGroup);
+}
+
+function nodeRadius(node, maxEpisodes) {
+  if (!node || node.is_special) return 14;
+  return Math.round(14 + 14 * Math.sqrt(node.num_episodes / maxEpisodes));
+}
+
+function svgEl(tag, attrs = {}) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function positionTooltip(e) {
+  const tt = document.getElementById("tooltip");
+  const x = e.clientX + 14, y = e.clientY - 10;
+  const right = x + tt.offsetWidth > window.innerWidth;
+  tt.style.left = (right ? e.clientX - tt.offsetWidth - 10 : x) + "px";
+  tt.style.top = Math.max(0, y) + "px";
+}
+
+// ── Message handling ───────────────────────────────────────────────────────
+window.addEventListener("message", (event) => {
+  const msg = event.data;
+  if (!msg || !msg.type) return;
+
+  if (msg.type === "streamlit:render") {
+    const args = msg.args || {};
+    const graphJson = args.graph_json;
+    const height = args.height || 600;
+    selectedNodeId = args.selected_node_id !== undefined ? args.selected_node_id : null;
+
+    document.body.style.height = height + "px";
+    document.getElementById("graph").style.height = height + "px";
+    setHeight(height);
+
+    if (graphJson) {
+      render(JSON.parse(graphJson), document.getElementById("graph").clientWidth || 700, height);
+    }
+  }
+});
+
+// Signal ready
+sendReady();
+</script>
+</body>
+</html>

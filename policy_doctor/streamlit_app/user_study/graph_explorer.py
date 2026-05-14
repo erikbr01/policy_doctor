@@ -15,11 +15,7 @@ from policy_doctor.behaviors.behavior_graph import (
     SUCCESS_NODE_ID,
 )
 from policy_doctor.streamlit_app.components.mp4_player import mp4_player
-from policy_doctor.streamlit_app.user_study.graph_plot import (
-    _layout,
-    build_study_graph,
-    node_id_from_event,
-)
+from policy_doctor.streamlit_app.user_study.graph_plot import render_graph_component
 
 
 def _episodes_for_node(
@@ -58,28 +54,11 @@ def render_graph_full_width(
     """Full-width clickable behavior graph. Clicking a node opens a details modal."""
 
     st.caption(
-        "**Click any node** to see details and example videos. "
-        "Each circle is a recurring movement pattern — larger = more episodes. "
-        "Arrows show transitions; thicker = more likely. "
-        "Green star = success, red ✕ = failure."
+        "**Click any node** to explore it — larger circles = more episodes. "
+        "Arrow thickness = transition probability. ★ = success, ✕ = failure."
     )
 
-    fig = build_study_graph(graph, height=620)
-    node_pos = _layout(graph)
-
-    event = st.plotly_chart(
-        fig,
-        use_container_width=True,
-        key=f"{key_prefix}_graph",
-        on_select="rerun",
-        selection_mode="points",
-    )
-
-    clicked_node_id: Optional[int] = st.session_state.get(f"{key_prefix}_clicked_node")
-    resolved = node_id_from_event(event, fig, node_pos)
-    if resolved is not None:
-        clicked_node_id = resolved
-        st.session_state[f"{key_prefix}_clicked_node"] = clicked_node_id
+    clicked_node_id = render_graph_component(graph, height=580, key=f"{key_prefix}_graph")
 
     # Inline node detail panel
     if clicked_node_id is not None and clicked_node_id in graph.nodes:
