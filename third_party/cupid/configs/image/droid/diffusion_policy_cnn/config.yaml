@@ -49,7 +49,7 @@ logging:
   id: null
   mode: online
   name: droid_diffusion_cnn
-  project: influence-clustering
+  project: kendama-droid
   resume: true
   tags:
     - droid

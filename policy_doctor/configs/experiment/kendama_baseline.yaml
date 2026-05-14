@@ -21,5 +21,5 @@ baseline:
   diffusion_dataset_path: /mnt/ssdB/erik/droid_data/kendama_may13.hdf5
 
 device: "cuda:0"
-project: influence-clustering
+project: kendama-droid
 wandb_tags: [droid, kendama, baseline, may13]
