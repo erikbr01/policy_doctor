@@ -629,31 +629,27 @@ data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tig
 
 ### Step 2 — Run the full pipeline for each K
 
-For each K value, run the remaining pipeline steps with `clustering_n_clusters=K`.
-The `select_mimicgen_seed` step will resolve the clustering directory from
-`clustering_dirs_by_k[str(K)]`, then generation and training proceed as normal.
+For each K value, run the downstream steps in their own run dir and point back at the
+original run dir (where `run_clustering` already completed) via `clustering_run_dir`.
 
 ```bash
+BASE_RUN=mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight
+BASE_RUN_ABS=/mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}
+
 for K in 5 10 15 20 25; do
   python -m policy_doctor.scripts.run_pipeline \
     +experiment=mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight \
     steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data] \
     clustering_n_clusters=${K} \
-    mimicgen_datagen.policy_seed=0
+    clustering_run_dir=${BASE_RUN_ABS} \
+    run_name=${BASE_RUN}_k${K}
 done
 ```
 
-**Note:** each K value needs its own pipeline run directory (so results don't overwrite
-each other). Either use separate `run_name` overrides per K, or use the experiment config
-mechanism to create separate run dirs:
-
-```bash
-python -m policy_doctor.scripts.run_pipeline \
-  +experiment=mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight \
-  steps=[select_mimicgen_seed,generate_mimicgen_demos,train_on_combined_data] \
-  clustering_n_clusters=10 \
-  run_name=mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k10
-```
+- `clustering_run_dir` tells `select_mimicgen_seed` where to find the `run_clustering`
+  result (the original run dir), regardless of where this run's own steps write their output.
+- `run_name` gives each K its own pipeline run directory so results don't overwrite each other.
+- `clustering_n_clusters` selects the K from `clustering_dirs_by_k` in the result.
 
 ### Step 3 — Aggregate results
 
