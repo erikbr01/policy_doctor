@@ -1,0 +1,78 @@
+# K Robustness Sweep — May 14 2026
+
+**Goal:** Show that `behavior_graph` (few-modes) seed selection is robust to K-means K.  
+**Design:** D60 baseline, tight nut constraint (±40 mm x/y, ±30° z_rot), budget=300, n=3 reps, K∈{5,10,15,20,25}.  
+UMAP fit once (seed=1, 12978 windows × 100d); K-means re-fit per K.  
+
+## Setup
+
+| Key | Value |
+|-----|-------|
+| Script | `scripts/run_k_sweep_tight.sh` |
+| Experiment config | `mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight` |
+| Baseline data | `~/data/cupid_data/outputs/eval_save_episodes/apr26_sweep_demos60/` |
+| Run dirs | `third_party/cupid/data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k{K}/` |
+| Heuristics | random, behavior_graph, diversity |
+| Reps | Phase A (rep-1, random_seed=null) + Phase B (rep-2/3, random_seed=1/2) |
+| Eval envs | 5 per run (n_envs=5) |
+| GPU slots | 5 × cuda:0 |
+
+## Status
+
+| K | Phase A (rep-1) | Phase B (rep-2) | Phase B (rep-3) |
+|---|-----------------|-----------------|-----------------|
+| 5  | 🔄 generating | ⏳ pending | ⏳ pending |
+| 10 | ⏳ pending | ⏳ pending | ⏳ pending |
+| 15 | ⏳ pending | ⏳ pending | ⏳ pending |
+| 20 | ⏳ pending | ⏳ pending | ⏳ pending |
+| 25 | ⏳ pending | ⏳ pending | ⏳ pending |
+
+Legend: ⏳ pending · 🔄 generating · 🏋 training · 📊 eval · ✅ done · ❌ failed
+
+## Results
+
+*(filled in as arms complete)*
+
+| K | heuristic | best (n=3) | top5_mean (n=3) |
+|---|-----------|------------|-----------------|
+| 5  | random | — | — |
+| 5  | behavior_graph | — | — |
+| 5  | diversity | — | — |
+| 10 | random | — | — |
+| 10 | behavior_graph | — | — |
+| 10 | diversity | — | — |
+| 15 | random | — | — |
+| 15 | behavior_graph | — | — |
+| 15 | diversity | — | — |
+| 20 | random | — | — |
+| 20 | behavior_graph | — | — |
+| 20 | diversity | — | — |
+| 25 | random | — | — |
+| 25 | behavior_graph | — | — |
+| 25 | diversity | — | — |
+
+## Run log
+
+- **2026-05-14 22:26**: `run_k_sweep_tight.sh` launched (PID 14213).
+- **2026-05-14 22:26**: Step 1 complete — UMAP fit (12978×100 → 100d, n_jobs=-1, ~1 min). K-means run for K=5,10,15,20,25 using seed=1 infembed embeddings. All 5 clustering dirs written.
+- **2026-05-14 22:29**: K=5 Phase A generation started. 3 arms (random, behavior_graph, diversity) each running 3 `run_mimicgen_generate.py` workers in `mimicgen_torch2`. Tight constraint: nut ±40mm x/y, ±30° z_rot. 900 trials per arm (10 seeds × 90 trials/pass).
+
+## Bugs fixed during launch
+
+All found and fixed 2026-05-14 during initial launch attempts:
+
+| File | Bug | Fix |
+|------|-----|-----|
+| `clustering_results.py:145` | `Path \| None` type hint breaks Python 3.9 | → `Optional[Path]` |
+| `select_mimicgen_seed.py` | `OmegaConf.select(plain_dict, ...)` crashes when `failure_analysis` key absent (fallback `or {}` returns plain Python dict) | → `OmegaConf.create({})` as empty fallback |
+| `run_k_sweep_tight.sh` | `+experiment=` caused "Multiple values for experiment" | → `experiment=` |
+| `run_k_sweep_tight.sh` | `clustering_n_clusters_sweep` / `clustering_run_dir` not in struct | → `+` prefix |
+| `run_k_sweep_tight.sh` | `evaluation.eval_output_dir` can't be overridden directly | → `~evaluation.eval_output_dir` delete + `+evaluation.eval_output_dir=` re-add |
+| `run_k_sweep_tight.sh` | `run_name=` ignored when config already sets `run_dir` | → `run_dir=data/pipeline_runs/${RUN_NAME}` |
+
+## Notes
+
+- `robosuite_task_zoo` import warning on every generation worker is non-fatal (module not installed in `mimicgen_torch2`; not needed for Square task).
+- `"keep_failed": true` in log is MimicGen JSON config output, not an error.
+- Generation success rate starts at 0% for initial trials; accumulates over 900 trials per arm. Low early success rate is normal for tight constraint.
+- Step 2 runs K values sequentially (K=5 → K=10 → … → K=25). Each K runs Phase A then Phase B before moving to next K. Total arms: 5 K × 3 heuristics × 3 reps = 45 arms.
