@@ -33,12 +33,20 @@ IV_CONFIGS_DIR = INFLUENCE_VISUALIZER_ROOT / "configs"
 
 
 def _default_repo_root() -> Path:
-    """Training / eval repo root: vendored ``cupid`` when present, else monorepo cupid root."""
-    if CUPID_ROOT.is_dir():
+    """Training / eval repo root: vendored ``cupid`` when present and populated, else monorepo."""
+    # Prefer vendored cupid only when it actually has data (not a code-only checkout)
+    if CUPID_ROOT.is_dir() and (CUPID_ROOT / "data").is_dir():
         return CUPID_ROOT
     parent = PROJECT_ROOT.parent
     if (parent / "influence_visualizer").is_dir():
         return parent
+    # Sibling directory named "cupid" with a data/ tree (standalone cupid adjacent to policy_doctor)
+    cupid_sibling = parent / "cupid"
+    if cupid_sibling.is_dir() and (cupid_sibling / "data").is_dir():
+        return cupid_sibling
+    # Fall back to vendored cupid even without data (code-only checkout, paths will still be code-relative)
+    if CUPID_ROOT.is_dir():
+        return CUPID_ROOT
     return PROJECT_ROOT
 
 

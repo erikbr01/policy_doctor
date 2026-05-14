@@ -52,3 +52,21 @@ dataset_path: null
 # Acceleration flags
 tf32: true
 compile: true
+
+# InfEmbed-specific predict acceleration knobs (compute_infembed step).
+# Defaults are the fastest known config for the lowdim diffusion U-Net (~1.1M
+# params), measured at ~3x speedup on the predict path vs the historical
+# eager + projection_on_cpu setting.  For image policies (large obs_encoder),
+# set projection_on_gpu=false if R+policy together OOM the GPU.
+#
+#   compile_target: which submodule to wrap with torch.compile when
+#       attribution.compile=true.  'inner_unet' (default) wraps only
+#       policy.model — embeddings stay bit-equivalent to eager up to fp32
+#       reductions.  'wrapper' wraps DiffusionLossWrapper (broader); not
+#       recommended — no measured speedup and trips dynamo on einops +
+#       nn.ParameterDict.
+#   projection_on_gpu: whether the Arnoldi projection vectors (fit_results.R)
+#       live on GPU during predict.  GPU avoids ~projection_dim small CPU->GPU
+#       transfers per batch.  Memory cost ~projection_dim * sum(param_size).
+compile_target: inner_unet
+projection_on_gpu: true

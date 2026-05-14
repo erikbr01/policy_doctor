@@ -1,0 +1,91 @@
+# @package _global_
+# Comparison: Apr26 sweep, 60 source demos — seeds 0+1+2 pooled, all budgets.
+#
+# Groups pool all three policy seeds × all budgets × all reps.
+# This is the highest-power comparison across the full demos60 sweep.
+# shuffle=true handles the non-i.i.d. concatenation across seeds and budgets.
+#
+# Usage:
+#   python -m policy_doctor.scripts.compare_policies comparison=mimicgen_apr26_demos60_seeds012
+
+comparison:
+  title: "MimicGen Apr26 — 60 demos, seeds 0+1+2 (all budgets)"
+  eval_output_dir: data/outputs/eval_save_episodes
+  output_dir: data/outputs/comparisons/mimicgen_apr26_demos60_seeds012
+  global_confidence_level: 0.95
+  max_sample_size_per_policy: null
+  top_k_checkpoints: 5
+  shuffle: true
+
+  groups:
+    - label: Behavior Graph
+      run_names:
+        # seed 0
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph-budget1000
+        # seed 1 (with reps)
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget20-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget20-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget100-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget100-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget500-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget500-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget1000
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget1000-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-behavior_graph-budget1000-rep2
+        # seed 2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-behavior_graph-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-behavior_graph-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-behavior_graph-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-behavior_graph-budget1000
+
+    - label: Diversity
+      run_names:
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity-budget1000
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget20-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget20-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget100-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget100-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget500-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget500-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget1000
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget1000-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-diversity-budget1000-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-diversity-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-diversity-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-diversity-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-diversity-budget1000
+
+    - label: Random
+      run_names:
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random-budget1000
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget20-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget20-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget100-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget100-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget500-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget500-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget1000
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget1000-rep1
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_1-mimicgen_combined-random-budget1000-rep2
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-random-budget20
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-random-budget100
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-random-budget500
+        - apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_2-mimicgen_combined-random-budget1000

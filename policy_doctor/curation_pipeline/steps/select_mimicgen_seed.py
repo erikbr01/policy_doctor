@@ -93,8 +93,21 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         # inside a CompositeStep (where run_dir is the composite's sub-directory).
         prior = RunClusteringStep(self.cfg, self.parent_run_dir).load()
         clustering_dirs: dict[str, str] = {}
-        if prior and isinstance(prior.get("clustering_dirs"), dict):
-            clustering_dirs = {str(k): str(v) for k, v in prior["clustering_dirs"].items()}
+        if prior:
+            n_clusters_cfg = int(OmegaConf.select(self.cfg, "clustering_n_clusters") or 20)
+            dirs_by_k = prior.get("clustering_dirs_by_k") or {}
+            k_key = str(n_clusters_cfg)
+            if dirs_by_k and k_key in dirs_by_k:
+                clustering_dirs = {str(s): str(p) for s, p in dirs_by_k[k_key].items()}
+            elif dirs_by_k:
+                available_ks = sorted(dirs_by_k.keys(), key=lambda x: int(x))
+                raise KeyError(
+                    f"clustering_n_clusters={n_clusters_cfg} not found in sweep results. "
+                    f"Available K values: {available_ks}. "
+                    f"Set clustering_n_clusters to one of these values."
+                )
+            elif isinstance(prior.get("clustering_dirs"), dict):
+                clustering_dirs = {str(k): str(v) for k, v in prior["clustering_dirs"].items()}
 
         explicit = OmegaConf.select(self.cfg, "clustering_dir")
         if explicit and not clustering_dirs:

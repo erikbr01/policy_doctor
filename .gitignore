@@ -9,3 +9,13 @@ build/
 outputs/
 .hydra/
 .cache/
+
+# Local secrets and tooling state
+.env
+.claude/
+
+# Local run-output dirs (treated as transient; not source)
+/experiments/
+
+# Pre-implementation spec, superseded by docs/experiments/experiment_e2_agent_proposals.md
+/E2_vlm_proposals.md

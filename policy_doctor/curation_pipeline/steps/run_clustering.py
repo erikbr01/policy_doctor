@@ -86,17 +86,32 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         umap_n_jobs = OmegaConf.select(cfg, "clustering_umap_n_jobs") or -1
         umap_prescale = OmegaConf.select(cfg, "clustering_umap_prescale") or "standard"
 
+        # Sweep over multiple K values when clustering_n_clusters_sweep is set.
+        # UMAP runs once per seed (expensive); K-Means runs once per K (cheap).
+        k_sweep_cfg = OmegaConf.select(cfg, "clustering_n_clusters_sweep")
+        if k_sweep_cfg is not None:
+            k_values = [int(k) for k in k_sweep_cfg]
+            if not k_values:
+                raise ValueError(
+                    "clustering_n_clusters_sweep is set but empty. "
+                    "Provide at least one K value, or remove the key to use clustering_n_clusters."
+                )
+        else:
+            k_values = [int(n_clusters)]
+
         if self.dry_run:
             for seed in seeds:
                 print(
                     f"[dry_run] RunClusteringStep seed={seed}: "
                     f"source={influence_source}, level={level}, split={demo_split}, "
                     f"window={window_width}, stride={stride}, umap_dim={umap_n_components}, "
-                    f"k={n_clusters}, normalize={normalize}, prescale={umap_prescale}, agg={aggregation}"
+                    f"k_sweep={k_values}, normalize={normalize}, prescale={umap_prescale}, agg={aggregation}"
                 )
-            return {"clustering_dirs": {}}
+            return {"clustering_dirs": {}, "clustering_dirs_by_k": {str(k): {} for k in k_values}}
 
         result_dirs: Dict[str, str] = {}
+        result_dirs_by_k: Dict[str, Dict[str, str]] = {str(k): {} for k in k_values}
+
         for seed in seeds:
             eval_dir_seed = get_eval_dir_for_seed(eval_dir_base, seed, reference_seed)
             eval_dir_abs = self.repo_root / eval_dir_seed
@@ -130,37 +145,55 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                 embeddings_scaled, method="umap", n_components=umap_n_components, n_jobs=umap_n_jobs
             )
 
-            print(f"  K-Means: k={n_clusters}")
-            labels, kmeans_model = fit_cluster_kmeans(embeddings_reduced, n_clusters=n_clusters)
+            for k in k_values:
+                print(f"  K-Means: k={k}")
+                labels, kmeans_model = fit_cluster_kmeans(embeddings_reduced, n_clusters=k)
 
-            n_actual = len(set(labels) - {-1})
-            print(f"  Clusters: {n_actual}, noise: {int((labels == -1).sum())}")
+                n_actual = len(set(labels) - {-1})
+                print(f"  Clusters: {n_actual}, noise: {int((labels == -1).sum())}")
 
-            clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{n_clusters}"
-            result_dir = save_clustering_result(
-                name=clustering_name,
-                cluster_labels=labels,
-                metadata=all_metadata,
-                algorithm="kmeans",
-                scaling=normalize,
-                influence_source=influence_source,
-                representation="sliding_window",
-                level=level,
-                n_clusters=n_actual,
-                n_samples=len(labels),
-                output_dir=self.step_dir / "clustering",
-            )
-            models_path = save_clustering_models(
-                result_dir=result_dir,
-                normalizer=normalizer_model,
-                normalizer_method=normalize,
-                prescaler=prescaler_model,
-                prescaler_method=umap_prescale,
-                reducer=umap_model,
-                reducer_method="umap",
-                kmeans=kmeans_model,
-            )
-            print(f"  Saved: {result_dir}  (models: {models_path.name})")
-            result_dirs[seed] = str(result_dir)
+                clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{k}"
+                k_output_dir = self.step_dir / "clustering" / f"k{k}"
+                result_dir = save_clustering_result(
+                    name=clustering_name,
+                    cluster_labels=labels,
+                    metadata=all_metadata,
+                    algorithm="kmeans",
+                    scaling=normalize,
+                    influence_source=influence_source,
+                    representation="sliding_window",
+                    level=level,
+                    n_clusters=n_actual,
+                    n_samples=len(labels),
+                    embeddings_reduced=embeddings_reduced,
+                    output_dir=k_output_dir,
+                )
+                models_path = save_clustering_models(
+                    result_dir=result_dir,
+                    normalizer=normalizer_model,
+                    normalizer_method=normalize,
+                    prescaler=prescaler_model,
+                    prescaler_method=umap_prescale,
+                    reducer=umap_model,
+                    reducer_method="umap",
+                    kmeans=kmeans_model,
+                )
+                print(f"  Saved: {result_dir}  (models: {models_path.name})")
+                result_dirs_by_k[str(k)][seed] = str(result_dir)
 
-        return {"clustering_dirs": result_dirs}
+            # clustering_dirs points to the default K (clustering_n_clusters).
+            # If clustering_n_clusters is not in the sweep, warn and use the first K.
+            default_k = str(int(n_clusters))
+            if default_k in result_dirs_by_k and seed in result_dirs_by_k[default_k]:
+                result_dirs[seed] = result_dirs_by_k[default_k][seed]
+            else:
+                fallback_k = str(k_values[0])
+                print(
+                    f"  WARNING: clustering_n_clusters={n_clusters} is not in "
+                    f"clustering_n_clusters_sweep={k_values}. "
+                    f"clustering_dirs will point to k={fallback_k} as a convenience default. "
+                    f"Use clustering_dirs_by_k to select a specific K."
+                )
+                result_dirs[seed] = result_dirs_by_k[fallback_k][seed]
+
+        return {"clustering_dirs": result_dirs, "clustering_dirs_by_k": result_dirs_by_k}

@@ -166,6 +166,20 @@ def main(argv: list[str] | None = None) -> None:
     from mimicgen.scripts.generate_dataset import generate_dataset
     from mimicgen.scripts.prepare_src_dataset import prepare_src_dataset
 
+    # Patch rollout_exceptions to include RandomizationError so that failed
+    # env.reset() calls (e.g. from tight placement constraints) are caught by
+    # generate_dataset's existing exception loop rather than crashing the process.
+    try:
+        import robosuite.utils.errors as _rs_errors
+        import robomimic.envs.env_robosuite as _er
+        _orig_rollout_exc = _er.EnvRobosuite.rollout_exceptions.fget
+        _er.EnvRobosuite.rollout_exceptions = property(
+            lambda self: (_orig_rollout_exc(self), _rs_errors.RandomizationError)
+        )
+        print("[run_mimicgen_generate] patched rollout_exceptions to include RandomizationError")
+    except Exception as _e:
+        print(f"[run_mimicgen_generate] WARNING: could not patch rollout_exceptions: {_e}")
+
     seed_hdf5 = Path(args.seed_hdf5).resolve()
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,32 @@
+# Default DAgger configuration for interactive rollouts
+# Usage: python scripts/run_dagger.py ... +dagger_config=defaults
+
+device: keyboard  # or 'spacemouse', 'passthrough'
+
+# Device-specific parameters
+keyboard:
+  step_size: 0.05  # meters per key press
+
+spacemouse:
+  vendor_id: 9583     # 3DConnexion SpaceMouse Compact (Wired)
+  product_id: 50741
+  deadzone: 0.1       # Ignore inputs below this magnitude
+  scale_position: 125.0  # Scaling for translational movements
+  scale_rotation: 50.0   # Scaling for rotational movements
+
+# Intervention strategy parameters
+intervention:
+  rule: node_value_threshold
+  node_value_threshold: 0.0  # V-value threshold for auto-trigger (lower = more sensitive)
+
+# Visualization parameters
+visualization:
+  enabled: true
+  camera_names: ["agentview"]
+  figsize: [8, 5]
+  update_freq: 30  # Hz (approximate)
+
+# Episode recording
+recording:
+  enabled: true
+  save_format: pkl  # pandas DataFrame format

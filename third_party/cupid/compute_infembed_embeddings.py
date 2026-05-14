@@ -105,14 +105,18 @@ class _TrainWithTimestepsIterable(torch.utils.data.IterableDataset):
         num_train_timesteps: int,
         num_timesteps: int,
         device: torch.device,
+        limit_batches: Optional[int] = None,
     ):
         self.base_loader = base_loader
         self.num_train_timesteps = num_train_timesteps
         self.num_timesteps = num_timesteps
         self.device = device
+        self.limit_batches = limit_batches
 
     def __iter__(self):
-        for batch in self.base_loader:
+        for i, batch in enumerate(self.base_loader):
+            if self.limit_batches is not None and i >= self.limit_batches:
+                return
             batch = dict_apply(batch, lambda x: x.to(self.device))
             batch = _add_timesteps(
                 batch,
@@ -130,9 +134,10 @@ def _make_train_infembed_loader(
     num_train_timesteps: int,
     num_timesteps: int,
     device: torch.device,
+    limit_batches: Optional[int] = None,
 ) -> DataLoader:
     dataset = _TrainWithTimestepsIterable(
-        train_loader, num_train_timesteps, num_timesteps, device
+        train_loader, num_train_timesteps, num_timesteps, device, limit_batches
     )
     return DataLoader(dataset, batch_size=None, num_workers=0)
 
@@ -146,14 +151,18 @@ class _RolloutWithTimestepsIterable(torch.utils.data.IterableDataset):
         num_train_timesteps: int,
         num_timesteps: int,
         device: torch.device,
+        limit_batches: Optional[int] = None,
     ):
         self.rollout_dataset = rollout_dataset
         self.num_train_timesteps = num_train_timesteps
         self.num_timesteps = num_timesteps
         self.device = device
+        self.limit_batches = limit_batches
 
     def __iter__(self):
-        for batch in self.rollout_dataset:
+        for i, batch in enumerate(self.rollout_dataset):
+            if self.limit_batches is not None and i >= self.limit_batches:
+                return
             batch = dict_apply(batch, lambda x: x.to(self.device))
             batch = _add_timesteps(
                 batch,
@@ -171,9 +180,10 @@ def _make_rollout_infembed_loader(
     num_train_timesteps: int,
     num_timesteps: int,
     device: torch.device,
+    limit_batches: Optional[int] = None,
 ) -> DataLoader:
     dataset = _RolloutWithTimestepsIterable(
-        rollout_dataset, num_train_timesteps, num_timesteps, device
+        rollout_dataset, num_train_timesteps, num_timesteps, device, limit_batches
     )
     return DataLoader(dataset, batch_size=None, num_workers=0)
 
@@ -217,6 +227,34 @@ def _make_rollout_infembed_loader(
 @click.option("--tf32", is_flag=True, default=False, help="Enable TF32 matmul/cuDNN precision.")
 @click.option("--compile", "use_compile", is_flag=True, default=False,
               help="Wrap the loss wrapper with torch.compile before InfEmbed.")
+@click.option(
+    "--compile_target",
+    type=click.Choice(["wrapper", "inner_unet"]),
+    default="inner_unet",
+    help="What to compile when --compile is set. "
+         "'wrapper' wraps DiffusionLossWrapper.forward (broad, includes RNG inside compiled region). "
+         "'inner_unet' wraps only policy.model.model (the U-Net) — keeps RNG eager so the run "
+         "stays bit-equivalent to no-compile up to floating-point reductions.",
+)
+@click.option(
+    "--limit_predict_batches",
+    type=int,
+    default=None,
+    help="If set, only run predict for the first N batches of each loader "
+         "(demo train, demo holdout, rollout). Used for benchmarking / equivalence tests. "
+         "When set, results are written to a separate npz with the suffix '_limit{N}.npz' "
+         "and the demo-only file is skipped.",
+)
+@click.option(
+    "--projection_on_gpu/--projection_on_cpu",
+    "projection_on_gpu",
+    default=False,
+    help="Where the InfEmbed Arnoldi projection vectors (fit_results.R) live. "
+         "GPU is significantly faster during predict (avoids ~projection_dim "
+         "small CPU->GPU transfers per batch — measured ~1.5-2x speedup on the "
+         "diffusion U-Net predict path) but uses ~projection_dim*sum(param_size) "
+         "extra GPU memory.  Default CPU matches the historical setting.",
+)
 def main(
     exp_name: str,
     eval_dir: str,
@@ -238,6 +276,9 @@ def main(
     fit_results: Optional[str],
     predict_rollout_only: bool,
     tf32: bool,
+    compile_target: str,
+    limit_predict_batches: Optional[int],
+    projection_on_gpu: bool,
     use_compile: bool,
 ):
     torch.manual_seed(seed)
@@ -261,10 +302,19 @@ def main(
             "policy seed is determined by eval_dir/train_dir paths.)"
         )
     out_dir = eval_dir / exp_name
-    out_path = out_dir / "infembed_embeddings.npz"
+    # When --limit_predict_batches is used, write to a sibling file so we
+    # don't clobber the canonical infembed_embeddings.npz from a real run.
+    if limit_predict_batches is not None:
+        suffix = f"_limit{limit_predict_batches}"
+        if use_compile:
+            suffix += f"_compile-{compile_target}"
+        out_path = out_dir / f"infembed_embeddings{suffix}.npz"
+        demo_only_path = out_dir / f"infembed_embeddings{suffix}_demo_only.npz"
+    else:
+        out_path = out_dir / "infembed_embeddings.npz"
+        demo_only_path = out_dir / "infembed_embeddings_demo_only.npz"
     fit_results_path = pathlib.Path(fit_results) if fit_results else (out_dir / "infembed_fit.pt")
     arnoldi_state_path = out_dir / "infembed_arnoldi_state.pt"
-    demo_only_path = out_dir / "infembed_embeddings_demo_only.npz"
     if predict_rollout_only:
         if not fit_results_path.exists():
             raise FileNotFoundError(
@@ -336,10 +386,22 @@ def main(
     # Wrapper so InfEmbed sees model(batch) -> (B,) per-example loss
     wrapper = DiffusionLossWrapper(policy, task)
 
-    # Optionally compile the wrapper.  InfEmbed calls wrapper(batch) directly
-    # (no vmap/grad).  Use dynamic=True / fullgraph=False to allow graph breaks
-    # at nn.ParameterDict lookups inside the normalizer (fullgraph=True causes
-    # dynamo to fail when asserting 'scale' in params during tracing).
+    # Optionally compile.  InfEmbed calls wrapper(batch) directly (no vmap/grad).
+    #
+    # Two strategies:
+    #   inner_unet (default): compile only the U-Net (policy.model.model).
+    #     The wrapper still runs eager: RNG (torch.randn for the noise injected
+    #     into the trajectory, torch.randint for diffusion timesteps) stays in
+    #     eager land, which means the RNG sequence is identical to a no-compile
+    #     run.  Up to fp32 reductions inside compiled kernels, embeddings match.
+    #   wrapper: compile the whole DiffusionLossWrapper.  This pulls randn into
+    #     the compiled region — dynamo lowers it to a separate Philox stream,
+    #     so embeddings will not be bit-equivalent to a no-compile run.  Kept
+    #     for completeness / experimentation.
+    #
+    # In both cases we use fullgraph=False, dynamic=True: the policy normalizer
+    # is an nn.ParameterDict and dynamo can't prove the membership of 'scale'
+    # under fullgraph=True; the U-Net itself traces cleanly.
     if use_compile:
         # Patch inductor's value_ranges.coordinatewise_monotone_map to handle NaN produced by
         # 0 * oo in symbolic range propagation.  Present in torch <= 2.4.1; min()/max() over
@@ -365,7 +427,30 @@ def main(
         _vr.ValueRanges.coordinatewise_monotone_map = _coord_mono_nan_safe
 
         from diffusion_policy.common.ddp_util import compile_model
-        wrapper = compile_model(wrapper, fullgraph=False, dynamic=True)
+        if compile_target == "wrapper":
+            # Wrapper-level compile must use dynamic=True to absorb the
+            # variable B (last batch may be smaller) without recompile.  The
+            # wrapper has dynamic dict accesses (named_parameters / nn.ParameterDict)
+            # so fullgraph=False.  Note: existing code in the curation pipeline
+            # disables this path because dynamo + einops + nn.ParameterDict
+            # currently crash under dynamic=True; keep it gated.
+            wrapper = compile_model(wrapper, fullgraph=False, dynamic=True)
+            print("Compiled DiffusionLossWrapper (broad).")
+        elif compile_target == "inner_unet":
+            # policy.model is the ConditionalUnet1D / TransformerForDiffusion.
+            # modelout_functions calls torch.func.functional_call(policy.model, ...)
+            # which dispatches to the compiled forward.  Use dynamic=False for
+            # max specialisation; the U-Net forward uses einops.rearrange which
+            # raises 'unhashable type: non-nested SymInt' under dynamic=True
+            # (einops uses tensor.shape as dict keys).  dynamic=False
+            # specialises for the first batch shape and recompiles on shape
+            # change — predict batches have stable shape (B*T, ...) until the
+            # very last batch which may be partial.
+            inner = policy.model
+            policy.model = compile_model(inner, fullgraph=False, dynamic=False)
+            print(f"Compiled inner U-Net ({type(inner).__name__}).")
+        else:
+            raise ValueError(f"Unknown compile_target {compile_target!r}")
 
     loss_fn_none = IdentityLossNone()
 
@@ -382,6 +467,10 @@ def main(
     train_infembed_loader = _make_train_infembed_loader(
         train_loader, num_train_timesteps, num_timesteps, device
     )
+    # If we are only predicting (predict_only / predict_rollout_only) the fit
+    # path is skipped, so limit_predict_batches only needs to clip the predict
+    # loaders below.  When doing a full run, limit_predict_batches still
+    # leaves fit unaffected (fit consumes the full train set).
 
     # Optional holdout (same order as TRAK)
     holdout_loader = None
@@ -425,7 +514,8 @@ def main(
             )
 
     rollout_infembed_loader = _make_rollout_infembed_loader(
-        rollout_set, num_train_timesteps, num_timesteps, device
+        rollout_set, num_train_timesteps, num_timesteps, device,
+        limit_batches=limit_predict_batches,
     )
 
     # InfEmbed: same parameter set as TRAK when model_keys given (e.g. model. or obs_encoder.,model.)
@@ -444,7 +534,7 @@ def main(
         sample_wise_grads_per_batch=False,
         projection_dim=projection_dim,
         arnoldi_dim=arnoldi_dim,
-        projection_on_cpu=True,
+        projection_on_cpu=not projection_on_gpu,
         show_progress=True,
         layers=infembed_layers,
     )
@@ -452,7 +542,7 @@ def main(
     saved_fit_path = None
     if predict_only or predict_rollout_only:
         print(f"Loading Arnoldi fit results from {fit_results_path}...")
-        embedder.load(str(fit_results_path), projection_on_cpu=True)
+        embedder.load(str(fit_results_path), projection_on_cpu=not projection_on_gpu)
     else:
         # Fit on training data only; save after each Arnoldi iteration for recovery/resume
         initial_arnoldi_state = None
@@ -493,10 +583,11 @@ def main(
         print("Computing rollout embeddings (resuming after demo)...")
         rollout_embeddings = embedder.predict(rollout_infembed_loader)
         rollout_embeddings = rollout_embeddings.cpu().numpy()
-        assert rollout_embeddings.shape[0] == rollout_set_size, (
-            rollout_embeddings.shape[0],
-            rollout_set_size,
-        )
+        if limit_predict_batches is None:
+            assert rollout_embeddings.shape[0] == rollout_set_size, (
+                rollout_embeddings.shape[0],
+                rollout_set_size,
+            )
         np.savez(
             out_path,
             rollout_embeddings=rollout_embeddings,
@@ -518,17 +609,20 @@ def main(
             pin_memory=(device.type == "cuda"),
         )
         train_infembed_loader2 = _make_train_infembed_loader(
-            train_loader_predict, num_train_timesteps, num_timesteps, device
+            train_loader_predict, num_train_timesteps, num_timesteps, device,
+            limit_batches=limit_predict_batches,
         )
         try:
             print("Computing demo embeddings (train)...")
             demo_train_embs = embedder.predict(train_infembed_loader2)
             demo_train_embs = demo_train_embs.cpu().numpy()
-            assert demo_train_embs.shape[0] == train_set_size, (demo_train_embs.shape[0], train_set_size)
+            if limit_predict_batches is None:
+                assert demo_train_embs.shape[0] == train_set_size, (demo_train_embs.shape[0], train_set_size)
 
             if holdout_loader is not None and holdout_set_size > 0:
                 holdout_infembed_loader = _make_train_infembed_loader(
-                    holdout_loader, num_train_timesteps, num_timesteps, device
+                    holdout_loader, num_train_timesteps, num_timesteps, device,
+                    limit_batches=limit_predict_batches,
                 )
                 print("Computing demo embeddings (holdout)...")
                 demo_holdout_embs = embedder.predict(holdout_infembed_loader)
@@ -550,10 +644,11 @@ def main(
             print("Computing rollout embeddings...")
             rollout_embeddings = embedder.predict(rollout_infembed_loader)
             rollout_embeddings = rollout_embeddings.cpu().numpy()
-            assert rollout_embeddings.shape[0] == rollout_set_size, (
-                rollout_embeddings.shape[0],
-                rollout_set_size,
-            )
+            if limit_predict_batches is None:
+                assert rollout_embeddings.shape[0] == rollout_set_size, (
+                    rollout_embeddings.shape[0],
+                    rollout_set_size,
+                )
 
             np.savez(
                 out_path,

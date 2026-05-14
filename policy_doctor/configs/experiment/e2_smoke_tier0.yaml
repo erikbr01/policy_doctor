@@ -1,0 +1,38 @@
+# @package _global_
+# E2 Tier 0 smoke: mock agent backend, no API calls, no real sim.
+# CI-safe; runs in seconds. Exercises the agentic plumbing end to end:
+#   schema validation, tool registry assembly, session loop, trace,
+#   submission round-trip, aggregation.
+
+defaults:
+  - /e2: defaults
+  - _self_
+
+e2_proposals:
+  mode: agentic
+  conditions: ["A_G", "A_NG"]
+  chat_enabled: false
+  agentic:
+    agent_backend: mock
+    agent_backend_params: {}
+    n_sessions_per_condition: 2
+    max_turns: 30
+    budget:
+      max_tool_calls: 30
+      max_visual_calls: 5
+      max_video_calls: 1
+      max_session_duration_s: 60
+      warning_remaining_threshold: 3
+    kinematic_summary_strategy: cluster_stats
+    cache_enabled: true
+
+  # The legacy one-shot proposal generator is unused in tier 0; mock backend
+  # values are kept so the proposal_server still imports cleanly.
+  vlm_backend: mock
+  vlm_backend_params: {}
+  vlm_lifecycle: persistent
+  n_repetitions: 1
+  max_retries: 1
+  n_requests_per_type:
+    full_trajectory: 1
+    recovery: 1

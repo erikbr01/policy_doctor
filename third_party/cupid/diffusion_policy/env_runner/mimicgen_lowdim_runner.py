@@ -53,14 +53,17 @@ def _import_mimicgen_for_robosuite_registry() -> None:
 _import_mimicgen_for_robosuite_registry()
 
 
-def create_env(env_meta, obs_keys, render_offscreen=False):
+def create_env(env_meta, obs_keys):
     ObsUtils.initialize_obs_modality_mapping_from_dict(
         {'low_dim': obs_keys})
     env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta,
-        render=False,
-        render_offscreen=render_offscreen,
-        use_image_obs=False,
+        render=False, 
+        # only way to not show collision geometry
+        # is to enable render_offscreen
+        # which uses a lot of RAM.
+        render_offscreen=False,
+        use_image_obs=False, 
     )
     return env
 
@@ -142,53 +145,18 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             dataset_path)
         # Force camera obs off: source datasets often have use_camera_obs=True from when
         # they were originally collected with cameras, but low-dim rollout eval never
-        # needs camera obs in the obs dict.  Keep has_offscreen_renderer from the dataset
-        # so that _render_frame() can capture visualization frames in save_episodes mode.
+        # needs camera rendering and EGL workers fail in headless training environments.
         env_meta['env_kwargs']['use_camera_obs'] = False
+        env_meta['env_kwargs']['has_offscreen_renderer'] = False
         rotation_transformer = None
         if abs_action:
             env_meta['env_kwargs']['controller_configs']['control_delta'] = False
             rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
 
-        # AsyncVectorEnv creates a "dummy" env in the main process to read observation /
-        # action spaces, then forks workers.  If has_offscreen_renderer=True the dummy
-        # env initialises an EGL context in the parent; forked workers then fail to
-        # create their own EGL context (race / conflict), leaving
-        # _render_context_offscreen=None.  Provide a dummy_env_fn that builds the env
-        # without the offscreen renderer so the main-process dummy is GL-free, letting
-        # each forked worker initialise EGL independently.
-        import copy as _copy
-        _dummy_env_meta = _copy.deepcopy(env_meta)
-        _dummy_env_meta['env_kwargs']['has_offscreen_renderer'] = False
-
-        def dummy_env_fn():
-            robomimic_env = create_env(env_meta=_dummy_env_meta, obs_keys=obs_keys)
-            return MultiStepWrapper(
-                VideoRecordingWrapper(
-                    RobomimicLowdimWrapper(
-                        env=robomimic_env,
-                        obs_keys=obs_keys,
-                        init_state=None,
-                        render_hw=render_hw,
-                        render_camera_name=render_camera_name
-                    ),
-                    video_recoder=VideoRecorder.create_h264(
-                        fps=fps, codec='h264', input_pix_fmt='rgb24',
-                        crf=crf, thread_type='FRAME', thread_count=1
-                    ),
-                    file_path=None,
-                    steps_per_render=steps_per_render
-                ),
-                n_obs_steps=env_n_obs_steps,
-                n_action_steps=env_n_action_steps,
-                max_episode_steps=max_steps
-            )
-
         def env_fn():
             robomimic_env = create_env(
-                    env_meta=env_meta,
-                    obs_keys=obs_keys,
-                    render_offscreen=save_episodes or n_test_vis > 0 or n_train_vis > 0,
+                    env_meta=env_meta, 
+                    obs_keys=obs_keys
                 )
             # hard reset doesn't influence lowdim env
             # robomimic_env.env.hard_reset = False
@@ -296,7 +264,6 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         self.env_meta = env_meta
         self.env = None  # lazily created in run()
         self.env_fns = env_fns
-        self.dummy_env_fn = dummy_env_fn
         self.env_seeds = env_seeds
         self.env_prefixs = env_prefixs
         self.env_init_fn_dills = env_init_fn_dills
@@ -345,7 +312,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                       "Skipping rollout evaluation (env not registered in this conda env).")
                 return dict()
         env = self.env
-        
+
         # plan for rollout
         n_envs = len(self.env_fns)
         n_inits = len(self.env_init_fn_dills)
@@ -357,10 +324,10 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
 
         # total number of timesteps across episodes
         all_sim_episodes: list = []  # per-episode dicts from _get_episode_sim_data()
-        if self.save_episodes:
-            episode_lengths = []
-            episode_successes = []
+        episode_lengths = []  # always tracked; written to log_data
+        episode_successes = []
         ep_abs_idx = 0  # absolute episode index across all chunks
+        if self.save_episodes:
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -493,7 +460,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                         print(f"[MimicgenLowdimRunner] WARNING: could not collect sim data for "
                               f"episode {ep_abs_idx + env_i}: {e}")
 
-            # save per-env episode PKLs
+            # save per-env episode PKLs and record episode lengths/successes
             if self.save_episodes:
                 for env_i in range(this_n_active_envs):
                     ep_success = bool(final_successes[env_i])
@@ -507,6 +474,10 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                     episode_lengths.append(len(env_episode_data[env_i]))
                     episode_successes.append(ep_success)
                 del env_episode_data
+            else:
+                for env_i in range(this_n_active_envs):
+                    episode_successes.append(bool(final_successes[env_i]))
+                    episode_lengths.append(pbar.n)
 
             ep_abs_idx += this_n_active_envs
 
@@ -543,17 +514,30 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             value = np.mean(value)
             log_data[name] = value
 
+        # log episode length statistics (always available; meaningful because we terminate on success)
+        for i in range(n_inits):
+            seed = self.env_seeds[i]
+            prefix = self.env_prefixs[i]
+            log_data[prefix+f'episode_length_{seed}'] = episode_lengths[i]
+        for prefix in set(self.env_prefixs):
+            prefix_lengths = [episode_lengths[i] for i in range(n_inits) if self.env_prefixs[i] == prefix]
+            succ_lengths = [episode_lengths[i] for i in range(n_inits)
+                            if self.env_prefixs[i] == prefix and episode_successes[i]]
+            log_data[prefix+'mean_episode_length'] = float(np.mean(prefix_lengths))
+            log_data[prefix+'mean_success_episode_length'] = (
+                float(np.mean(succ_lengths)) if succ_lengths else float('nan')
+            )
+
         if (self.save_episodes or self.write_rollouts_hdf5) and all_sim_episodes:
             self._write_rollouts_hdf5(all_sim_episodes)
 
         if self.save_episodes:
-            # rename media files based on success or failure (skipped when n_test_vis=0)
+            # rename media files based on success or failure
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
-            if self.media_dir.exists():
-                media_files = sorted([ep for ep in self.media_dir.iterdir()])
-                assert len(episode_files) == len(media_files)
-                for episode_file, media_file in zip(episode_files, media_files):
-                    media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
+            media_files = sorted([ep for ep in self.media_dir.iterdir()])
+            assert len(episode_files) == len(media_files)
+            for episode_file, media_file in zip(episode_files, media_files):
+                media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
 
             # save episode metadata
             metadata = {

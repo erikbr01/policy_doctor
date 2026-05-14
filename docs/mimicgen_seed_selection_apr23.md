@@ -145,12 +145,12 @@ BG's 2-of-4 coverage.
 
 ## Candidate Explanations
 
-### 1. Baseline comparison is missing
-The 60-demo baseline policy has never been evaluated with the full 500-episode protocol.
-Its online eval scores during training peaked at 0.32, suggesting MimicGen augmentation
-**does** help (38% vs ~32%).  But this needs confirmation with proper 500-ep eval.
-
-→ **Ablation**: `eval_baseline` step added to eval the existing baseline checkpoints.
+### 1. Baseline comparison (resolved)
+The 60-demo baseline was evaluated with the same 500-episode protocol as the MimicGen arms
+(`eval_baseline` step).  Aggregate mean success is **~0.225** (best checkpoint **0.232**); see
+**Baseline eval** above for per-checkpoint rates.  Training-time online scores peaked near
+0.32, so the gap versus ~0.38 mean for augmented runs confirms MimicGen helps, with both
+metrics now on comparable evals.
 
 ### 2. Data volume dominates; seed quality irrelevant at n=200
 200 demos may be enough to saturate whatever benefit the seed selection can provide.
@@ -324,11 +324,24 @@ Config: `policy_doctor/configs/experiment/mimicgen_square_ablations_apr23.yaml`
 
 ### Baseline eval
 
+500 episodes per checkpoint (`test_start_seed=100000`; per-episode outcomes are logged as
+`test/sim_max_reward_<seed>` in `eval_log.json`, with seeds `100000`–`100499`).
+
+**Artifacts (relative to `third_party/cupid/`):**
+- Pipeline summary: `data/pipeline_runs/mimicgen_square_pipeline_apr23/eval_baseline/result.json`
+- Per-checkpoint logs: `data/outputs/eval_save_episodes/apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0/<checkpoint>/eval_log.json`
+
+| Checkpoint | Train score (online) | Successes / 500 | Rate | `test/mean_score` |
+|------------|---------------------|-----------------|------|-------------------|
+| `epoch=0700-test_mean_score=0.320` | 0.320 | 108 | 0.216 | 0.216 |
+| `epoch=1450-test_mean_score=0.300` | 0.300 | 116 | 0.232 | 0.232 |
+| `epoch=1750-test_mean_score=0.320` | 0.320 | 114 | 0.228 | 0.228 |
+
 | Condition | mean_success_rate | best_success_rate |
 |-----------|------------------|------------------|
-| 60-demo baseline (no MimicGen) | **0.225** | 0.232 |
+| 60-demo baseline (no MimicGen), n=3 ckpts | **0.225** | 0.232 |
 
-MimicGen augmentation clearly helps: +15pp over baseline (0.38 vs 0.23).
+MimicGen augmentation clearly helps: +15pp over baseline aggregate (~0.38 vs ~0.23 on comparable 500-ep evals).
 
 ### Budget=20 ablation (address hypothesis 2)
 
@@ -362,9 +375,24 @@ Diversity budget=20 result for comparison:
 | BG (budget=20) | 0.192 | 0.208 |
 | **Diversity (budget=20)** | **0.258** | 0.266 |
 
+**Replicates** (`random_seed=1,2` on selection; eval protocol unchanged):
+
+| Condition | Replicate | mean (n=3 ckpts) | best |
+|-----------|-----------|------------------|------|
+| Random | rep2 | 0.254 | 0.260 |
+| Random | rep3 | 0.276 | 0.292 |
+| BG | rep2 | 0.270 | 0.292 |
+| BG | rep3 | 0.283 | 0.294 |
+| Diversity | rep2 | 0.259 | 0.264 |
+| Diversity | rep3 | 0.308 | 0.330 |
+
+Across **three** replicates (rep1 tables above + rep2/rep3), approximate mean success rates are:
+Random **0.232**, BG **0.248**, Diversity **0.275** (ranges **0.167–0.276**, **0.192–0.283**, **0.258–0.308** respectively).
+
 **Finding**: reducing the budget to 20 demos makes all arms weaker, but diversity retains
-a meaningful edge (+0.066 over BG, +0.091 over random).  At budget=20 the seed quality
-differential is actually more visible than at budget=200 between random and BG (gap=0.025),
+a meaningful edge on rep1 (+0.066 over BG, +0.091 over random) and the highest **mean**
+over three replicates (see summary table).  At budget=20 the seed quality differential vs BG
+is actually more visible than at budget=200 between random and BG (gap=0.025),
 suggesting diversity's path-coverage advantage helps even with few generated demos.
 
 ### Variance replicates (address hypothesis 4)
@@ -375,11 +403,12 @@ suggesting diversity's path-coverage advantage helps even with few generated dem
 | Random | rep2 (seed=1) | 93,37,83,1,88,41,29,53,66,34 | **0.563** | 0.570 |
 | Random | rep3 (seed=2) | 62,34,41,26,53,66,31,88,43,92 | 0.494 | 0.542 |
 | BG | rep1 (original) | 30,92,98,26,83,88,93,20,45,79 | 0.373 | 0.408 |
-| BG | rep2 (seed=1) | 30,92,98,26,83,88,93,20,45,79† | **0.595** | 0.618 |
-| BG | rep3 (seed=2) | — | **0.625** | 0.644 |
+| BG | rep2 (seed=1) | 92,41,29,93,83,88,26,58,31,37† | **0.595** | 0.618 |
+| BG | rep3 (seed=2) | 92,41,26,83,29,93,88,58,31,37† | **0.625** | 0.644 |
 
 †BG rep2/3 shuffle rollout draw order within each path; the same paths and candidate
-pool are used but the specific 10 drawn may differ.
+pool are used but the specific 10 drawn may differ (rep1 order:
+30,92,98,26,83,88,93,20,45,79).
 
 Per-checkpoint detail:
 
@@ -422,7 +451,7 @@ backfills remaining 6 slots from paths with multiple eligible rollouts (pass 1).
 |-----------|-----------|----------------------|------|------|
 | Diversity | rep1 | 41,26,31,37,92,29,83,88,93,58 | **0.612** | 0.620 |
 | Diversity | rep2 (random_seed=1) | 92,29,58,37,41,26,88,93,83,31 | **0.615** | 0.622 |
-| Diversity | rep3 (random_seed=2) | — | 0.577 | 0.586 |
+| Diversity | rep3 (random_seed=2) | 92,26,58,37,41,29,83,93,88,31 | 0.577 | 0.586 |
 
 Per-checkpoint detail:
 
@@ -455,9 +484,9 @@ far tighter than random (0.179) or BG (0.252).
 | Random (budget=200) | 0.384 | 0.563 | 0.494 | **0.480** | 0.179 |
 | BG (budget=200) | 0.373 | 0.595 | 0.625 | **0.531** | 0.252 |
 | **Diversity (budget=200)** | **0.612** | **0.615** | **0.577** | **0.601** | **0.038** |
-| Random (budget=20) | 0.167 | pending | pending | — | — |
-| BG (budget=20) | 0.192 | pending | pending | — | — |
-| Diversity (budget=20) | 0.258 | pending | pending | — | — |
+| Random (budget=20) | 0.167 | 0.254 | 0.276 | **0.232** | 0.109 |
+| BG (budget=20) | 0.192 | 0.270 | 0.283 | **0.248** | 0.091 |
+| Diversity (budget=20) | 0.258 | 0.259 | 0.308 | **0.275** | 0.050 |
 
 ### Key comparisons
 
@@ -470,18 +499,18 @@ far tighter than random (0.179) or BG (0.252).
 | Random within-condition range | 0.179 | Very high stochasticity |
 | BG within-condition range | 0.252 | Even higher — rep3 notably strong |
 | **Diversity within-condition range** | **0.038** | Far more consistent |
-| Diversity vs random at budget=20 | +0.091 | Diversity advantage holds at small scale |
-| Diversity vs BG at budget=20 | +0.066 | Diversity advantage holds at small scale |
+| Diversity vs random at budget=20 | +0.091 rep1; **+0.043** mean of 3 reps | Diversity highest on average |
+| Diversity vs BG at budget=20 | +0.066 rep1; **+0.027** mean of 3 reps | Diversity highest on average |
 
 ### Which hypotheses are answered
 
-**H1 (baseline comparison missing)**: Confirmed — 60-demo baseline is 0.225.
+**H1 (baseline comparison)**: Confirmed — 60-demo baseline mean is **0.225** (see per-checkpoint table).
 MimicGen augmentation at budget=200 yields substantial improvement across all conditions
-(+0.15 for random, +0.31 for diversity mean).
+(+0.15 for random, +0.31 for diversity mean vs baseline).
 
 **H2 (data volume dominates at n=200)**: Partially confirmed — budget=20 is clearly
-weaker across all conditions (0.167–0.258 vs 0.480–0.601).  But diversity's advantage
-*persists* at budget=20, showing seed coverage quality matters even when volume is limited.
+weaker across all conditions (roughly **0.17–0.31** over three replicates vs **0.48–0.60** at budget=200).
+But diversity's advantage *persists* at budget=20, showing seed coverage quality matters even when volume is limited.
 
 **H3 (BG seed quality not better)**: **Confirmed**.  BG's mean (0.531) exceeds random's
 (0.480), a modest +0.051 edge.  But BG's high variance (0.252) means individual runs are
@@ -519,7 +548,8 @@ factor.  `DiversitySelectionHeuristic` operationalizes this, yielding:
 - +0.121 mean over random (0.601 vs 0.480)
 - +0.070 mean over BG (0.601 vs 0.531)
 - 6.6× lower within-condition variance (0.038 vs 0.252)
-- Advantage holds at budget=20 (+0.066–0.091 over both baselines)
+- At budget=20, diversity stays strongest on **mean over three replicates** (+0.043 vs random,
+  +0.027 vs BG); single-rep gaps were larger (rep1: +0.091 / +0.066)
 
 ---
 
@@ -538,12 +568,12 @@ factor.  `DiversitySelectionHeuristic` operationalizes this, yielding:
 | `mimicgen_diversity_rep2` | diversity random_seed=1 | **done** | mean=0.615 |
 | `mimicgen_diversity_rep3` | diversity random_seed=2 | **done** | mean=0.577 |
 | `mimicgen_diversity_20` | diversity budget=20 | **done** | mean=0.258 |
-| `mimicgen_random_20_rep2` | random budget=20 random_seed=1 | **running** | — |
-| `mimicgen_random_20_rep3` | random budget=20 random_seed=2 | **running** | — |
-| `mimicgen_behavior_graph_20_rep2` | BG budget=20 random_seed=1 | **running** | — |
-| `mimicgen_behavior_graph_20_rep3` | BG budget=20 random_seed=2 | **running** | — |
-| `mimicgen_diversity_20_rep2` | diversity budget=20 random_seed=1 | **running** | — |
-| `mimicgen_diversity_20_rep3` | diversity budget=20 random_seed=2 | **running** | — |
+| `mimicgen_random_20_rep2` | random budget=20 random_seed=1 | **done** | mean=0.254 |
+| `mimicgen_random_20_rep3` | random budget=20 random_seed=2 | **done** | mean=0.276 |
+| `mimicgen_behavior_graph_20_rep2` | BG budget=20 random_seed=1 | **done** | mean=0.270 |
+| `mimicgen_behavior_graph_20_rep3` | BG budget=20 random_seed=2 | **done** | mean=0.283 |
+| `mimicgen_diversity_20_rep2` | diversity budget=20 random_seed=1 | **done** | mean=0.259 |
+| `mimicgen_diversity_20_rep3` | diversity budget=20 random_seed=2 | **done** | mean=0.308 |
 
 ---
 

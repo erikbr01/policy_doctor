@@ -1,0 +1,31 @@
+# @package _global_
+# DROID real-robot trajectories converted to robomimic HDF5 format.
+# Run scripts/convert_droid_to_robomimic.py first, then point baseline.diffusion_dataset_path here.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=droid_hdf5 \
+#     steps=[train_baseline,train_attribution,run_clustering] \
+#     task_config=droid
+
+defaults:
+  - /robomimic/baseline/image@baseline: droid
+  - /robomimic/attribution/image@attribution: droid
+  - /robomimic/evaluation/image@evaluation: droid
+
+env: droid
+state: image
+task: droid
+task_config: droid
+
+data_source:
+  id: droid_hdf5
+  label: DROID real-robot (robomimic HDF5)
+  policy_stack: diffusion_unet_hybrid_image
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: cupid_torch2
+  conda_env_datagen: null
+  droid_submodule: true
+  robocasa_submodule: false
+  mimicgen_submodule: false

@@ -1,0 +1,15 @@
+# Keyboard + threshold-based intervention (default for macOS dev)
+# Usage: python scripts/run_dagger.py ... +dagger_config=keyboard_default
+
+device: keyboard
+
+keyboard:
+  step_size: 0.05  # meters per key press
+
+intervention:
+  rule: node_value_threshold
+  node_value_threshold: 0.0  # trigger on any V-value reduction
+
+visualization:
+  enabled: true
+  camera_names: ["agentview"]

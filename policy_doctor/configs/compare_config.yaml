@@ -1,0 +1,14 @@
+# Base config for python -m policy_doctor.scripts.compare_policies
+#
+# Usage:
+#   python -m policy_doctor.scripts.compare_policies comparison=mimicgen_apr26_demos60_seed1
+#   python -m policy_doctor.scripts.compare_policies comparison=mimicgen_apr26_demos60_seed1 \
+#     comparison.output_dir=data/outputs/comparisons/my_run \
+#     comparison.method=step comparison.max_sample_size_per_policy=500 \
+#     comparison.top_k_checkpoints=5
+
+defaults:
+  - _self_
+  - comparison: null    # select with comparison=<name>
+
+repo_root: null         # auto-detected from package location if null

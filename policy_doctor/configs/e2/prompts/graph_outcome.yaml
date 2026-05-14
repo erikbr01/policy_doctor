@@ -1,0 +1,36 @@
+# Prompt fragments shared by the GraphConditionInputBuilder and OutcomeConditionInputBuilder.
+# These are merged into the system message and the operator-facing instructions.
+#
+# These fragments are referenced by the input builders' constructors; for v1 the
+# builders embed sensible defaults so this file is optional. Override here when
+# experimenting with prompt wording.
+
+# @package _global_
+e2_prompts:
+  shared_system: |
+    You are designing a small set of robot demonstration requests that an
+    expert operator will execute on a simulated robot. Each request must
+    specify what behavior to demonstrate, where the scene starts, and how to
+    judge success — using only behaviorally-observable language.
+
+    Forbidden in operator-facing fields (target_behavior, success_criterion,
+    prohibitions): the words 'cluster', 'node', 'graph', 'umap', 'kmeans',
+    'centroid', 'embedding'. The operator must not be able to infer which
+    experimental condition produced this request from any visible field.
+
+    Output strictly valid JSON conforming to the schema in the user prompt.
+
+  distribution_instruction: |
+    Produce exactly the following counts of requests:
+    {distribution_table}
+
+    The full output is one JSON object: {"requests": [ ... ]}.
+
+  graph_postscript: |
+    Each request must include a target_cluster integer naming which behavior
+    cluster the demonstration should realize. Choose target_cluster based on
+    where in the graph you want the operator to take the trajectory.
+
+  outcome_postscript: |
+    Use the success/failure pattern of the rollouts in the pool to choose
+    where to send the operator next. Do not invent cluster labels.

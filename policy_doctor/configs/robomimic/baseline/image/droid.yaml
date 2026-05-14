@@ -1,0 +1,34 @@
+# Baseline training: DROID real-robot image observations.
+# Dataset: robomimic HDF5 produced by scripts/convert_droid_to_robomimic.py.
+# Policy: diffusion UNet hybrid (image + low-dim state).
+#
+# Override diffusion_dataset_path per experiment or on CLI:
+#   baseline.diffusion_dataset_path=data/source/droid/droid_dataset.hdf5
+task: droid
+state: image
+method: diffusion_policy_cnn
+config_dir: configs/image/droid/diffusion_policy_cnn
+config_name: config.yaml
+policy: diffusion_unet_hybrid_image
+
+seeds: [0, 1, 2]
+num_epochs: 1000
+checkpoint_topk: 3
+checkpoint_every: 50
+
+train_ratio: 0.9
+val_ratio: 0.05
+uniform_quality: false
+
+output_dir: data/outputs/train
+project: influence-clustering
+
+num_gpus: 1
+tf32: true
+compile: false  # set true once obs encoder is stable
+num_steps: null
+
+# Set this to the path produced by convert_droid_hdf5_debug.py.
+diffusion_dataset_path: /mnt/ssdB/erik/droid_data/droid_dataset.hdf5
+# NoOpImageRunner (used for real-robot data) does not accept dataset_path.
+skip_runner_dataset_path: true

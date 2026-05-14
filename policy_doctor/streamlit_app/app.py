@@ -345,9 +345,7 @@ def main() -> None:
             config_key = f"{data_cache_version}_{config_name}_{config.eval_dir}_{config.train_dir}"
             data = _get_cached_data(config_key, config)
         except Exception as e:
-            st.error(f"Failed to load influence data: {e}")
-            if "influence_visualizer" in str(e):
-                st.caption("Install influence_visualizer for this backend, or use a native loader.")
+            st.sidebar.caption(f"⚠ Influence data unavailable ({type(e).__name__})")
         if data is not None:
             _render_sidebar_dataset_info(data)
 
@@ -361,6 +359,8 @@ def main() -> None:
         tab_comparison,
         tab_mimicgen_eef,
         tab_runtime_monitor,
+        tab_e2_console,
+        tab_e1_inspector,
     ) = st.tabs([
         "Clustering",
         "Behavior Graph",
@@ -369,6 +369,8 @@ def main() -> None:
         "Comparison",
         "MimicGen EEF",
         "Runtime Monitor",
+        "E2 Console",
+        "E1 Inspector",
     ])
 
     with tab_clustering:
@@ -392,12 +394,29 @@ def main() -> None:
         comparison.render_tab(config=config, data=data)
 
     with tab_mimicgen_eef:
-        from policy_doctor.streamlit_app.tabs import mimicgen_eef
-        mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
+        try:
+            from policy_doctor.streamlit_app.tabs import mimicgen_eef
+            mimicgen_eef.render_tab(config=config, data=data, task_config_stem=config_name)
+        except ImportError as e:
+            st.caption(f"Tab unavailable: {type(e).__name__}: {e}")
 
     with tab_runtime_monitor:
         from policy_doctor.streamlit_app.tabs import runtime_monitor
         runtime_monitor.render_tab(config=config, data=data, task_config_stem=config_name)
+
+    with tab_e2_console:
+        try:
+            from policy_doctor.streamlit_app.tabs import e2_console
+            e2_console.render()
+        except ImportError as e:
+            st.caption(f"Tab unavailable: {type(e).__name__}: {e}")
+
+    with tab_e1_inspector:
+        try:
+            from policy_doctor.streamlit_app.tabs import e1_inspector
+            e1_inspector.render(repo_root=pathlib.Path(__file__).resolve().parents[2])
+        except Exception as e:
+            st.exception(e)
 
 
 if __name__ == "__main__":

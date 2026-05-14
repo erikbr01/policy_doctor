@@ -109,6 +109,8 @@ class TrajectoryClassifier:
     ) -> None:
         self.monitor = monitor
         self.mode = mode
+        self.abs_action = abs_action
+        self.rotation_rep = rotation_rep
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self._obs_keys = obs_keys
@@ -127,8 +129,11 @@ class TrajectoryClassifier:
         infembed_embeddings_path: str,
         clustering_dir: str,
         mode: Literal["rollout", "demo"] = "rollout",
-        device: str = "cuda:0",
+        device: str = "auto",
         episodes_dir: Optional[str] = None,
+        projection_on_gpu: bool = True,
+        compile: bool = True,
+        compile_target: str = "inner_unet",
     ) -> "TrajectoryClassifier":
         """Build a TrajectoryClassifier from a policy checkpoint.
 
@@ -149,6 +154,13 @@ class TrajectoryClassifier:
                 ``infembed_embeddings.npz`` rollout embeddings are at the timestep
                 level — used to compute window-mean embeddings for the
                 ``NearestCentroidAssigner`` centroids.
+            projection_on_gpu: Forwarded to :class:`InfEmbedStreamScorer`. Default
+                ``True`` (fastest); set ``False`` for image policies that OOM.
+            compile: Forwarded to :class:`InfEmbedStreamScorer`. Default ``True``
+                — pays a one-time torch.compile warmup (~20s) for ~1.1x predict
+                speedup, amortised across a monitoring session.
+            compile_target: ``'inner_unet'`` (default) or ``'wrapper'``; see scorer
+                docstring.
         """
         import dill
         import torch
@@ -185,6 +197,9 @@ class TrajectoryClassifier:
             infembed_fit_path=infembed_fit_path,
             infembed_embeddings_path=infembed_embeddings_path,
             device=device,
+            projection_on_gpu=projection_on_gpu,
+            compile=compile,
+            compile_target=compile_target,
         )
 
         clustering_path = Path(clustering_dir)
@@ -247,6 +262,29 @@ class TrajectoryClassifier:
     # ------------------------------------------------------------------
     # Classification entry points
     # ------------------------------------------------------------------
+
+    def classify_sample_embed_only(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+    ) -> MonitorResult:
+        """Classify without computing influence scores (embedding + assignment only).
+
+        ``MonitorResult.influence_scores`` is ``None``.  Use when only the graph node
+        assignment is needed at runtime; call :meth:`score_embedding` separately if
+        scores are needed (e.g. on intervention trigger).
+        """
+        if self.mode == "demo":
+            action = self._apply_action_transform(action)
+        return self.monitor.process_sample_embed_only(obs, action)
+
+    def score_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        """Compute influence scores from a pre-computed embedding (no gradient pass).
+
+        Returns ``(N_demo,)`` float32 array.  Requires the underlying scorer to
+        support ``score_from_embedding`` (``InfEmbedStreamScorer`` does).
+        """
+        return self.monitor.score_from_embedding(embedding)
 
     def classify_sample(
         self,

@@ -61,29 +61,51 @@ def _render_saved_clustering_parameters(
         st.caption(f"Saved: `{manifest.get('created')}`")
 
     inf = str(merged.get("clustering_influence_source", "infembed")).lower()
-    use_infembed = inf != "trak"
+    _EMB_LD_OPTIONS = [
+        "InfEmbed (rollout timestep embeddings)",
+        "State (proprioceptive obs)",
+        "State+action (obs + action concat)",
+        "TRAK (influence / explanations matrix)",
+    ]
+    _INF_TO_IDX = {"infembed": 0, "state": 1, "state_action": 2, "trak": 3}
+    emb_idx = _INF_TO_IDX.get(inf, 0)
+    use_infembed = inf == "infembed"
+    use_state = inf == "state"
+    use_state_action = inf == "state_action"
 
     st.radio(
         "Embedding source",
-        [
-            "InfEmbed (rollout timestep embeddings)",
-            "TRAK (influence / explanations matrix)",
-        ],
-        index=0 if use_infembed else 1,
+        _EMB_LD_OPTIONS,
+        index=emb_idx,
         key="clust_ld_emb_source",
         disabled=True,
-        help="From saved manifest (`influence_source`).",
+        help="From saved manifest (`influence_source` / `slice_representation`).",
     )
 
     eval_dir = config.eval_dir
     if eval_dir:
         eval_path = _resolve_eval_path(eval_dir)
-        if use_infembed:
-            st.caption(f"Eval dir (task config): `{eval_path}`")
-        else:
-            st.caption(f"Eval dir (task config): `{eval_path}` — TRAK windows use loaded influence data.")
+        st.caption(f"Eval dir (task config): `{eval_path}`")
 
-    if not use_infembed:
+    if use_state or use_state_action:
+        rep_kwargs = manifest.get("rep_kwargs", {}) if manifest else {}
+        col_os, col_as = st.columns(2)
+        with col_os:
+            st.text_input(
+                "Obs strategy",
+                value=str(rep_kwargs.get("obs_strategy", merged.get("obs_strategy", "current"))),
+                key="clust_ld_obs_strategy",
+                disabled=True,
+            )
+        if use_state_action:
+            with col_as:
+                st.text_input(
+                    "Action strategy",
+                    value=str(rep_kwargs.get("action_strategy", merged.get("action_strategy", "executed"))),
+                    key="clust_ld_action_strategy",
+                    disabled=True,
+                )
+    elif not use_infembed:
         _trak_split_labels = {
             "train": "Train demos only (train-split columns)",
             "holdout": "Holdout demos only",
@@ -220,6 +242,26 @@ def _infembed_slice_windows_cached(
         stride,
         aggregation,
     )
+
+
+@st.cache_data
+def _state_slice_windows_cached(
+    representation: str,
+    eval_dir_resolved: str,
+    window_width: int,
+    stride: int,
+    aggregation: str,
+    obs_strategy: str,
+    action_strategy: str,
+) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    from policy_doctor.data.slice_representations import SliceWindowParams, get_slice_representation
+
+    rep = get_slice_representation(representation)
+    params = SliceWindowParams(window_width=window_width, stride=stride, aggregation=aggregation)
+    kwargs = {"obs_strategy": obs_strategy}
+    if representation == "state_action":
+        kwargs["action_strategy"] = action_strategy
+    return rep.extract(pathlib.Path(eval_dir_resolved), params, **kwargs)
 
 
 @st.cache_data
@@ -371,20 +413,26 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
         st.info("Load a task config with eval_dir (and train_dir for TRAK) to run clustering.")
         return
 
+    _EMB_OPTIONS = [
+        "InfEmbed (rollout timestep embeddings)",
+        "State (proprioceptive obs)",
+        "State+action (obs + action concat)",
+        "TRAK (influence / explanations matrix)",
+    ]
     embedding_source = st.radio(
         "Embedding source",
-        [
-            "InfEmbed (rollout timestep embeddings)",
-            "TRAK (influence / explanations matrix)",
-        ],
+        _EMB_OPTIONS,
         key="clust_emb_source",
         help=(
-            "InfEmbed: sliding windows over vectors in ``default_trak_results-*/infembed_embeddings.npz`` "
-            "(requires ``compute_infembed``). TRAK: sliding windows over the loaded influence matrix vs demos "
-            "(same signal as pipeline ``clustering_influence_source=trak``)."
+            "InfEmbed: sliding windows over InfEmbed vectors. "
+            "State / State+action: proprioceptive features from episode PKL files (no GPU needed). "
+            "TRAK: sliding windows over the loaded influence matrix vs demos."
         ),
     )
     use_infembed = embedding_source.startswith("InfEmbed")
+    use_state = embedding_source.startswith("State (")
+    use_state_action = embedding_source.startswith("State+action")
+    use_trak = embedding_source.startswith("TRAK")
 
     eval_dir = config.eval_dir
     if not eval_dir:
@@ -394,6 +442,8 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
 
     if use_infembed:
         st.caption(f"Eval dir: `{eval_path}` (latest ``default_trak_results-*`` + ``infembed_embeddings.npz``)")
+    elif use_state or use_state_action:
+        st.caption(f"Eval dir: `{eval_path}` (reads ``ep*.pkl`` episode files — no GPU needed)")
     else:
         if data is None:
             st.warning(
@@ -407,9 +457,29 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
             "the option below only changes which **demonstration** columns are kept."
         )
 
+    obs_strategy = "current"
+    action_strategy = "executed"
+    if use_state or use_state_action:
+        col_os, col_as = st.columns(2)
+        with col_os:
+            obs_strategy = st.selectbox(
+                "Obs strategy",
+                ["current", "full_history"],
+                key="clust_obs_strategy",
+                help="current: obs[−1] only (most recent frame). full_history: all obs frames concatenated.",
+            )
+        if use_state_action:
+            with col_as:
+                action_strategy = st.selectbox(
+                    "Action strategy",
+                    ["executed", "full_plan"],
+                    key="clust_action_strategy",
+                    help="executed: action[0] only. full_plan: full action sequence concatenated.",
+                )
+
     demo_split = "train"
     level = "rollout"
-    if not use_infembed:
+    if use_trak:
         _trak_split_labels = {
             "train": "Train demos only (train-split columns)",
             "holdout": "Holdout demos only",
@@ -460,7 +530,14 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
     with st.expander("Advanced"):
         umap_random_state = st.number_input("UMAP random state", 0, 9999, 42, key="clust_umap_rs")
 
-    influence_tag = "infembed" if use_infembed else "trak"
+    if use_infembed:
+        influence_tag = "infembed"
+    elif use_state:
+        influence_tag = "state"
+    elif use_state_action:
+        influence_tag = "state_action"
+    else:
+        influence_tag = "trak"
 
     if st.button("Run clustering", type="primary", key="clust_run"):
         try:
@@ -471,6 +548,16 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
                         int(window_width),
                         int(stride),
                         aggregation,
+                    )
+                elif use_state or use_state_action:
+                    window_emb, metadata = _state_slice_windows_cached(
+                        influence_tag,
+                        str(eval_path.resolve()),
+                        int(window_width),
+                        int(stride),
+                        aggregation,
+                        obs_strategy,
+                        action_strategy,
                     )
                 else:
                     from policy_doctor.data.clustering_embeddings import (
@@ -523,6 +610,8 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
             "clustering_influence_source": influence_tag,
             "clustering_demo_split": demo_split,
             "clustering_level": level,
+            "obs_strategy": obs_strategy,
+            "action_strategy": action_strategy,
         }
         n_actual = len(set(labels) - {-1})
         st.success(

@@ -1,0 +1,18 @@
+# Evaluation config for DROID image policy.
+# Real-robot eval does not run a sim environment — this config is used only to
+# locate the checkpoint during pipeline steps that reference eval artifacts.
+task: droid
+state: image
+method: diffusion_policy_cnn
+policy: diffusion_unet_hybrid_image
+
+train_date: null
+eval_date: null
+train_ckpt: latest
+num_episodes: 50
+test_start_seed: 100000
+overwrite: false
+device: cuda:0
+
+eval_output_dir: data/outputs/eval_save_episodes
+train_output_dir: data/outputs/train
