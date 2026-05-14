@@ -33,11 +33,13 @@ cd "${WORKTREE}"
 
 BASE_EXPERIMENT="mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained_tight"
 BASE_RUN="mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight"
-BASE_RUN_ABS="/mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}"
+# clustering_run_dir is passed as a relative path so select_mimicgen_seed resolves
+# it against REPO_ROOT (third_party/cupid/), matching where the pipeline writes run dirs.
+BASE_RUN_REL="data/pipeline_runs/${BASE_RUN}"
 K_VALUES=(5 10 15 20 25)
 
 echo "[$(date '+%H:%M %Z')] === K-sweep tight started ===" | tee -a "${LOG}"
-echo "[$(date '+%H:%M %Z')] base run: ${BASE_RUN_ABS}" | tee -a "${LOG}"
+echo "[$(date '+%H:%M %Z')] base run (relative): ${BASE_RUN_REL}" | tee -a "${LOG}"
 echo "[$(date '+%H:%M %Z')] K values: ${K_VALUES[*]}" | tee -a "${LOG}"
 
 # ---------------------------------------------------------------------------
@@ -74,7 +76,7 @@ for K in "${K_VALUES[@]}"; do
             "+experiment=${BASE_EXPERIMENT}" \
             steps='[mimicgen_budget_sweep]' \
             "clustering_n_clusters=${K}" \
-            "clustering_run_dir=${BASE_RUN_ABS}" \
+            "clustering_run_dir=${BASE_RUN_REL}" \
             "run_name=${RUN_NAME}" \
         2>&1 | tee -a "${LOG}"
 
@@ -85,7 +87,7 @@ for K in "${K_VALUES[@]}"; do
             "+experiment=${BASE_EXPERIMENT}" \
             steps='[mimicgen_budget_rep_sweep]' \
             "clustering_n_clusters=${K}" \
-            "clustering_run_dir=${BASE_RUN_ABS}" \
+            "clustering_run_dir=${BASE_RUN_REL}" \
             "run_name=${RUN_NAME}" \
         2>&1 | tee -a "${LOG}"
 
@@ -94,16 +96,9 @@ done
 
 echo "[$(date '+%H:%M %Z')] === K-sweep tight complete ===" | tee -a "${LOG}"
 echo "" | tee -a "${LOG}"
+REPO_ROOT="${WORKTREE}/third_party/cupid"
 echo "Aggregate results with:" | tee -a "${LOG}"
-DIRS=""
-for K in "${K_VALUES[@]}"; do
-    DIRS="${DIRS}    /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k${K} \\"
-    echo "  /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k${K}" | tee -a "${LOG}"
-done
-echo "" | tee -a "${LOG}"
 echo "python scripts/aggregate_sweep_results.py --k-sweep \\" | tee -a "${LOG}"
-echo "  --run-dir /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k5 \\" | tee -a "${LOG}"
-echo "  --run-dir /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k10 \\" | tee -a "${LOG}"
-echo "  --run-dir /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k15 \\" | tee -a "${LOG}"
-echo "  --run-dir /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k20 \\" | tee -a "${LOG}"
-echo "  --run-dir /mnt/ssdB/erik/cupid_data/pipeline_runs/${BASE_RUN}_k25" | tee -a "${LOG}"
+for K in "${K_VALUES[@]}"; do
+    echo "  --run-dir ${REPO_ROOT}/data/pipeline_runs/${BASE_RUN}_k${K} \\" | tee -a "${LOG}"
+done
