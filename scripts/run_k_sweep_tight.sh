@@ -12,7 +12,6 @@
 #          via clustering_run_dir.
 #
 # Usage:
-#   # Run both steps end-to-end (takes many hours):
 #   nohup bash -lc "
 #     source ~/miniforge3/etc/profile.d/conda.sh
 #     cd /home/erbauer/policy_doctor
@@ -20,8 +19,8 @@
 #   " &
 #   echo "PID=$!"
 #
-#   # Step 1 only (if clustering already done, skip with SKIP_CLUSTERING=1):
-#   SKIP_CLUSTERING=1 ./scripts/run_k_sweep_tight.sh
+# The pipeline auto-skips completed steps via sentinel files.
+# Re-running this script resumes from the last incomplete step.
 
 set -euo pipefail
 
@@ -38,6 +37,11 @@ BASE_RUN="mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight"
 BASE_RUN_REL="data/pipeline_runs/${BASE_RUN}"
 K_VALUES=(5 10 15 20 25)
 
+# The infembed NPZ files are in ~/data/cupid_data (not under REPO_ROOT).
+# Pass evaluation.eval_output_dir as an absolute path so run_clustering and
+# select_mimicgen_seed find the infembed embeddings and rollouts.hdf5.
+EVAL_OUTPUT_DIR="${HOME}/data/cupid_data/outputs/eval_save_episodes"
+
 echo "[$(date '+%H:%M %Z')] === K-sweep tight started ===" | tee -a "${LOG}"
 echo "[$(date '+%H:%M %Z')] base run (relative): ${BASE_RUN_REL}" | tee -a "${LOG}"
 echo "[$(date '+%H:%M %Z')] K values: ${K_VALUES[*]}" | tee -a "${LOG}"
@@ -45,20 +49,17 @@ echo "[$(date '+%H:%M %Z')] K values: ${K_VALUES[*]}" | tee -a "${LOG}"
 # ---------------------------------------------------------------------------
 # Step 1: Run clustering with sweep (UMAP once, K-means for each K)
 # ---------------------------------------------------------------------------
-if [[ "${SKIP_CLUSTERING:-0}" == "1" ]]; then
-    echo "[$(date '+%H:%M %Z')] Skipping Step 1 (SKIP_CLUSTERING=1)" | tee -a "${LOG}"
-else
-    echo "[$(date '+%H:%M %Z')] --- Step 1: run_clustering with K sweep ---" | tee -a "${LOG}"
-    conda run -n policy_doctor --no-capture-output \
-        python -m policy_doctor.scripts.run_pipeline \
-            data_source=mimicgen_square \
-            "+experiment=${BASE_EXPERIMENT}" \
-            steps='[run_clustering]' \
-            "clustering_n_clusters_sweep=[5,10,15,20,25]" \
-            clustering_n_clusters=15 \
-        2>&1 | tee -a "${LOG}"
-    echo "[$(date '+%H:%M %Z')] Step 1 complete." | tee -a "${LOG}"
-fi
+echo "[$(date '+%H:%M %Z')] --- Step 1: run_clustering with K sweep ---" | tee -a "${LOG}"
+conda run -n policy_doctor --no-capture-output \
+    python -m policy_doctor.scripts.run_pipeline \
+        data_source=mimicgen_square \
+        "+experiment=${BASE_EXPERIMENT}" \
+        steps='[run_clustering]' \
+        "clustering_n_clusters_sweep=[5,10,15,20,25]" \
+        clustering_n_clusters=15 \
+        "evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
+    2>&1 | tee -a "${LOG}"
+echo "[$(date '+%H:%M %Z')] Step 1 complete." | tee -a "${LOG}"
 
 # ---------------------------------------------------------------------------
 # Step 2: For each K, run downstream steps in their own run dir
@@ -78,6 +79,7 @@ for K in "${K_VALUES[@]}"; do
             "clustering_n_clusters=${K}" \
             "clustering_run_dir=${BASE_RUN_REL}" \
             "run_name=${RUN_NAME}" \
+            "evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
 
     # Phase B: rep-2/3
@@ -89,6 +91,7 @@ for K in "${K_VALUES[@]}"; do
             "clustering_n_clusters=${K}" \
             "clustering_run_dir=${BASE_RUN_REL}" \
             "run_name=${RUN_NAME}" \
+            "evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
 
     echo "[$(date '+%H:%M %Z')] K=${K} complete." | tee -a "${LOG}"
