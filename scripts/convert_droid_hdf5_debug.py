@@ -1,4 +1,4 @@
-"""Convert DROID trajectory.h5 + SVO2 recordings → robomimic HDF5 for debug training.
+"""Convert DROID trajectory.h5 + SVO2 recordings → robomimic HDF5 for training.
 
 Reads state observations directly from HDF5 and real images from ZED SVO2 files
 using pyzed. Requires the ZED SDK shared libraries on LD_LIBRARY_PATH.
@@ -10,20 +10,25 @@ Camera mapping:
 SVO2 frames are 1:1 with HDF5 steps (same count, ~constant timestamp offset).
 movement_enabled=False steps are filtered out from both state and images.
 
+Demos are streamed directly to HDF5 one at a time to keep RAM flat, regardless
+of dataset size. Parallel workers (--num_workers) decode SVO2 frames concurrently;
+the main process writes results to HDF5 sequentially.
+
 Usage:
     LD_LIBRARY_PATH=/mnt/ssdB/erik/zed_sdk_extracted/lib \\
     conda run -n cupid_torch2 \\
     python scripts/convert_droid_hdf5_debug.py \\
-        --input_path /mnt/ssdB/erik/droid_data/data \\
-        --output_path /mnt/ssdB/erik/droid_data/droid_debug_dataset.hdf5 \\
-        --zed_settings /mnt/ssdB/erik/zed_settings \\
-        --image_size 84 84
+        --input_path /mnt/ssdB/erik/droid_data/data/success/2026-05-13 \\
+        --output_path /mnt/ssdB/erik/droid_data/kendama_may13.hdf5 \\
+        --image_size 256 256 \\
+        --num_workers 4
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
@@ -171,6 +176,13 @@ def _load_trajectory(
     }
 
 
+def _worker(args: tuple) -> tuple[int, dict | None]:
+    """Top-level worker callable for ProcessPoolExecutor (must be picklable)."""
+    folder_idx, folder, image_h, image_w, zed_settings = args
+    result = _load_trajectory(folder, image_h, image_w, zed_settings)
+    return folder_idx, result
+
+
 def convert(
     input_path: str,
     output_path: str,
@@ -179,60 +191,85 @@ def convert(
     zed_settings: str,
     train_frac: float,
     val_frac: float,
+    num_workers: int,
 ) -> None:
     folders = _find_trajectories(input_path)
-    print(f"Found {len(folders)} trajectory folders under {input_path}")
+    n_folders = len(folders)
+    print(f"Found {n_folders} trajectory folders under {input_path}")
 
-    demos = []
-    for i, folder in enumerate(folders):
-        print(f"  [{i+1}/{len(folders)}] {folder}")
-        result = _load_trajectory(folder, image_h, image_w, zed_settings)
-        if result is not None:
-            demos.append(result)
-
-    if not demos:
-        raise RuntimeError("No valid trajectories found.")
-
+    # Pre-compute split assignments before we start reading SVO files.
     rng = np.random.default_rng(seed=0)
-    idx = rng.permutation(len(demos))
-    n_train = max(1, int(len(demos) * train_frac))
-    n_val = max(1, int(len(demos) * val_frac))
-    n_test = max(0, len(demos) - n_train - n_val)
-    while n_train + n_val + n_test > len(demos):
-        n_test = max(0, n_test - 1)
+    perm = rng.permutation(n_folders).tolist()
+    n_train = max(1, int(n_folders * train_frac))
+    n_val = max(1, int(n_folders * val_frac))
+    folder_split: dict[int, str] = {}
+    for j in perm[:n_train]:
+        folder_split[j] = "train"
+    for j in perm[n_train : n_train + n_val]:
+        folder_split[j] = "valid"
+    for j in perm[n_train + n_val :]:
+        folder_split[j] = "test"
+    for j in range(n_folders):
+        folder_split.setdefault(j, "train")
 
-    split_of: dict[int, str] = {}
-    for j in idx[:n_train]:
-        split_of[int(j)] = "train"
-    for j in idx[n_train : n_train + n_val]:
-        split_of[int(j)] = "valid"
-    for j in idx[n_train + n_val : n_train + n_val + n_test]:
-        split_of[int(j)] = "test"
-    for j in range(len(demos)):
-        split_of.setdefault(j, "train")
-
-    total_steps = sum(len(d["actions"]) for d in demos)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    split_lists: dict[str, list[str]] = {"train": [], "valid": [], "test": []}
+    total_steps = 0
+    demo_idx = 0
+
+    worker_args = [
+        (folder_idx, folder, image_h, image_w, zed_settings)
+        for folder_idx, folder in enumerate(folders)
+    ]
 
     with h5py.File(output_path, "w") as f:
         data_grp = f.create_group("data")
-        data_grp.attrs["total"] = total_steps
-
         mask_grp = f.create_group("mask")
-        split_lists: dict[str, list[str]] = {"train": [], "valid": [], "test": []}
 
-        for demo_idx, demo in enumerate(demos):
-            key = f"demo_{demo_idx}"
-            dgrp = data_grp.create_group(key)
-            dgrp.create_dataset("actions", data=demo["actions"])
-            dgrp.create_dataset("dones", data=demo["dones"])
-            dgrp.create_dataset("rewards", data=demo["rewards"])
+        if num_workers > 1:
+            # Parallel decode: workers read SVO frames concurrently.
+            # Results arrive out of order; buffer and write in folder_idx order.
+            pending: dict[int, dict | None] = {}
+            next_to_write = 0
 
-            obs_grp = dgrp.create_group("obs")
-            for obs_key, arr in demo["obs"].items():
-                obs_grp.create_dataset(obs_key, data=arr)
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = {executor.submit(_worker, arg): arg[0] for arg in worker_args}
 
-            split_lists[split_of[demo_idx]].append(key)
+                for future in as_completed(futures):
+                    folder_idx, result = future.result()
+                    pending[folder_idx] = result
+
+                    # Flush contiguous completed results in order.
+                    while next_to_write in pending:
+                        res = pending.pop(next_to_write)
+                        folder = folders[next_to_write]
+                        print(f"  [{next_to_write+1}/{n_folders}] {folder}")
+                        if res is not None:
+                            key = f"demo_{demo_idx}"
+                            _write_demo(data_grp, key, res)
+                            split_lists[folder_split[next_to_write]].append(key)
+                            total_steps += len(res["actions"])
+                            demo_idx += 1
+                            del res
+                        next_to_write += 1
+        else:
+            # Sequential mode — simpler, no pickling overhead.
+            for folder_idx, folder in enumerate(folders):
+                print(f"  [{folder_idx+1}/{n_folders}] {folder}")
+                result = _load_trajectory(folder, image_h, image_w, zed_settings)
+                if result is not None:
+                    key = f"demo_{demo_idx}"
+                    _write_demo(data_grp, key, result)
+                    split_lists[folder_split[folder_idx]].append(key)
+                    total_steps += len(result["actions"])
+                    demo_idx += 1
+                    del result
+
+        if demo_idx == 0:
+            raise RuntimeError("No valid trajectories found.")
+
+        data_grp.attrs["total"] = total_steps
 
         dt = h5py.special_dtype(vlen=str)
         for split_name, keys in split_lists.items():
@@ -242,7 +279,7 @@ def convert(
                     ds[j] = k
 
     print(
-        f"\nDone. {len(demos)} demos ({total_steps} steps) → {output_path}\n"
+        f"\nDone. {demo_idx} demos ({total_steps} steps) → {output_path}\n"
         f"  train={len(split_lists['train'])} "
         f"valid={len(split_lists['valid'])} "
         f"test={len(split_lists['test'])}\n"
@@ -250,8 +287,20 @@ def convert(
     )
 
 
+def _write_demo(data_grp: h5py.Group, key: str, demo: dict) -> None:
+    dgrp = data_grp.create_group(key)
+    dgrp.create_dataset("actions", data=demo["actions"])
+    dgrp.create_dataset("dones", data=demo["dones"])
+    dgrp.create_dataset("rewards", data=demo["rewards"])
+    obs_grp = dgrp.create_group("obs")
+    for obs_key, arr in demo["obs"].items():
+        obs_grp.create_dataset(obs_key, data=arr)
+
+
 def main() -> None:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description="Convert DROID trajectory.h5 + SVO2 files to robomimic HDF5"
+    )
     p.add_argument("--input_path", required=True)
     p.add_argument("--output_path", required=True)
     p.add_argument(
@@ -260,8 +309,12 @@ def main() -> None:
         help="Directory containing SN<serial>.conf calibration files",
     )
     p.add_argument("--image_size", nargs=2, type=int, default=[256, 256], metavar=("H", "W"))
-    p.add_argument("--train_frac", type=float, default=0.5)
-    p.add_argument("--val_frac", type=float, default=0.3)
+    p.add_argument("--train_frac", type=float, default=0.85)
+    p.add_argument("--val_frac", type=float, default=0.10)
+    p.add_argument(
+        "--num_workers", type=int, default=4,
+        help="Parallel SVO decode workers (set 1 to disable multiprocessing)",
+    )
     args = p.parse_args()
     convert(
         input_path=args.input_path,
@@ -271,6 +324,7 @@ def main() -> None:
         zed_settings=args.zed_settings,
         train_frac=args.train_frac,
         val_frac=args.val_frac,
+        num_workers=args.num_workers,
     )
 
 
