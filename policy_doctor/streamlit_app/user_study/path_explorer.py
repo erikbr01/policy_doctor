@@ -152,29 +152,37 @@ def render_path_explorer(
         st.info("No paths ending in SUCCESS or FAILURE found.")
         return
 
+    # Precompute matching episode counts for each path
+    ep_counts = [len(_get_episodes_for_path(path, labels, metadata)) for path, _, _ in terminal_paths]
+
     path_labels = []
     path_probs = []
     path_colors = []
-    for path, prob, _ in terminal_paths:
+    path_texts = []
+    for (path, prob, _), n_ep in zip(terminal_paths, ep_counts):
         terminal = path[-1]
         label = _format_path(path, graph)
         path_labels.append(label)
         path_probs.append(prob)
         path_colors.append("#2ca02c" if terminal == SUCCESS_NODE_ID else "#d62728")
+        path_texts.append(f"{n_ep} ep")
 
-    fig_paths = go.Figure(
-        go.Bar(
-            x=path_probs,
-            y=path_labels,
-            orientation="h",
-            marker_color=path_colors,
-        )
-    )
+    fig_paths = go.Figure(go.Bar(
+        x=path_probs,
+        y=path_labels,
+        orientation="h",
+        marker_color=path_colors,
+        text=path_texts,
+        textposition="outside",
+        textfont=dict(size=11),
+    ))
     fig_paths.update_layout(
-        height=max(120, 36 * len(path_labels) + 60),
-        margin=dict(l=0, r=20, t=20, b=20),
-        xaxis=dict(title="Path probability", range=[0, max(path_probs) * 1.1]),
+        height=max(120, 40 * len(path_labels) + 60),
+        margin=dict(l=0, r=60, t=20, b=20),
+        xaxis=dict(title="Path probability", range=[0, max(path_probs) * 1.35]),
         yaxis=dict(title=None, autorange="reversed"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig_paths, use_container_width=True, key=f"{key_prefix}_paths_chart")
 
@@ -186,7 +194,8 @@ def render_path_explorer(
         short = " → ".join(_node_display_name(n, graph) for n in path)
         return f"Path {i + 1} (p={prob:.3f}, {outcome}) — {short}"
 
-    select_options = [
+    _NO_SELECTION = "— Select a path to explore and highlight it in the graph —"
+    select_options = [_NO_SELECTION] + [
         _path_select_label(i, path, prob)
         for i, (path, prob, _) in enumerate(terminal_paths)
     ]
@@ -195,10 +204,16 @@ def render_path_explorer(
         options=select_options,
         key=f"{key_prefix}_path_select",
     )
-    selected_path_idx = select_options.index(selected_label)
+
+    if selected_label == _NO_SELECTION:
+        # Clear any existing highlight so the graph shows all paths
+        st.session_state.pop(f"{key_prefix}_highlighted_path", None)
+        return
+
+    selected_path_idx = select_options.index(selected_label) - 1  # offset for NO_SELECTION
     selected_path, selected_prob, _ = terminal_paths[selected_path_idx]
 
-    # Store for graph highlighting (read in Step 2 graph render on next rerun)
+    # Store for graph highlighting
     st.session_state[f"{key_prefix}_highlighted_path"] = selected_path
 
     terminal_id = selected_path[-1]

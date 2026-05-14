@@ -64,13 +64,25 @@ def mp4_player(
     slice_end: int | None = None,
     total_frames: int | None = None,
     key: str = "mp4p",
+    max_height_px: int | None = None,
 ) -> None:
     if label:
         st.caption(label)
 
     with open(pathlib.Path(video_path), "rb") as f:
         bytes_data = f.read()
-    st.video(bytes_data)
+
+    if max_height_px is not None:
+        # Wrap in a div that constrains height via CSS
+        import base64
+        b64 = base64.b64encode(bytes_data).decode()
+        st.markdown(
+            f'<video controls style="max-height:{max_height_px}px;width:100%;border-radius:4px">'
+            f'<source src="data:video/mp4;base64,{b64}" type="video/mp4"></video>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.video(bytes_data)
 
     if slice_start is not None and slice_end is not None and total_frames is not None:
         slice_indicator(slice_start, slice_end, total_frames, key=f"{key}_slice_ind")

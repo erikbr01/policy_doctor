@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+import yaml
 
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
@@ -23,21 +24,40 @@ st.markdown(
 
 st.sidebar.header("Configuration")
 
+_REPO_ROOT = Path(__file__).parents[3]
+_SESSIONS_DIR = _REPO_ROOT / "policy_doctor" / "configs" / "user_study" / "sessions"
+_session_files = sorted(_SESSIONS_DIR.glob("*.yaml")) if _SESSIONS_DIR.is_dir() else []
+_session_labels = {f.stem: yaml.safe_load(f.read_text()).get("label", f.stem) for f in _session_files}
+
 participant_id = st.sidebar.text_input("Participant ID", value="anonymous")
-mp4_dir_input = st.sidebar.text_input("MP4 directory", value="")
-study_config_input = st.sidebar.text_input("Study config YAML", value="")
+
+if not _session_files:
+    st.sidebar.warning("No session configs found in configs/user_study/sessions/")
+    st.stop()
+
+session_choice = st.sidebar.selectbox(
+    "Session",
+    options=[f.stem for f in _session_files],
+    format_func=lambda k: _session_labels.get(k, k),
+)
 
 if st.sidebar.button("Load"):
-    errors = []
-    mp4_dir = Path(mp4_dir_input)
-    index_path = mp4_dir / "index.json"
+    sess_path = _SESSIONS_DIR / f"{session_choice}.yaml"
+    sess = yaml.safe_load(sess_path.read_text())
 
+    def _resolve(p: str) -> Path:
+        path = Path(p)
+        return path if path.is_absolute() else _REPO_ROOT / path
+
+    mp4_dir = _resolve(sess["mp4_dir"])
+    config_path = _resolve(sess["study_config"])
+
+    errors = []
+    index_path = mp4_dir / "index.json"
     if not mp4_dir.is_dir():
         errors.append(f"MP4 directory not found: {mp4_dir}")
     elif not index_path.exists():
-        errors.append(f"index.json not found in {mp4_dir}")
-
-    config_path = Path(study_config_input)
+        errors.append("index.json not found in MP4 directory")
     if not config_path.exists():
         errors.append(f"Study config not found: {config_path}")
 
@@ -52,7 +72,6 @@ if st.sidebar.button("Load"):
         st.session_state["ga_budget"] = cfg.get("budget", {}).get("total_demos", 500)
         st.session_state["ga_alloc_step"] = cfg.get("budget", {}).get("allocation_step", 25)
         st.session_state["ga_mp4_dir"] = str(mp4_dir)
-        st.session_state["ga_config"] = str(config_path)
         st.sidebar.success("Loaded.")
 
 if "ga_index" in st.session_state:

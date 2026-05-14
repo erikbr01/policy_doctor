@@ -1,0 +1,4 @@
+label: "Transport MH (Jan 28)"
+mp4_dir: /tmp/study_mp4s/transport_mh_jan28
+study_config: policy_doctor/configs/user_study/transport_mh_jan28.yaml
+clustering_dir: third_party/influence_visualizer/configs/transport_mh_jan28/clustering/auto_pipeline_test_mar13_seed0_kmeans_k20

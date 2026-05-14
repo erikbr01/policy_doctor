@@ -78,5 +78,6 @@ def render_video_browser(
                 video_path,
                 label="",
                 key=f"{key_prefix}_ep{ep['index']}",
+                max_height_px=260,
             )
             st.caption(f"{ep['frame_count']} frames at {fps} fps")

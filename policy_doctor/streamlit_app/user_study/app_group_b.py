@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import streamlit as st
+import yaml
 
 from policy_doctor.behaviors.behavior_graph import BehaviorGraph
 from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
@@ -22,36 +23,51 @@ st.set_page_config(page_title="User Study — Group B", layout="wide")
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.header("Configuration")
 
+# Discover available session configs
+_REPO_ROOT = Path(__file__).parents[3]
+_SESSIONS_DIR = _REPO_ROOT / "policy_doctor" / "configs" / "user_study" / "sessions"
+_session_files = sorted(_SESSIONS_DIR.glob("*.yaml")) if _SESSIONS_DIR.is_dir() else []
+_session_labels = {f.stem: yaml.safe_load(f.read_text()).get("label", f.stem) for f in _session_files}
+
 participant_id = st.sidebar.text_input("Participant ID", value="anonymous")
-mp4_dir_input = st.sidebar.text_input("MP4 directory", value="")
-study_config_input = st.sidebar.text_input("Study config YAML", value="")
-clustering_dir_input = st.sidebar.text_input(
-    "Clustering directory",
-    value="",
-    help="Directory containing cluster_labels.npy, metadata.json, and optionally embeddings_reduced.npy",
+
+if not _session_files:
+    st.sidebar.warning("No session configs found in configs/user_study/sessions/")
+    st.stop()
+
+session_choice = st.sidebar.selectbox(
+    "Session",
+    options=[f.stem for f in _session_files],
+    format_func=lambda k: _session_labels.get(k, k),
 )
 
 if st.sidebar.button("Load"):
-    errors: list[str] = []
+    sess_path = _SESSIONS_DIR / f"{session_choice}.yaml"
+    sess = yaml.safe_load(sess_path.read_text())
 
-    mp4_dir = Path(mp4_dir_input)
+    # Resolve relative paths from repo root
+    def _resolve(p: str) -> Path:
+        path = Path(p)
+        return path if path.is_absolute() else _REPO_ROOT / path
+
+    mp4_dir = _resolve(sess["mp4_dir"])
+    config_path = _resolve(sess["study_config"])
+    clust_dir = _resolve(sess["clustering_dir"])
+
+    errors: list[str] = []
     index_path = mp4_dir / "index.json"
     if not mp4_dir.is_dir():
         errors.append(f"MP4 directory not found: {mp4_dir}")
     elif not index_path.exists():
-        errors.append(f"index.json not found in {mp4_dir}")
-
-    config_path = Path(study_config_input)
+        errors.append("index.json not found in MP4 directory")
     if not config_path.exists():
         errors.append(f"Study config not found: {config_path}")
-
-    clust_dir = Path(clustering_dir_input)
     labels_path = clust_dir / "cluster_labels.npy"
     meta_path = clust_dir / "metadata.json"
     if not clust_dir.is_dir():
         errors.append(f"Clustering directory not found: {clust_dir}")
     elif not labels_path.exists() or not meta_path.exists():
-        errors.append("cluster_labels.npy or metadata.json missing in clustering directory.")
+        errors.append("cluster_labels.npy or metadata.json missing")
 
     if errors:
         for e in errors:
