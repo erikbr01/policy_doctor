@@ -1,0 +1,36 @@
+# @package _global_
+# Comparison: Apr23 MimicGen pipeline — seed 0, three heuristics, all reps.
+#
+# Pools rep1 + rep2 + rep3 within each group (shuffle=true restores exchangeability).
+# max_sample_size is auto-detected from the data (= num_episodes per checkpoint eval).
+#
+# Usage:
+#   python -m policy_doctor.scripts.compare_policies comparison=mimicgen_apr23_seed0
+
+comparison:
+  title: "MimicGen Apr23 — seed 0 (budget 200)"
+  eval_output_dir: data/outputs/eval_save_episodes
+  output_dir: data/outputs/comparisons/mimicgen_apr23_seed0
+  global_confidence_level: 0.95
+  max_sample_size_per_policy: null
+  top_k_checkpoints: 5   # auto-detected from evaluation.num_episodes in the data
+  shuffle: true
+
+  groups:
+    - label: Behavior Graph
+      run_names:
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph-rep2
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-behavior_graph-rep3
+
+    - label: Diversity
+      run_names:
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity-rep2
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-diversity-rep3
+
+    - label: Random
+      run_names:
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random-rep2
+        - apr23_mimicgen_pipeline_v2_train_diffusion_unet_lowdim_square_mh_mimicgen_0-mimicgen_combined-random-rep3

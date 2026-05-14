@@ -1,0 +1,48 @@
+# Pygame controller defaults for local DAgger demos on macOS.
+#
+# Use this for Bluetooth / USB controllers that pygame sees but `inputs` does
+# not. Verified device shape on this machine:
+#   pygame name: "PS4 Controller"
+#   axes: 6
+#   buttons: 16
+#
+# Usage:
+#   python scripts/run_dagger.py ... dagger_config=pygame_demo
+#
+# Demo behavior:
+#   - no trajectory recording / HDF5 conversion by default
+#   - no runner step limit
+#   - R key or Share/Select button resets the scene
+
+device: pygame
+
+pygame:
+  controller_index: 0
+  deadzone: 0.15
+  scale_position: 1.0
+  scale_rotation: 1.0
+
+  # SDL / pygame mapping observed for the demo controller.
+  left_x_axis: 0
+  left_y_axis: 1
+  right_x_axis: 2
+  right_y_axis: 3
+  lt_axis: 4
+  rt_axis: 5
+
+  # L1/LB closes, R1/RB opens, Options/Start toggles intervention.
+  close_button: 4
+  open_button: 5
+  toggle_button: 9
+  reset_button: 8
+
+intervention:
+  rule: node_value_threshold
+  node_value_threshold: 0.0
+
+visualization:
+  enabled: true
+  camera_names: ["agentview"]
+
+recording:
+  enabled: false

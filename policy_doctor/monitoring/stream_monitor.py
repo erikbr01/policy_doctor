@@ -94,9 +94,9 @@ class StreamMonitor:
         t1 = time.perf_counter()
         timing["gradient_project_ms"] = (t1 - t0) * 1e3
 
-        # --- Influence scoring ---
+        # --- Influence scoring (reuse embedding — avoids a second gradient pass) ---
         t0 = time.perf_counter()
-        scores = self.scorer.score(batch)    # (N_train,)
+        scores = self.scorer.score_from_embedding(embedding)  # (N_train,)
         t1 = time.perf_counter()
         timing["score_ms"] = (t1 - t0) * 1e3
 
@@ -166,6 +166,18 @@ class StreamMonitor:
             assignment=assignment,
             timing_ms=timing,
         )
+
+
+    def score_from_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        """Compute influence scores from a pre-computed embedding (no gradient pass).
+
+        Delegates to the scorer's ``score_from_embedding`` method.  Useful for
+        computing scores lazily (e.g. only when an intervention is triggered) while
+        keeping the normal per-timestep path embed-only.
+
+        Returns ``(N_demo,)`` float32 array.
+        """
+        return self.scorer.score_from_embedding(embedding)
 
 
 def _to_tensor(x: Union[np.ndarray, torch.Tensor], device: torch.device) -> torch.Tensor:

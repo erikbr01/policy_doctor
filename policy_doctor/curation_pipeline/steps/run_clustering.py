@@ -148,6 +148,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                 level=level,
                 n_clusters=n_actual,
                 n_samples=len(labels),
+                embeddings_reduced=embeddings_reduced,
                 output_dir=self.step_dir / "clustering",
             )
             models_path = save_clustering_models(

@@ -31,6 +31,7 @@ Quick start::
 
 from policy_doctor.monitoring.base import AssignmentResult, GraphAssigner, MonitorResult, StreamScorer
 from policy_doctor.monitoring.graph_assigner import FittedModelAssigner, NearestCentroidAssigner
+from policy_doctor.monitoring.intervention import InterventionDecision, InterventionRule, NodeValueThresholdRule
 from policy_doctor.monitoring.monitored_policy import MonitoredPolicy
 from policy_doctor.monitoring.stream_monitor import StreamMonitor
 from policy_doctor.monitoring.trajectory_classifier import TrajectoryClassifier
@@ -45,6 +46,9 @@ __all__ = [
     "StreamMonitor",
     "TrajectoryClassifier",
     "MonitoredPolicy",
+    "InterventionRule",
+    "InterventionDecision",
+    "NodeValueThresholdRule",
 ]
 
 # Heavy imports (diffusion_policy / trak / infembed) are deferred to the scorer

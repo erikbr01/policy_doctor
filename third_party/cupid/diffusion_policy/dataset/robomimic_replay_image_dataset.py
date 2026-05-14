@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 from diffusion_policy.codecs.imagecodecs_numcodecs import Jpeg2k, register_codecs
 from diffusion_policy.common.hdf5_robomimic_layout import sorted_robomimic_demo_keys
+import numcodecs
 from diffusion_policy.common.normalize_util import (
     array_to_stats,
     get_identity_normalizer_from_stat,
@@ -278,7 +279,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         for key in self.lowdim_keys:
             stat = array_to_stats(self.replay_buffer[key])
 
-            if key.endswith("pos"):
+            if key.endswith("pos") or key.endswith("position") or key.endswith("positions"):
                 this_normalizer = get_range_normalizer_from_stat(stat)
             elif key.endswith("quat"):
                 # quaternion is in [-1,1] already
@@ -480,7 +481,7 @@ def _convert_robomimic_to_replay(
                     data_key = "obs/" + key
                     shape = tuple(shape_meta["obs"][key]["shape"])
                     c, h, w = shape
-                    this_compressor = Jpeg2k(level=50)
+                    this_compressor = numcodecs.Blosc(cname='lz4', clevel=9, shuffle=numcodecs.Blosc.NOSHUFFLE)
                     img_arr = data_group.require_dataset(
                         name=key,
                         shape=(n_steps, h, w, c),

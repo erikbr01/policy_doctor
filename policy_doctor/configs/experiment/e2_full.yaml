@@ -1,0 +1,43 @@
+# @package _global_
+# E2 full pre-registered scale: 3 sessions × {A_G, A_NG, H_NG} × 50 eval × 3 retrain seeds.
+# Add "H_G" to conditions if a second human is available. Frozen for
+# pre-registration; do not change after a run starts.
+
+defaults:
+  - /e2: defaults
+  - _self_
+
+e2_proposals:
+  mode: agentic
+  conditions: ["A_G", "A_NG", "H_NG"]
+  chat_enabled: false
+  agentic:
+    agent_backend: claude
+    agent_backend_params:
+      model_name: claude-sonnet-4-6
+      max_tokens: 4096
+    n_sessions_per_condition: 3
+    max_turns: 100
+    budget:
+      max_tool_calls: 80
+      max_visual_calls: 30
+      max_video_calls: 5
+      max_session_duration_s: 1200
+      warning_remaining_threshold: 5
+    kinematic_summary_strategy: raw_states
+    cache_enabled: true
+
+  # Legacy one-shot path retained as ablation; unused for the headline result.
+  vlm_backend: mock
+  vlm_backend_params: {}
+  vlm_lifecycle: persistent
+  n_repetitions: 3
+  max_retries: 3
+  n_requests_per_type:
+    full_trajectory: 10
+    recovery: 10
+    alternative_strategy: 5
+
+e2_eval:
+  n_eval_conditions: 50
+  n_retrain_seeds: 3

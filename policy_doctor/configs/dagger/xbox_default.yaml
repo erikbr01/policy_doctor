@@ -1,0 +1,19 @@
+# Xbox controller + threshold-based intervention
+# Usage: python scripts/run_dagger.py ... +dagger_config=xbox_default
+# Requires: pip install inputs
+
+device: xbox
+
+xbox:
+  controller_index: 0      # 0 = first connected gamepad
+  deadzone: 0.15           # ignore small drift near center
+  scale_position: 1.0      # arm x/y/z scale (1.0 = full range)
+  scale_rotation: 1.0      # arm yaw/pitch scale
+
+intervention:
+  rule: node_value_threshold
+  node_value_threshold: 0.0
+
+visualization:
+  enabled: true
+  camera_names: ["agentview"]

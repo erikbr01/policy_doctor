@@ -379,6 +379,124 @@ python -m policy_doctor.scripts.run_pipeline \
 
 ---
 
+## DROID real-robot training
+
+End-to-end setup for training a diffusion policy on DROID data collected on the Franka robot.
+
+### Prerequisites (one-time)
+
+**1. Extract the ZED SDK** (no `sudo` needed):
+
+```bash
+# Download ZED SDK 4.2 for Ubuntu 22.04 + CUDA 12.x
+curl -L "https://download.stereolabs.com/zedsdk/4.2/cu12/ubuntu22" \
+    -o /mnt/ssdB/erik/ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
+chmod +x /mnt/ssdB/erik/ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run
+/mnt/ssdB/erik/ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run \
+    --noexec --target /mnt/ssdB/erik/zed_sdk_extracted
+```
+
+**2. Download camera calibration files** (one file per camera serial):
+
+```bash
+mkdir -p /mnt/ssdB/erik/zed_settings
+for sn in 14313307 36716034; do
+    curl -sL "https://calib.stereolabs.com/?SN=${sn}" \
+        -o /mnt/ssdB/erik/zed_settings/SN${sn}.conf
+done
+```
+
+**3. Install pyzed + fix numba** in `cupid_torch2`:
+
+```bash
+# Download the wheel for Python 3.9 / ZED SDK 4.2
+curl -L "https://download.stereolabs.com/zedsdk/4.2/whl/linux_x86_64/pyzed-4.2-cp39-cp39-linux_x86_64.whl" \
+    -o /mnt/ssdB/erik/pyzed-4.2-cp39-cp39-linux_x86_64.whl
+
+conda run -n cupid_torch2 conda install -y libjpeg-turbo -c conda-forge
+conda run -n cupid_torch2 pip install --ignore-installed \
+    /mnt/ssdB/erik/pyzed-4.2-cp39-cp39-linux_x86_64.whl
+# pyzed requires numpy 1.26; upgrade numba to stay compatible
+conda run -n cupid_torch2 conda install -y "numba>=0.58" -c numba -c conda-forge
+conda run -n cupid_torch2 pip install "numpy==1.26.4"
+```
+
+Verify:
+
+```bash
+LD_LIBRARY_PATH=/mnt/ssdB/erik/zed_sdk_extracted/lib \
+  conda run -n cupid_torch2 python -c "import pyzed.sl as sl; print('OK')"
+conda run -n cupid_torch2 python -c "import numba; print('numba', numba.__version__)"
+```
+
+### Data layout
+
+Raw DROID data lives at `/mnt/ssdB/erik/droid_data/data/` with the structure:
+
+```
+data/
+  success/<date>/<uuid>/
+    trajectory.h5          # robot state + actions (HDF5)
+    recordings/SVO/
+      14313307.svo2        # wrist camera (ZED serial 14313307)
+      36716034.svo2        # exterior camera 1 (ZED serial 36716034)
+  failure/<date>/<uuid>/
+    trajectory.h5
+    recordings/SVO/...
+```
+
+SVO2 frames have a **1:1 correspondence** with HDF5 steps (same frame count, ~41 ms constant timestamp offset). `movement_enabled=False` steps are filtered automatically.
+
+### Convert to robomimic HDF5
+
+```bash
+# Reads real camera frames from SVO2. Default resolution: 180x320 (4× downscale from 720p).
+LD_LIBRARY_PATH=/mnt/ssdB/erik/zed_sdk_extracted/lib \
+  conda run -n cupid_torch2 python scripts/convert_droid_hdf5_debug.py \
+    --input_path /mnt/ssdB/erik/droid_data/data \
+    --output_path /mnt/ssdB/erik/droid_data/droid_debug_dataset.hdf5 \
+    --zed_settings /mnt/ssdB/erik/zed_settings
+```
+
+`LD_LIBRARY_PATH` is only needed here (during conversion). Training reads the output HDF5 and does not need pyzed.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--input_path` | required | Root directory crawled recursively for `trajectory.h5` |
+| `--output_path` | required | Destination robomimic HDF5 |
+| `--zed_settings` | `/mnt/ssdB/erik/zed_settings` | Directory with `SN<serial>.conf` calibration files |
+| `--image_size H W` | `180 320` | Output resolution (H W). Use `180 320` for training, smaller for quick smoke tests |
+| `--train_frac` | `0.5` | Fraction of demos for training |
+| `--val_frac` | `0.3` | Fraction for validation |
+
+### Debug training run
+
+10 epochs, batch size 4, two camera views (wrist + ext1), cuda:0. The debug config uses a small UNet (32-64-128 channels); scale up `down_dims` for real training.
+
+```bash
+# From the project root:
+./scripts/train_droid_debug.sh
+
+# Or with Hydra overrides:
+./scripts/train_droid_debug.sh \
+  training.num_epochs=100 \
+  training.device=cuda:1 \
+  multi_run.run_dir=/mnt/ssdB/erik/droid_runs/run_001
+```
+
+Config: `third_party/cupid/configs/image/droid_debug/diffusion_policy_cnn/config.yaml`
+
+### Camera serials
+
+| Key | ZED serial | View |
+|-----|-----------|------|
+| `hand_camera_image` | `14313307` | Wrist (LEFT eye) |
+| `exterior_image_1_left` | `36716034` | Exterior left (LEFT eye) |
+
+Serial `37617599` (second exterior) is present in some episodes but not all — omitted from the default config.
+
+---
+
 ## Shell scripts (this repository)
 
 Scripts below live under **`scripts/`** at the **policy_doctor project root** (next to `pyproject.toml`).

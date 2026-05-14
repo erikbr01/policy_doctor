@@ -339,7 +339,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                       "Skipping rollout evaluation (env not registered in this conda env).")
                 return dict()
         env = self.env
-        
+
         # plan for rollout
         n_envs = len(self.env_fns)
         n_inits = len(self.env_init_fn_dills)

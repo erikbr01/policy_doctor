@@ -117,6 +117,18 @@ def load_clustering_result(
     return cluster_labels, metadata, manifest
 
 
+def load_embeddings_reduced(result_dir: Path) -> Optional[np.ndarray]:
+    """Load ``embeddings_reduced.npy`` from a clustering result dir if present.
+
+    Returns the array (float32, shape ``(n_samples, n_umap_components)``)
+    or ``None`` if the file does not exist (old clustering run).
+    """
+    p = Path(result_dir) / "embeddings_reduced.npy"
+    if not p.exists():
+        return None
+    return np.load(p)
+
+
 def save_clustering_result(
     name: str,
     cluster_labels: np.ndarray,
@@ -129,8 +141,9 @@ def save_clustering_result(
     level: str,
     n_clusters: int,
     n_samples: int,
-    output_dir: "Path | None" = None,
-    task_config: "str | None" = None,
+    embeddings_reduced: Optional[np.ndarray] = None,
+    output_dir: Path | None = None,
+    task_config: str | None = None,
 ) -> Path:
     """Save a clustering result to disk.
 
@@ -145,12 +158,14 @@ def save_clustering_result(
         level: e.g. 'rollout', 'demo'.
         n_clusters: Number of clusters (excluding noise).
         n_samples: Number of samples (len(cluster_labels)).
-        output_dir: Explicit directory to write into.  When provided,
-            results are saved to ``output_dir / slug`` and ``task_config``
-            is ignored.  Preferred for pipeline use.
-        task_config: Legacy task config name; results saved to
-            ``iv/configs/<task_config>/clustering/<slug>``.  Used by the
-            Streamlit app.  Ignored when ``output_dir`` is set.
+        embeddings_reduced: Optional ``(n_samples, n_components)`` float32 array
+            of UMAP-reduced embeddings.  When provided, saved as
+            ``embeddings_reduced.npy`` alongside the other files.  Used by the
+            E1 cluster-coherence experiment for centroid-proximity sample selection.
+        output_dir: Explicit output directory. When provided, results are written to
+            ``output_dir / slug`` instead of the iv configs tree. Takes precedence
+            over task_config.
+        task_config: Task config name (legacy). Used only when output_dir is None.
 
     Returns:
         Path to the result directory.
@@ -162,8 +177,10 @@ def save_clustering_result(
     slug = _slugify(name)
     if output_dir is not None:
         result_dir = Path(output_dir) / slug
-    else:
+    elif task_config is not None:
         result_dir = get_clustering_dir(task_config) / slug
+    else:
+        raise ValueError("Either output_dir or task_config must be provided")
     result_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {
@@ -182,6 +199,12 @@ def save_clustering_result(
         yaml.safe_dump(manifest, f, default_flow_style=False, sort_keys=False)
 
     np.save(result_dir / "cluster_labels.npy", cluster_labels)
+
+    if embeddings_reduced is not None:
+        np.save(
+            result_dir / "embeddings_reduced.npy",
+            embeddings_reduced.astype(np.float32),
+        )
 
     def _json_serial(obj: Any) -> Any:
         if isinstance(obj, (np.integer, np.floating)):

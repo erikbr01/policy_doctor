@@ -26,6 +26,9 @@ ALL_STEPS: List[str] = [
     "annotate_slices_vlm",
     "summarize_behaviors_vlm",
     "evaluate_cluster_coherency_vlm",
+    "validate_cluster_coherence_vlm",   # Experiment E1: VLM classification accuracy
+    "build_rollout_pool",               # Experiment E2: pool index + storyboards
+    "score_adherence_e2",               # Experiment E2: per-demo adherence + filter
     "run_curation_config",
     "train_curated",
     "eval_curated",
@@ -82,6 +85,11 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.evaluate_cluster_coherency_vlm import (
         EvaluateClusterCoherencyVLMStep,
     )
+    from policy_doctor.curation_pipeline.steps.validate_cluster_coherence_vlm import (
+        ValidateClusterCoherenceVLMStep,
+    )
+    from policy_doctor.curation_pipeline.steps.build_rollout_pool import BuildRolloutPoolStep
+    from policy_doctor.curation_pipeline.steps.score_adherence_e2 import ScoreAdherenceE2Step
     from policy_doctor.curation_pipeline.steps.run_curation_config import RunCurationConfigStep
     from policy_doctor.curation_pipeline.steps.train_curated import TrainCuratedStep
     from policy_doctor.curation_pipeline.steps.eval_curated import EvalCuratedStep
@@ -130,6 +138,9 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "annotate_slices_vlm": AnnotateSlicesVLMStep,
         "summarize_behaviors_vlm": SummarizeBehaviorsVLMStep,
         "evaluate_cluster_coherency_vlm": EvaluateClusterCoherencyVLMStep,
+        "validate_cluster_coherence_vlm": ValidateClusterCoherenceVLMStep,
+        "build_rollout_pool": BuildRolloutPoolStep,
+        "score_adherence_e2": ScoreAdherenceE2Step,
         "run_curation_config": RunCurationConfigStep,
         "train_curated": TrainCuratedStep,
         "eval_curated": EvalCuratedStep,

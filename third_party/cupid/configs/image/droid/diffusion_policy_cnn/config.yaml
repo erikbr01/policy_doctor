@@ -1,0 +1,249 @@
+# Production training config — DROID real-robot, image-based diffusion policy (CNN / UNet).
+#
+# Images read from ZED SVO2 via scripts/convert_droid_hdf5_debug.py.
+# Two camera views: hand_camera_image (wrist) + exterior_image_1_left.
+# Resolution: 256x256 capture → 224x224 random crop (pretrained ResNet18).
+# Action: joint_velocity (7) + gripper_position (1) = 8-dim.
+#
+# Run via pipeline:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=droid_hdf5 \
+#     +experiment=kendama_baseline \
+#     steps=[train_baseline]
+
+_target_: diffusion_policy.workspace.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
+
+checkpoint:
+  save_last_ckpt: true
+  save_last_snapshot: false
+  topk:
+    format_str: epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt
+    k: 3
+    mode: max
+    monitor_key: test_mean_score
+
+dataloader:
+  batch_size: 64
+  num_workers: 8
+  persistent_workers: true
+  pin_memory: true
+  shuffle: true
+
+dataset_obs_steps: 2
+
+ema:
+  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+
+exp_name: default
+
+horizon: 16
+keypoint_visible_rate: 1.0
+
+logging:
+  group: null
+  id: null
+  mode: online
+  name: droid_diffusion_cnn
+  project: influence-clustering
+  resume: true
+  tags:
+    - droid
+    - diffusion_policy_cnn
+
+multi_run:
+  run_dir: data/outputs/droid/diffusion_policy_cnn
+  wandb_name_base: droid_diffusion_cnn
+
+n_action_steps: 8
+n_latency_steps: 0
+n_obs_steps: 2
+name: train_diffusion_unet_hybrid
+obs_as_global_cond: true
+
+optimizer:
+  _target_: torch.optim.AdamW
+  betas:
+    - 0.95
+    - 0.999
+  eps: 1.0e-08
+  lr: 0.0001
+  weight_decay: 1.0e-06
+
+past_action_visible: false
+
+policy:
+  _target_: diffusion_policy.policy.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  cond_predict_scale: true
+  crop_shape:
+    - 224
+    - 224
+  diffusion_step_embed_dim: 128
+  down_dims:
+    - 256
+    - 512
+    - 1024
+  eval_fixed_crop: true
+  horizon: 16
+  kernel_size: 5
+  n_action_steps: 8
+  n_groups: 8
+  n_obs_steps: 2
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    beta_start: 0.0001
+    clip_sample: true
+    num_train_timesteps: 100
+    prediction_type: epsilon
+    variance_type: fixed_small
+  num_inference_steps: 100
+  obs_as_global_cond: true
+  obs_encoder_group_norm: true
+  pretrained_backbone: true
+  shape_meta:
+    action:
+      shape:
+        - 8
+    obs:
+      hand_camera_image:
+        shape:
+          - 3
+          - 256
+          - 256
+        type: rgb
+      exterior_image_1_left:
+        shape:
+          - 3
+          - 256
+          - 256
+        type: rgb
+      joint_positions:
+        shape:
+          - 7
+      gripper_position:
+        shape:
+          - 1
+
+shape_meta:
+  action:
+    shape:
+      - 8
+  obs:
+    hand_camera_image:
+      shape:
+        - 3
+        - 256
+        - 256
+      type: rgb
+    exterior_image_1_left:
+      shape:
+        - 3
+        - 256
+        - 256
+      type: rgb
+    joint_positions:
+      shape:
+        - 7
+    gripper_position:
+      shape:
+        - 1
+
+task:
+  abs_action: false
+  dataset:
+    _target_: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
+    abs_action: false
+    dataset_path: data/source/droid/droid_dataset.hdf5
+    horizon: 16
+    n_obs_steps: 2
+    pad_after: 7
+    pad_before: 1
+    rotation_rep: rotation_6d
+    seed: 42
+    shape_meta:
+      action:
+        shape:
+          - 8
+      obs:
+        hand_camera_image:
+          shape:
+            - 3
+            - 256
+            - 256
+          type: rgb
+        exterior_image_1_left:
+          shape:
+            - 3
+            - 256
+            - 256
+          type: rgb
+        joint_positions:
+          shape:
+            - 7
+        gripper_position:
+          shape:
+            - 1
+    use_cache: true
+    val_ratio: 0.1
+  dataset_path: data/source/droid/droid_dataset.hdf5
+  env_runner:
+    _target_: diffusion_policy.env_runner.noop_image_runner.NoOpImageRunner
+    output_dir: data/outputs/droid/diffusion_policy_cnn
+  name: droid
+  shape_meta:
+    action:
+      shape:
+        - 8
+    obs:
+      hand_camera_image:
+        shape:
+          - 3
+          - 256
+          - 256
+        type: rgb
+      exterior_image_1_left:
+        shape:
+          - 3
+          - 256
+          - 256
+        type: rgb
+      joint_positions:
+        shape:
+          - 7
+      gripper_position:
+        shape:
+          - 1
+  task_name: droid
+
+task_name: droid_image
+
+training:
+  checkpoint_every: 50
+  debug: false
+  device: cuda:0
+  gradient_accumulate_every: 1
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  max_train_steps: null
+  max_val_steps: null
+  num_epochs: 3000
+  resume: true
+  rollout_every: 50
+  sample_every: 50
+  seed: 42
+  tqdm_interval_sec: 1.0
+  use_ema: true
+  val_every: 25
+
+val_dataloader:
+  batch_size: 64
+  num_workers: 4
+  persistent_workers: true
+  pin_memory: true
+  shuffle: false

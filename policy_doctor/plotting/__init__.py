@@ -6,6 +6,12 @@
 """
 
 from policy_doctor.plotting.training_curves import create_training_comparison_plot
+from policy_doctor.plotting.policy_comparison import (
+    draw_beta_posterior_samples,
+    create_policy_comparison_violin,
+    create_policy_comparison_bar,
+    create_policy_comparison_breakdown,
+)
 from policy_doctor.plotting.vlm_montage import (
     create_frame_montage,
     create_scrollable_frame_strip_html,
@@ -92,6 +98,10 @@ __all__ = [
     "create_frame_montage",
     "create_scrollable_frame_strip_html",
     "create_training_comparison_plot",
+    "draw_beta_posterior_samples",
+    "create_policy_comparison_violin",
+    "create_policy_comparison_bar",
+    "create_policy_comparison_breakdown",
     "create_curation_data_vs_success_scatter",
     "create_experiment_checkpoint_score_boxplot",
     "create_multi_experiment_checkpoint_score_boxplots",

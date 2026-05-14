@@ -99,6 +99,32 @@ def build_windows_from_rollout_timestep_embeddings(
     return embeddings_arr, all_metadata
 
 
+def load_infembed_per_timestep(
+    eval_dir_abs: pathlib.Path,
+) -> Tuple[np.ndarray, List[int], List]:
+    """Load raw per-timestep InfEmbed embeddings (no windowing).
+
+    Returns:
+        embeddings: (N_total_timesteps, D) float32
+        episode_lengths: list of ints
+        episode_successes: list (bool or None per episode)
+    """
+    trak_dirs = sorted(eval_dir_abs.glob("default_trak_results-*"))
+    if not trak_dirs:
+        raise FileNotFoundError(f"No TRAK results in {eval_dir_abs}")
+    emb_path = trak_dirs[-1] / "infembed_embeddings.npz"
+    if not emb_path.exists():
+        raise FileNotFoundError(f"InfEmbed embeddings not found: {emb_path}")
+    with np.load(emb_path) as f:
+        rollout_emb = np.asarray(f["rollout_embeddings"], dtype=np.float32)
+    episodes_meta_path = eval_dir_abs / "episodes" / "metadata.yaml"
+    with open(episodes_meta_path) as f:
+        episodes_meta = yaml.safe_load(f)
+    ep_lens = episodes_meta["episode_lengths"]
+    ep_succ = episodes_meta.get("episode_successes", [None] * len(ep_lens))
+    return rollout_emb, ep_lens, ep_succ
+
+
 def extract_infembed_slice_windows(
     eval_dir_abs: pathlib.Path,
     window_width: int,
