@@ -27,6 +27,31 @@ def _clustering_level(metadata: List[Dict]) -> str:
     return "rollout" if (metadata and "rollout_idx" in metadata[0]) else "demo"
 
 
+def _resolve_mp4_dir(config: Any) -> Optional[pathlib.Path]:
+    """Return eval_dir/media if it exists and contains ep*.mp4 files."""
+    if not config.eval_dir:
+        return None
+    from policy_doctor.paths import REPO_ROOT
+    eval_path = pathlib.Path(config.eval_dir)
+    if not eval_path.is_absolute():
+        eval_path = REPO_ROOT / eval_path
+    media = eval_path / "media"
+    if media.exists() and any(media.glob("ep*.mp4")):
+        return media
+    return None
+
+
+def _find_ep_mp4(mp4_dir: pathlib.Path, ep_idx: int) -> Optional[pathlib.Path]:
+    """Find the mp4 for episode ep_idx, handling both ep0.mp4 and ep0000_succ.mp4 conventions."""
+    # Zero-padded with suffix (ep0042_succ.mp4 / ep0042_fail.mp4)
+    matches = sorted(mp4_dir.glob(f"ep{ep_idx:04d}_*.mp4"))
+    if matches:
+        return matches[0]
+    # Simple name (ep42.mp4)
+    simple = mp4_dir / f"ep{ep_idx}.mp4"
+    return simple if simple.exists() else None
+
+
 def render_tab(
     config: VisualizerConfig,
     data: Any,
@@ -35,6 +60,12 @@ def render_tab(
     """Render the Behavior Graph tab."""
     st.header("Behavior Graph")
     task_stem = resolve_task_config_stem(config, task_config_stem)
+
+    # Auto-resolve mp4 dir from config once per session
+    if "bg_ep_mp4_dir" not in st.session_state:
+        auto = _resolve_mp4_dir(config)
+        if auto:
+            st.session_state["bg_ep_mp4_dir"] = str(auto)
 
     labels = st.session_state.get("clustering_labels")
     metadata = st.session_state.get("clustering_metadata")
@@ -401,10 +432,17 @@ def _render_graph_with_selector(
             excluded_node_ids=excluded,
             min_edge_prob=min_prob,
         )
+        selected_edge = st.session_state.get(f"{graph_key}_selected_edge")
         if clicked is not None and clicked in graph.nodes:
             _render_node_panel(clicked, graph, labels, metadata, key_prefix=graph_key)
+        elif selected_edge is not None:
+            src_id, tgt_id = selected_edge
+            if src_id in graph.nodes and tgt_id in graph.nodes:
+                _render_edge_panel(src_id, tgt_id, graph, labels, metadata, key_prefix=graph_key)
+            else:
+                st.caption("Click a node or edge to explore it.")
         else:
-            st.caption("Click a node to explore it — stats and transitions appear here.")
+            st.caption("Click a node or edge to explore it.")
     else:
         if show_value_option and view_mode == "value" and values:
             from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
@@ -431,10 +469,13 @@ def _render_node_panel(
     """Stats panel for a clicked node in the SVG graph."""
     import plotly.graph_objects as go
     from policy_doctor.behaviors.behavior_graph import FAILURE_NODE_ID, SUCCESS_NODE_ID
+    from policy_doctor.streamlit_app.components.mp4_player import mp4_player
 
     node = graph.nodes.get(node_id)
     if node is None:
         return
+
+    ep_key = "rollout_idx" if graph.level == "rollout" else "demo_idx"
 
     with st.container(border=True):
         header_col, close_col = st.columns([10, 1])
@@ -446,7 +487,6 @@ def _render_node_panel(
                 st.rerun()
 
         # Episode success stats
-        ep_key = "rollout_idx" if graph.level == "rollout" else "demo_idx"
         ep_success: Dict = {}
         for meta in metadata:
             eidx = meta.get(ep_key)
@@ -462,6 +502,71 @@ def _render_node_panel(
             "Success rate",
             f"{success_count / node.num_episodes:.0%}" if node.num_episodes else "—"
         )
+
+        # Videos
+        if not node.is_special:
+            mp4_dir_str = st.session_state.get("bg_ep_mp4_dir", "")
+            if not mp4_dir_str:
+                st.caption("No MP4 directory configured — check `eval_dir` in the task config YAML.")
+            else:
+                mp4_dir = pathlib.Path(mp4_dir_str)
+                ep_slices = _episodes_for_node(node_id, labels, metadata, ep_key)
+                ep_slices_map = {e[0]: (e[1], e[2]) for e in ep_slices}
+                all_ep_idxs = sorted(ep_slices_map.keys())
+                n_eps = len(all_ep_idxs)
+                _VIDS_PER_PAGE = 3
+
+                if all_ep_idxs:
+                    _vp_key = f"{key_prefix}_vid_page_{node_id}"
+                    _vp = st.session_state.get(_vp_key, 0)
+                    _vp_total = max(1, (n_eps + _VIDS_PER_PAGE - 1) // _VIDS_PER_PAGE)
+                    show_ep_idxs = all_ep_idxs[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
+
+                    if _vp_total > 1:
+                        _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
+                        with _vc1:
+                            if st.button("←", disabled=(_vp == 0), key=f"{key_prefix}_vp_prev_{node_id}"):
+                                st.session_state[_vp_key] = max(0, _vp - 1)
+                                st.rerun()
+                        _vc2.markdown(
+                            f"<div style='text-align:center;padding-top:6px;color:#888;font-size:0.82em;'>"
+                            f"Episodes {_vp * _VIDS_PER_PAGE + 1}–"
+                            f"{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        with _vc3:
+                            if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
+                                st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
+                                st.rerun()
+
+                    vid_cols = st.columns(min(3, len(show_ep_idxs)))
+                    available = 0
+                    for col, ep_idx in zip(vid_cols, show_ep_idxs):
+                        mp4_path = _find_ep_mp4(mp4_dir, ep_idx)
+                        if mp4_path is None:
+                            continue
+                        available += 1
+                        success = ep_success.get(ep_idx)
+                        status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
+                        ts_range = ep_slices_map.get(ep_idx)
+                        total_frames = _ep_total_frames(ep_idx, metadata, ep_key)
+                        effective_end = (
+                            total_frames if (ts_range and success is False and total_frames)
+                            else (ts_range[1] if ts_range else None)
+                        )
+                        with col:
+                            st.caption(f"Episode {ep_idx} — {status}")
+                            mp4_player(
+                                mp4_path,
+                                key=f"{key_prefix}_panel_vid_{node_id}_{ep_idx}",
+                                max_height_px=220,
+                                slice_start=ts_range[0] if ts_range else None,
+                                slice_end=effective_end,
+                                total_frames=total_frames,
+                            )
+                    if available == 0:
+                        st.info(f"No ep*.mp4 files found in `{mp4_dir}` for this node's episodes.")
 
         # Outgoing transitions bar chart
         outgoing = graph.transition_probs.get(node_id, {})
@@ -602,6 +707,200 @@ def _render_mrp_visualizations(
             st.metric("Mean advantage", f"{advantages[valid].mean():.4f}")
 
 
+def _episodes_for_node(
+    node_id: int,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    ep_key: str = "rollout_idx",
+) -> List[tuple]:
+    """Return (ep_idx, ts_min, ts_max) for each episode that visits node_id."""
+    from collections import defaultdict
+    ep_slices: Dict = defaultdict(list)
+    for i, meta in enumerate(metadata):
+        if int(labels[i]) == node_id:
+            ep_idx = meta.get(ep_key, -1)
+            ts = meta.get("window_start", meta.get("timestep", 0))
+            ep_slices[ep_idx].append(ts)
+    result = []
+    for ep_idx, timesteps in ep_slices.items():
+        if ep_idx >= 0:
+            result.append((ep_idx, min(timesteps), max(timesteps)))
+    return sorted(result, key=lambda x: x[0])
+
+
+def _ep_total_frames(
+    ep_idx: int,
+    metadata: List[Dict],
+    ep_key: str = "rollout_idx",
+) -> Optional[int]:
+    """Return the max window_end across all slices of an episode."""
+    ends = [
+        m["window_end"]
+        for m in metadata
+        if m.get(ep_key) == ep_idx and m.get("window_end") is not None
+    ]
+    return max(ends) if ends else None
+
+
+def _episodes_for_edge(
+    src_id: int,
+    tgt_id: int,
+    labels: np.ndarray,
+    metadata: List[Dict],
+) -> List[tuple]:
+    """Return (ep_idx, ts_src, ts_tgt, ts_tgt_end) for each episode containing src→tgt.
+
+    ts_tgt_end is the window_start of the behavior after tgt (or None if tgt is last).
+    Handles terminal edges (START/SUCCESS/FAILURE) the same way as the user study.
+    """
+    from policy_doctor.behaviors.behavior_graph import FAILURE_NODE_ID, START_NODE_ID, SUCCESS_NODE_ID
+
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
+    ep_wins: Dict = {}
+    ep_success: Dict = {}
+    for i, m in enumerate(metadata):
+        ep_idx = m.get(ep_key)
+        if ep_idx is None:
+            continue
+        lab = int(labels[i])
+        ts = m.get("window_start", m.get("timestep", 0))
+        ep_wins.setdefault(ep_idx, []).append((ts, lab))
+        if ep_idx not in ep_success:
+            ep_success[ep_idx] = m.get("success")
+
+    result = []
+    for ep_idx, wins in ep_wins.items():
+        wins.sort()
+        rle: List[tuple] = []
+        for ts, lab in wins:
+            if lab == -1:
+                continue
+            if not rle or rle[-1][1] != lab:
+                rle.append((ts, lab))
+        if not rle:
+            continue
+
+        first_ts, first_lab = rle[0]
+        last_ts, last_lab = rle[-1]
+        success = ep_success.get(ep_idx)
+
+        if src_id == START_NODE_ID:
+            if tgt_id == first_lab:
+                tgt_end = rle[1][0] if len(rle) > 1 else None
+                result.append((ep_idx, first_ts, first_ts, tgt_end))
+            continue
+        if tgt_id == FAILURE_NODE_ID:
+            if last_lab == src_id and success is False:
+                # ts_tgt=None → extend orange bar to episode end in the panel
+                result.append((ep_idx, last_ts, None, None))
+            continue
+        if tgt_id == SUCCESS_NODE_ID:
+            if last_lab == src_id and success is True:
+                result.append((ep_idx, last_ts, None, None))
+            continue
+
+        for i in range(len(rle) - 1):
+            if rle[i][1] == src_id and rle[i + 1][1] == tgt_id:
+                ts_tgt_end = rle[i + 2][0] if i + 2 < len(rle) else None
+                result.append((ep_idx, rle[i][0], rle[i + 1][0], ts_tgt_end))
+                break
+
+    return sorted(result)
+
+
+def _render_edge_panel(
+    src_id: int,
+    tgt_id: int,
+    graph: Any,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    key_prefix: str,
+) -> None:
+    """Panel for a clicked edge: paginated videos showing the src→tgt transition."""
+    from policy_doctor.behaviors.behavior_graph import FAILURE_NODE_ID, SUCCESS_NODE_ID
+    from policy_doctor.streamlit_app.components.mp4_player import mp4_player
+
+    src_node = graph.nodes.get(src_id)
+    tgt_node = graph.nodes.get(tgt_id)
+    src_name = src_node.name if src_node else str(src_id)
+    tgt_name = tgt_node.name if tgt_node else str(tgt_id)
+    prob = graph.transition_probs.get(src_id, {}).get(tgt_id, 0.0)
+
+    ep_key = "rollout_idx" if graph.level == "rollout" else "demo_idx"
+    mp4_dir_str = st.session_state.get("bg_ep_mp4_dir", "")
+    mp4_dir = pathlib.Path(mp4_dir_str) if mp4_dir_str else None
+
+    with st.container(border=True):
+        header_col, close_col = st.columns([10, 1])
+        with header_col:
+            st.subheader(f"{src_name}  →  {tgt_name}")
+            st.caption(f"Transition probability: {prob:.1%}")
+        with close_col:
+            if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
+                st.session_state.pop(f"{key_prefix}_selected_edge", None)
+                st.rerun()
+
+        all_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata)
+        n_eps = len(all_triples)
+
+        if not all_triples:
+            st.info("No episodes found for this transition.")
+            return
+
+        if mp4_dir is None:
+            st.caption(f"{n_eps} episodes match this transition. Set an MP4 directory in the Episode Browser to see videos.")
+            return
+
+        _VIDS_PER_PAGE = 3
+        _vp_key = f"{key_prefix}_edge_vid_page_{src_id}_{tgt_id}"
+        _vp = st.session_state.get(_vp_key, 0)
+        _vp_total = max(1, (n_eps + _VIDS_PER_PAGE - 1) // _VIDS_PER_PAGE)
+        show_triples = all_triples[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
+
+        if _vp_total > 1:
+            _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
+            with _vc1:
+                if st.button("←", disabled=(_vp == 0), key=f"{key_prefix}_ep_prev_{src_id}_{tgt_id}"):
+                    st.session_state[_vp_key] = max(0, _vp - 1)
+                    st.rerun()
+            _vc2.markdown(
+                f"<div style='text-align:center;padding-top:6px;color:#888;font-size:0.82em;'>"
+                f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
+                f"</div>", unsafe_allow_html=True)
+            with _vc3:
+                if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_ep_next_{src_id}_{tgt_id}"):
+                    st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
+                    st.rerun()
+
+        vid_cols = st.columns(min(3, len(show_triples)))
+        available = 0
+        for col, (ep_idx, ts_src, ts_tgt, ts_tgt_end) in zip(vid_cols, show_triples):
+            mp4_path = _find_ep_mp4(mp4_dir, ep_idx)
+            if mp4_path is None:
+                continue
+            available += 1
+            total_frames = _ep_total_frames(ep_idx, metadata, ep_key)
+            # For terminal transitions (X→FAILURE/SUCCESS), ts_tgt is None — extend
+            # the orange bar to episode end and omit the sky-blue target bar.
+            effective_tgt = ts_tgt if ts_tgt is not None else total_frames
+            with col:
+                st.caption(f"Episode {ep_idx}")
+                mp4_player(
+                    mp4_path,
+                    key=f"{key_prefix}_edge_vid_{src_id}_{tgt_id}_{ep_idx}",
+                    max_height_px=220,
+                    slice_start=ts_src,
+                    slice_end=effective_tgt,
+                    total_frames=total_frames,
+                    slice2_start=ts_tgt if (ts_tgt is not None and ts_tgt_end is not None) else None,
+                    slice2_end=ts_tgt_end,
+                    bar1_label=src_name,
+                    bar2_label=tgt_name if (ts_tgt is not None and ts_tgt_end is not None) else "",
+                )
+        if available == 0:
+            st.info(f"No ep*.mp4 files found in `{mp4_dir}` for this transition's episodes.")
+
+
 def _build_per_frame_labels(
     episode_idx: int,
     labels: np.ndarray,
@@ -648,10 +947,26 @@ def _render_episode_browser(
     n_clusters = len(cluster_ids)
 
     st.caption(
-        "Select an episode to see its cluster assignment timeline. "
-        "Each color segment is a distinct behavior cluster. "
-        "Point to a segment to see its cluster ID and time range."
+        "Select an episode to see its cluster assignment timeline and video. "
+        "Each color segment is a distinct behavior cluster."
     )
+
+    mp4_dir_str = st.session_state.get("bg_ep_mp4_dir", "")
+    mp4_dir = pathlib.Path(mp4_dir_str) if mp4_dir_str else None
+
+    with st.expander("MP4 directory override", expanded=(mp4_dir is None)):
+        override = st.text_input(
+            "MP4 directory",
+            value=mp4_dir_str,
+            key="bg_ep_mp4_dir_input",
+            placeholder="/path/to/media",
+            help="Leave blank to use eval_dir/media from the task config.",
+        )
+        if override and override != mp4_dir_str:
+            st.session_state["bg_ep_mp4_dir"] = override
+            mp4_dir = pathlib.Path(override)
+    if mp4_dir:
+        st.caption(f"Videos from: `{mp4_dir}`")
 
     col_ep, col_fps = st.columns([3, 1])
     with col_ep:
@@ -679,39 +994,19 @@ def _render_episode_browser(
             if nid >= 0:
                 cluster_names[nid] = node.name
 
-    # Multi-cluster timeline (always shown)
-    st.markdown(f"**Cluster timeline** — episode {ep_i}  ({total_frames} frames)")
-    cluster_timeline(
-        per_frame,
-        cluster_colors=CLUSTER_COLORS,
-        fps=fps,
-        height=80,
-        key=f"bg_ep_tl_{ep_i}",
-        cluster_names=cluster_names or None,
-    )
-
     # Cluster sequence summary
     with st.expander("Cluster sequence", expanded=False):
         _render_cluster_sequence(per_frame, cluster_ids, CLUSTER_COLORS, cluster_names)
 
-    # Optional video with timeline
-    st.markdown("**Video**")
-    st.caption(
-        "Point to a directory containing ``ep{N}.mp4`` files. "
-        "Leave blank to skip video playback."
-    )
-    mp4_dir_str = st.text_input(
-        "MP4 directory",
-        value=st.session_state.get("bg_ep_mp4_dir", ""),
-        key="bg_ep_mp4_dir_input",
-        placeholder="/path/to/mp4_dir",
-    )
-    if mp4_dir_str:
-        st.session_state["bg_ep_mp4_dir"] = mp4_dir_str
-        mp4_dir = pathlib.Path(mp4_dir_str)
-        mp4_path = mp4_dir / f"ep{ep_i}.mp4"
-        if not mp4_path.exists():
-            st.warning(f"Not found: `{mp4_path}`")
+    # Video + frame inspector
+    if mp4_dir is not None:
+        mp4_path = _find_ep_mp4(mp4_dir, ep_i)
+        if mp4_path is None:
+            st.warning(f"No ep*.mp4 found for episode {ep_i} in `{mp4_dir}`")
+            # Fallback: show Plotly cluster timeline when no video
+            st.markdown(f"**Cluster timeline** — episode {ep_i}  ({total_frames} frames)")
+            cluster_timeline(per_frame, cluster_colors=CLUSTER_COLORS, fps=fps,
+                             height=80, key=f"bg_ep_tl_{ep_i}", cluster_names=cluster_names or None)
         else:
             mp4_player(
                 mp4_path,
@@ -719,54 +1014,16 @@ def _render_episode_browser(
                 max_height_px=360,
                 fps=fps,
                 total_frames=total_frames,
-            )
-            # Also show current-frame cluster info via frame slider
-            frame_i = st.slider(
-                "Inspect frame",
-                0, total_frames - 1, 0,
-                key=f"bg_ep_frame_{ep_i}",
-            )
-            cid = int(per_frame[frame_i])
-            cname = cluster_names.get(cid, f"Cluster {cid}") if cid >= 0 else "Unlabeled"
-            color = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)] if cid >= 0 else "#555"
-            st.markdown(
-                f"Frame **{frame_i}** → "
-                f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;">'
-                f"{cname}</span>",
-                unsafe_allow_html=True,
+                per_frame_labels=per_frame,
+                cluster_colors=CLUSTER_COLORS,
+                cluster_names=cluster_names or None,
             )
     else:
-        # No video: show frame-level cluster inspector from PKL if eval_dir is set
-        if config.eval_dir:
-            import pathlib as _pl
-            from policy_doctor.paths import REPO_ROOT
-            eval_path = _pl.Path(config.eval_dir)
-            if not eval_path.is_absolute():
-                eval_path = REPO_ROOT / eval_path
-            pkls = sorted(eval_path.glob("episodes/ep*.pkl"))
-            if pkls and ep_i < len(pkls):
-                frame_i = st.slider(
-                    "Inspect frame",
-                    0, total_frames - 1, 0,
-                    key=f"bg_ep_frame_{ep_i}",
-                )
-                cid = int(per_frame[frame_i])
-                cname = cluster_names.get(cid, f"Cluster {cid}") if cid >= 0 else "Unlabeled"
-                color = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)] if cid >= 0 else "#555"
-                st.markdown(
-                    f"Frame **{frame_i}** → "
-                    f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;">'
-                    f"{cname}</span>",
-                    unsafe_allow_html=True,
-                )
-                if st.button("Load frame from PKL", key=f"bg_ep_pklfr_{ep_i}"):
-                    import pickle
-                    with open(pkls[ep_i], "rb") as f:
-                        df = pickle.load(f)
-                    if frame_i < len(df):
-                        row = df.iloc[frame_i]
-                        if "obs" in row:
-                            _show_obs_frame(row["obs"])
+        st.caption("Enter an MP4 directory above to see video playback.")
+        # Show Plotly cluster timeline when no video is available
+        st.markdown(f"**Cluster timeline** — episode {ep_i}  ({total_frames} frames)")
+        cluster_timeline(per_frame, cluster_colors=CLUSTER_COLORS, fps=fps,
+                         height=80, key=f"bg_ep_tl_{ep_i}", cluster_names=cluster_names or None)
 
 
 def _ep_success(ep_idx: int, metadata: List[Dict], ep_key: str) -> Optional[bool]:

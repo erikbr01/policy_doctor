@@ -42,6 +42,143 @@ def _find_mp4_episode(ep_idx: int, mp4_index: dict) -> Optional[dict]:
     return None
 
 
+def _episodes_for_edge(
+    src_id: int,
+    tgt_id: int,
+    labels: np.ndarray,
+    metadata: list[dict],
+) -> list[tuple[int, int, int]]:
+    """Find episodes containing the src -> tgt transition.
+
+    Returns [(ep_idx, ts_src, ts_tgt), ...] sorted by ep_idx.
+    Handles edges involving special nodes (START, FAILURE, SUCCESS):
+      START->X:  episodes whose first cluster is X  (ts_src == ts_tgt == first_ts)
+      X->FAILURE: failing episodes whose last cluster is X
+      X->SUCCESS: succeeding episodes whose last cluster is X
+    """
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
+
+    ep_wins: dict[int, list[tuple[int, int]]] = {}
+    ep_success: dict[int, Optional[bool]] = {}
+    for i, m in enumerate(metadata):
+        ep_idx = m.get(ep_key)
+        if ep_idx is None:
+            continue
+        lab = int(labels[i])
+        ts = m.get("window_start", m.get("timestep", 0))
+        ep_wins.setdefault(ep_idx, []).append((ts, lab))
+        if ep_idx not in ep_success:
+            ep_success[ep_idx] = m.get("success")
+
+    result = []
+    for ep_idx, wins in ep_wins.items():
+        wins.sort()
+        rle: list[tuple[int, int]] = []
+        for ts, lab in wins:
+            if lab == -1:
+                continue
+            if not rle or rle[-1][1] != lab:
+                rle.append((ts, lab))
+        if not rle:
+            continue
+
+        first_ts, first_lab = rle[0]
+        last_ts, last_lab = rle[-1]
+        success = ep_success.get(ep_idx)
+
+        if src_id == START_NODE_ID:
+            if tgt_id == first_lab:
+                result.append((ep_idx, first_ts, first_ts))
+            continue
+        if tgt_id == FAILURE_NODE_ID:
+            if last_lab == src_id and success is False:
+                result.append((ep_idx, last_ts, last_ts))
+            continue
+        if tgt_id == SUCCESS_NODE_ID:
+            if last_lab == src_id and success is True:
+                result.append((ep_idx, last_ts, last_ts))
+            continue
+
+        for i in range(len(rle) - 1):
+            if rle[i][1] == src_id and rle[i + 1][1] == tgt_id:
+                result.append((ep_idx, rle[i][0], rle[i + 1][0]))
+                break
+
+    return sorted(result)
+
+
+def _render_edge_panel(
+    src_id: int,
+    tgt_id: int,
+    graph: BehaviorGraph,
+    labels: np.ndarray,
+    metadata: list[dict],
+    mp4_dir: Path,
+    mp4_index: dict,
+    key_prefix: str,
+) -> None:
+    src_node = graph.nodes.get(src_id)
+    tgt_node = graph.nodes.get(tgt_id)
+    src_name = src_node.name if src_node else str(src_id)
+    tgt_name = tgt_node.name if tgt_node else str(tgt_id)
+    prob = graph.transition_probs.get(src_id, {}).get(tgt_id, 0.0)
+
+    with st.container(border=True):
+        header_col, close_col = st.columns([10, 1])
+        with header_col:
+            st.subheader(f"→ {src_name}  ›  {tgt_name}")
+            st.caption(f"Transition probability: {prob:.1%}")
+        with close_col:
+            if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
+                st.session_state.pop(f"{key_prefix}_graph_selected_edge", None)
+                st.rerun()
+
+        all_ep_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata)
+        n_eps = len(all_ep_triples)
+
+        if not all_ep_triples:
+            st.info("No episodes found for this transition.")
+            return
+
+        _VIDS_PER_PAGE = 3
+        _vp_key = f"{key_prefix}_edge_vid_page_{src_id}_{tgt_id}"
+        _vp = st.session_state.get(_vp_key, 0)
+        _vp_total = max(1, (n_eps + _VIDS_PER_PAGE - 1) // _VIDS_PER_PAGE)
+        show_triples = all_ep_triples[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
+
+        if _vp_total > 1:
+            _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
+            with _vc1:
+                if st.button("←", disabled=(_vp == 0), key=f"{key_prefix}_ep_prev_{src_id}_{tgt_id}"):
+                    st.session_state[_vp_key] = max(0, _vp - 1)
+                    st.rerun()
+            _vc2.markdown(
+                f"<div style='text-align:center;padding-top:6px;color:#888;font-size:0.82em;'>"
+                f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
+                f"</div>", unsafe_allow_html=True)
+            with _vc3:
+                if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_ep_next_{src_id}_{tgt_id}"):
+                    st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
+                    st.rerun()
+
+        vid_cols = st.columns(min(3, len(show_triples)))
+        for col, (ep_idx, ts_src, ts_tgt) in zip(vid_cols, show_triples):
+            ep_entry = _find_mp4_episode(ep_idx, mp4_index)
+            if ep_entry is None:
+                continue
+            success = ep_entry.get("success")
+            status = "✓" if success is True else "✗" if success is False else ""
+            with col:
+                st.caption(f"Ep {ep_idx} {status}")
+                mp4_player(
+                    mp4_dir / ep_entry["path"],
+                    key=f"{key_prefix}_edge_vid_{src_id}_{tgt_id}_{ep_idx}",
+                    max_height_px=220,
+                    slice_start=ts_src,
+                    slice_end=ts_tgt,
+                    total_frames=ep_entry.get("frame_count"),
+                )
+
 
 def render_graph_full_width(
     graph: BehaviorGraph,
@@ -57,7 +194,7 @@ def render_graph_full_width(
     """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
     st.caption(
-        "**Click any node** to explore it — larger circles = more episodes. "
+        "**Click any node or edge** to explore it — larger circles = more episodes. "
         "Arrow thickness = transition probability. ★ = success, ✕ = failure."
     )
 
@@ -70,7 +207,8 @@ def render_graph_full_width(
         min_edge_prob=min_edge_prob,
     )
 
-    # Inline node detail panel
+    selected_edge = st.session_state.get(f"{key_prefix}_graph_selected_edge")
+
     if clicked_node_id is not None and clicked_node_id in graph.nodes:
         _render_node_panel(
             node_id=clicked_node_id,
@@ -81,8 +219,23 @@ def render_graph_full_width(
             mp4_index=mp4_index,
             key_prefix=key_prefix,
         )
+    elif selected_edge is not None:
+        src_id, tgt_id = selected_edge
+        if src_id in graph.nodes and tgt_id in graph.nodes:
+            _render_edge_panel(
+                src_id=src_id,
+                tgt_id=tgt_id,
+                graph=graph,
+                labels=labels,
+                metadata=metadata,
+                mp4_dir=mp4_dir,
+                mp4_index=mp4_index,
+                key_prefix=key_prefix,
+            )
+        else:
+            st.info("Click a node or edge in the graph above to explore it.")
     else:
-        st.info("Click a node in the graph above to explore it.")
+        st.info("Click a node or edge in the graph above to explore it.")
 
 
 def _render_node_panel(

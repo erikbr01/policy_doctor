@@ -97,6 +97,7 @@ function setHeight(h) {
 // ── Graph state ───────────────────────────────────────────────────────────
 let graphData = null;
 let selectedNodeId = null;
+let selectedEdge = null;   // {src, tgt} when an edge is selected
 let highlightedPath = null; // array of node IDs forming the highlighted path
 
 // ── Layout helpers ────────────────────────────────────────────────────────
@@ -148,9 +149,15 @@ function render(data, svgW, svgH) {
     refX: "5", refY: "3.5", orient: "auto" });
   markerSel.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#64c8ff" }));
   defs.appendChild(markerSel);
+  // Selected-edge arrowhead (gold)
+  const markerEdgeSel = svgEl("marker", { id: "arrow-edge-sel", markerWidth: "7", markerHeight: "7",
+    refX: "5", refY: "3.5", orient: "auto" });
+  markerEdgeSel.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#ffc832" }));
+  defs.appendChild(markerEdgeSel);
   svg.appendChild(defs);
 
   const hasSelected = selectedNodeId !== null && !hasPath;
+  const hasSelectedEdge = selectedEdge !== null && !hasPath && selectedNodeId === null;
 
   // ── edges ─────────────────────────────────────────────────────────────
   const edgeGroup = svgEl("g", { class: "edges" });
@@ -178,6 +185,7 @@ function render(data, svgW, svgH) {
 
     const isOutgoing = hasSelected && edge.src === selectedNodeId;
     const isIncoming = hasSelected && edge.tgt === selectedNodeId;
+    const isEdgeSel = hasSelectedEdge && edge.src === selectedEdge.src && edge.tgt === selectedEdge.tgt;
 
     let stroke, strokeW, markerEnd;
     if (onPath) {
@@ -187,6 +195,14 @@ function render(data, svgW, svgH) {
     } else if (hasPath) {
       stroke = `rgba(120,120,120,${(0.1 + edge.prob * 0.15).toFixed(2)})`;
       strokeW = (0.5 + edge.prob * 2).toFixed(1);
+      markerEnd = "url(#arrow)";
+    } else if (isEdgeSel) {
+      stroke = "rgba(255,200,50,0.97)";
+      strokeW = "3.5";
+      markerEnd = "url(#arrow-edge-sel)";
+    } else if (hasSelectedEdge) {
+      stroke = `rgba(80,80,80,${(0.05 + edge.prob * 0.06).toFixed(2)})`;
+      strokeW = (0.4 + edge.prob * 1.5).toFixed(1);
       markerEnd = "url(#arrow)";
     } else if (isOutgoing) {
       stroke = `rgba(100,200,255,${(0.75 + edge.prob * 0.25).toFixed(2)})`;
@@ -213,6 +229,28 @@ function render(data, svgW, svgH) {
       "marker-end": markerEnd,
     });
     edgeGroup.appendChild(line);
+
+    // Transparent wider hit-area line so edges are easy to click
+    const hit = svgEl("line", {
+      x1: sx + ox, y1: sy + oy, x2: ex + ox, y2: ey + oy,
+      stroke: "transparent", "stroke-width": "10",
+      "pointer-events": "stroke", cursor: "pointer",
+    });
+    (function(e) {
+      hit.addEventListener("click", function(evt) {
+        evt.stopPropagation();
+        if (selectedEdge && selectedEdge.src === e.src && selectedEdge.tgt === e.tgt) {
+          selectedEdge = null;
+          sendValue(-1);
+        } else {
+          selectedEdge = {src: e.src, tgt: e.tgt};
+          selectedNodeId = null;
+          sendValue([e.src, e.tgt]);
+        }
+        render(graphData, svgW, svgH);
+      });
+    })(edge);
+    edgeGroup.appendChild(hit);
   }
   svg.appendChild(edgeGroup);
 
@@ -265,8 +303,10 @@ function render(data, svgW, svgH) {
       });
     }
 
-    // Dim nodes not on highlighted path, or not connected to selected node
+    // Dim nodes not on highlighted path / not incident to selected edge / not connected to selected node
     if (hasPath && !pathSet.has(String(node.id))) {
+      g.setAttribute("opacity", "0.25");
+    } else if (hasSelectedEdge && node.id !== selectedEdge.src && node.id !== selectedEdge.tgt) {
       g.setAttribute("opacity", "0.25");
     } else if (hasSelected && node.id !== selectedNodeId) {
       const connected = data.edges.some(e =>
@@ -319,9 +359,10 @@ function render(data, svgW, svgH) {
     g.addEventListener("click", () => {
       if (selectedNodeId === node.id) {
         selectedNodeId = null;
-        sendValue(-1); // -1 = deselect sentinel
+        sendValue(-1);
       } else {
         selectedNodeId = node.id;
+        selectedEdge = null; // clear edge selection
         sendValue(node.id);
       }
       render(graphData, svgW, svgH);
@@ -361,6 +402,7 @@ window.addEventListener("message", (event) => {
     const graphJson = args.graph_json;
     const height = args.height || 600;
     selectedNodeId = args.selected_node_id !== undefined ? args.selected_node_id : null;
+    selectedEdge = args.selected_edge ? {src: args.selected_edge[0], tgt: args.selected_edge[1]} : null;
     highlightedPath = args.highlighted_path || null;  // list of node IDs
 
     document.body.style.height = height + "px";
