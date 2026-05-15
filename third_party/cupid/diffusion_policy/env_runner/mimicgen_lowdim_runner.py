@@ -304,7 +304,6 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 # observation spaces ... only compatible with default Gym spaces").
                 self.env = AsyncVectorEnv(
                     self.env_fns,
-                    dummy_env_fn=self.dummy_env_fn,
                     shared_memory=False,
                 )
             except Exception as e:
