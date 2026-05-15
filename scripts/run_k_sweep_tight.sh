@@ -84,18 +84,18 @@ for K in "${K_VALUES[@]}"; do
             "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
         2>&1 | tee -a "${LOG}"
 
-    # Phase B: rep-2/3
-    conda run -n policy_doctor --no-capture-output \
-        python -m policy_doctor.scripts.run_pipeline \
-            data_source=mimicgen_square \
-            "experiment=${BASE_EXPERIMENT}" \
-            steps='[mimicgen_budget_rep_sweep]' \
-            "clustering_n_clusters=${K}" \
-            "+clustering_run_dir=${BASE_RUN_REL}" \
-            "run_dir=data/pipeline_runs/${RUN_NAME}" \
-            "~evaluation.eval_output_dir" \
-            "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
-        2>&1 | tee -a "${LOG}"
+    # Phase B: rep-2/3 — skipped for now (running Phase A across all K values first)
+    # conda run -n policy_doctor --no-capture-output \
+    #     python -m policy_doctor.scripts.run_pipeline \
+    #         data_source=mimicgen_square \
+    #         "experiment=${BASE_EXPERIMENT}" \
+    #         steps='[mimicgen_budget_rep_sweep]' \
+    #         "clustering_n_clusters=${K}" \
+    #         "+clustering_run_dir=${BASE_RUN_REL}" \
+    #         "run_dir=data/pipeline_runs/${RUN_NAME}" \
+    #         "~evaluation.eval_output_dir" \
+    #         "+evaluation.eval_output_dir=${EVAL_OUTPUT_DIR}" \
+    #     2>&1 | tee -a "${LOG}"
 
     echo "[$(date '+%H:%M %Z')] K=${K} complete." | tee -a "${LOG}"
 done

@@ -163,11 +163,15 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
 
         train_dirs: list[str] = []
 
+        k_clusters = OmegaConf.select(cfg, "clustering_n_clusters")
+
         for seed in seeds:
             base_name = get_train_name(train_date, task, policy, seed)
             train_name = f"{base_name}-mimicgen_combined-{heuristic_name}"
             if run_tag:
                 train_name = f"{train_name}-{run_tag}"
+            if k_clusters is not None:
+                train_name = f"{train_name}-k{k_clusters}"
             run_output_dir = str(self.repo_root / output_dir / train_date / train_name)
             train_dirs.append(run_output_dir)
 
