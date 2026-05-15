@@ -1,0 +1,519 @@
+"""Graph Simplification Comparison.
+
+Side-by-side comparison of methods to clean up the behavior graph.
+
+Run with:
+    conda activate policy_doctor && streamlit run \\
+        policy_doctor/streamlit_app/graph_simplification_app.py --server.port 8530
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Ensure this worktree's policy_doctor is imported (not the editable install
+# pointing at the main repo).
+_WORKTREE_ROOT = Path(__file__).resolve().parents[2]
+if str(_WORKTREE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_WORKTREE_ROOT))
+# Drop any cached main-repo policy_doctor modules
+for _mod in [k for k in list(sys.modules.keys()) if k.startswith("policy_doctor")]:
+    if hasattr(sys.modules[_mod], "__file__") and sys.modules[_mod].__file__:
+        if str(_WORKTREE_ROOT) not in sys.modules[_mod].__file__:
+            del sys.modules[_mod]
+
+import json
+import time
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import plotly.graph_objects as go
+import streamlit as st
+
+from policy_doctor.behaviors.behavior_graph import BehaviorGraph
+from policy_doctor.behaviors import graph_simplification as gs
+from policy_doctor.plotting.plotly.behavior_graph import create_behavior_graph_plot
+
+st.set_page_config(page_title="Graph Simplification Comparison", layout="wide")
+
+# ── Sidebar: pick a clustering ───────────────────────────────────────────────
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# Some clustering data lives in the main repo (not the worktree). Look in both.
+_MAIN_REPO = Path("/Users/erik/stanford/asl_rotation/policy_doctor")
+_IV_CONFIGS = _REPO_ROOT / "third_party" / "influence_visualizer" / "configs"
+_IV_CONFIGS_MAIN = _MAIN_REPO / "third_party" / "influence_visualizer" / "configs"
+
+
+def _list_clusterings(root: Path) -> List[Path]:
+    """Find all clustering dirs (each has cluster_labels.npy)."""
+    out = []
+    for d in sorted(root.rglob("cluster_labels.npy")):
+        out.append(d.parent)
+    return out
+
+
+@st.cache_data
+def _load_clustering(path: str) -> Tuple[np.ndarray, List[Dict], Optional[np.ndarray], Dict]:
+    """Returns (labels, metadata, embeddings_reduced or None, manifest)."""
+    p = Path(path)
+    labels = np.load(p / "cluster_labels.npy")
+    with open(p / "metadata.json") as f:
+        meta = json.load(f)
+    emb_path = p / "embeddings_reduced.npy"
+    emb = np.load(emb_path) if emb_path.exists() else None
+    import yaml
+    with open(p / "manifest.yaml") as f:
+        manifest = yaml.safe_load(f) or {}
+    return labels, meta, emb, manifest
+
+
+st.sidebar.header("Source clustering")
+
+available: List[Path] = []
+for root in [_IV_CONFIGS, _IV_CONFIGS_MAIN, _MAIN_REPO / "e1_experiments"]:
+    if root.exists():
+        available.extend(_list_clusterings(root))
+# Dedupe (same dir may appear twice if worktree mirrors a tracked file)
+seen = set()
+unique: List[Path] = []
+for p in available:
+    key = str(p.resolve())
+    if key not in seen:
+        seen.add(key)
+        unique.append(p)
+available = unique
+
+if not available:
+    st.error(f"No clusterings found under {_IV_CONFIGS} or {_E1}.")
+    st.stop()
+
+
+def _label_for(p: Path) -> str:
+    try:
+        return str(p.relative_to(_REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+# Prefer clusterings with embeddings_reduced.npy (needed for sticky/HMM)
+def _has_emb(p: Path) -> bool:
+    return (p / "embeddings_reduced.npy").exists()
+
+
+available_with_emb_first = sorted(available, key=lambda p: (not _has_emb(p), str(p)))
+
+default_idx = 0
+# Prefer the transport_mh_jan28 / auto_pipeline / k20 if present
+for i, p in enumerate(available_with_emb_first):
+    if "auto_pipeline_test_mar13" in str(p) and "k20" in str(p):
+        default_idx = i
+        break
+
+choice = st.sidebar.selectbox(
+    "Clustering directory",
+    options=range(len(available_with_emb_first)),
+    format_func=lambda i: _label_for(available_with_emb_first[i]),
+    index=default_idx,
+)
+clustering_path = available_with_emb_first[choice]
+labels0, meta, emb, manifest = _load_clustering(str(clustering_path))
+labels0 = labels0.astype(np.int64)
+
+st.sidebar.markdown(
+    f"**source:** `{manifest.get('influence_source', '?')}`  \n"
+    f"**algo:** `{manifest.get('algorithm', '?')}`  k=`{manifest.get('n_clusters', '?')}`  \n"
+    f"**n_samples:** {len(labels0):,}  \n"
+    f"**emb shape:** {emb.shape if emb is not None else 'N/A'}"
+)
+
+# Episodes count
+n_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
+st.sidebar.markdown(f"**episodes:** {n_eps}")
+
+# Level: rollout vs demo
+level = manifest.get("level", "rollout")
+
+# ── Settings shared across views ─────────────────────────────────────────────
+
+st.sidebar.header("Display")
+height = st.sidebar.slider("Plot height (px)", 400, 1200, 600, step=50)
+min_prob_display = st.sidebar.slider(
+    "Display min-prob (post-method)", 0.0, 0.5, 0.0, step=0.01,
+    help="Hides edges below this probability AFTER the method runs. Display-only.",
+)
+use_temporal_layout = st.sidebar.checkbox(
+    "Use temporal (mean-timestep) layout instead of BFS-layered",
+    value=True,
+)
+
+
+# ── Cached graph builders ────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False)
+def _build_graph(labels: np.ndarray, _meta_id: int) -> BehaviorGraph:
+    return BehaviorGraph.from_cluster_assignments(labels, meta, level=level)
+
+
+def _layout_for(graph: BehaviorGraph, labels: np.ndarray) -> Optional[Dict[int, Tuple[float, float]]]:
+    if use_temporal_layout:
+        return gs.temporal_layout(graph, labels, meta, level=level)
+    return None
+
+
+def _graph_stats(graph: BehaviorGraph) -> Tuple[int, int]:
+    n_nodes = len([n for n in graph.nodes if n >= 0])
+    n_edges = sum(len(t) for t in graph.transition_counts.values())
+    return n_nodes, n_edges
+
+
+def _plot(graph: BehaviorGraph, labels: np.ndarray, title: str) -> go.Figure:
+    pos = _layout_for(graph, labels)
+    return create_behavior_graph_plot(
+        graph,
+        min_probability=min_prob_display,
+        height=height,
+        title=title,
+        pos=pos,
+    )
+
+
+# ── Tabs: one per method family ──────────────────────────────────────────────
+
+st.title("Behavior Graph Simplification — Method Comparison")
+st.caption(
+    "Pick a source clustering on the left. Each tab applies one (or more) simplification "
+    "methods and renders the resulting graph next to the baseline. Edge probabilities are "
+    "computed AFTER the method runs and are unaffected by display-time filtering except for "
+    "the 'Display min-prob' slider."
+)
+
+baseline_graph = _build_graph(labels0, id(meta))
+n_nodes0, n_edges0 = _graph_stats(baseline_graph)
+st.markdown(f"**Baseline:** {n_nodes0} cluster nodes, {n_edges0} transitions")
+
+tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_combo, tab_reps = st.tabs([
+    "1. Temporal smoothing",
+    "2. Edge pruning",
+    "3. Node merging",
+    "4. Re-clustering",
+    "5. Layout only",
+    "6. Combined pipeline",
+    "7. Compare representations",
+])
+
+
+# ── Tab 1: Temporal smoothing ────────────────────────────────────────────────
+
+with tab_smooth:
+    st.markdown(
+        "Label-sequence smoothing **before** building the graph. Reduces "
+        "A→B→A→B flicker that survives run-length collapse."
+    )
+    smooth_method = st.radio(
+        "Method",
+        ["Median filter (C1)", "Sticky DP decoder (C3)", "Gaussian HMM Viterbi (C2)"],
+        horizontal=True,
+    )
+    new_labels: np.ndarray
+    if smooth_method.startswith("Median"):
+        w = st.slider("Median window", 1, 21, 5, step=2, key="median_w")
+        new_labels = gs.median_filter_labels(labels0, meta, window=w, level=level)
+        title = f"Median filter (w={w})"
+    elif smooth_method.startswith("Sticky"):
+        if emb is None:
+            st.warning("This clustering has no embeddings_reduced.npy; sticky decoder unavailable.")
+            st.stop()
+        lam = st.slider("Stickiness λ (transition penalty)", 0.0, 30.0, 5.0, step=0.5, key="sticky_lam")
+        new_labels = gs.sticky_decoder(labels0, emb, meta, lambda_stick=lam, level=level)
+        title = f"Sticky DP (λ={lam})"
+    else:
+        if emb is None:
+            st.warning("This clustering has no embeddings_reduced.npy; HMM unavailable.")
+            st.stop()
+        n_states = st.slider("HMM states", 2, 20, 8, key="hmm_k")
+        new_labels = gs.hmm_smooth(emb, meta, n_states=n_states, level=level)
+        title = f"HMM (n_states={n_states})"
+
+    g_new = _build_graph(new_labels, id(meta) + hash(title))
+    nn, ne = _graph_stats(g_new)
+    st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
+    st.plotly_chart(_plot(g_new, new_labels, title), use_container_width=True, key=f"smooth_main_{title}")
+    with st.expander("Baseline (for comparison)"):
+        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"smooth_baseline_{title}")
+
+
+# ── Tab 2: Edge pruning ──────────────────────────────────────────────────────
+
+with tab_prune:
+    st.markdown(
+        "Hard-prune edges in the graph (not just hide). Removed edges' counts are dropped "
+        "and probabilities are renormalized — downstream value / path computations see "
+        "the pruned graph."
+    )
+    mode = st.radio("Pruning mode", ["By count (D1)", "By probability"], horizontal=True)
+    if mode.startswith("By count"):
+        min_count = st.slider("Min edge count", 1, 200, 5, key="prune_count")
+        g_new = gs.prune_edges_by_count(baseline_graph, min_count=min_count)
+        title = f"Prune by count (min={min_count})"
+    else:
+        min_p = st.slider("Min edge probability", 0.0, 0.5, 0.05, step=0.01, key="prune_prob")
+        g_new = gs.prune_edges_by_prob(baseline_graph, min_prob=min_p)
+        title = f"Prune by prob (min={min_p:.2f})"
+    nn, ne = _graph_stats(g_new)
+    st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
+    st.plotly_chart(_plot(g_new, labels0, title), use_container_width=True, key=f"prune_main_{title}")
+    with st.expander("Baseline (for comparison)"):
+        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"prune_baseline_{title}")
+
+
+# ── Tab 3: Node merging ──────────────────────────────────────────────────────
+
+with tab_merge:
+    st.markdown(
+        "Merge cluster nodes that are similar in embedding space (D4) or that look like "
+        "stable continuations of another node (D8, ENAP-style)."
+    )
+    method = st.radio("Method", ["Cosine-similar centroids (D4)", "Stable-phase prune (D8)"], horizontal=True)
+    if method.startswith("Cosine"):
+        if emb is None:
+            st.warning("This clustering has no embeddings_reduced.npy; centroid merging unavailable.")
+            st.stop()
+        thresh = st.slider("Similarity threshold", 0.0, 0.999, 0.9, step=0.005, key="merge_thresh")
+        new_labels = gs.merge_similar_centroids(labels0, emb, meta, sim_threshold=thresh, level=level)
+        g_new = _build_graph(new_labels, id(meta) + hash(f"merge_{thresh}"))
+        title = f"Merge similar centroids (≥{thresh:.2f})"
+    else:
+        g_new, new_labels = gs.stable_phase_prune(baseline_graph, labels0, meta)
+        title = "Stable-phase prune (D8)"
+    nn, ne = _graph_stats(g_new)
+    st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
+    st.plotly_chart(_plot(g_new, new_labels, title), use_container_width=True, key=f"merge_main_{title}")
+    with st.expander("Baseline (for comparison)"):
+        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"merge_baseline_{title}")
+
+
+# ── Tab 4: Re-clustering ─────────────────────────────────────────────────────
+
+with tab_recluster:
+    st.markdown(
+        "Replace the cluster assignment entirely. Auto-K picks the K with the best "
+        "silhouette score. Spectral builds the transition affinity between micro-clusters "
+        "and groups them into macro-clusters. Change-point detects boundaries per episode "
+        "first, then clusters segment means."
+    )
+    method = st.radio(
+        "Method",
+        ["Auto-K KMeans (B1)", "Spectral on transition graph (B4)", "Change-point + KMeans (D6+C5)"],
+        horizontal=True,
+    )
+    if method.startswith("Auto-K"):
+        if emb is None:
+            st.warning("This clustering has no embeddings_reduced.npy; auto-K unavailable.")
+            st.stop()
+        k_lo, k_hi = st.slider("K range", 2, 25, (4, 15), key="autok_range")
+        new_labels, best_k, scores = gs.auto_k_kmeans(emb, k_range=(k_lo, k_hi))
+        title = f"Auto-K (best k={best_k})"
+        with st.expander("Silhouette scores by K"):
+            st.json({str(k): round(v, 3) for k, v in scores.items()})
+    elif method.startswith("Spectral"):
+        n_macro = st.slider("Macro-cluster count", 2, 15, 8, key="spec_k")
+        new_labels = gs.spectral_transition_clustering(labels0, meta, n_macro=n_macro, level=level)
+        title = f"Spectral on transition graph (k_macro={n_macro})"
+    else:
+        if emb is None:
+            st.warning("This clustering has no embeddings_reduced.npy; change-point unavailable.")
+            st.stop()
+        cp_k = st.slider("Segment cluster count", 2, 15, 8, key="cp_k")
+        cp_pen = st.slider("Change-point penalty", 1.0, 50.0, 10.0, step=1.0, key="cp_pen")
+        new_labels = gs.change_point_segmentation(emb, meta, n_macro=cp_k, penalty=cp_pen, level=level)
+        title = f"Change-point (k={cp_k}, pen={cp_pen})"
+    g_new = _build_graph(new_labels, id(meta) + hash(title))
+    nn, ne = _graph_stats(g_new)
+    st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
+    st.plotly_chart(_plot(g_new, new_labels, title), use_container_width=True, key=f"recluster_main_{title}")
+    with st.expander("Baseline (for comparison)"):
+        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"recluster_baseline_{title}")
+
+
+# ── Tab 5: Layout only ───────────────────────────────────────────────────────
+
+with tab_layout:
+    st.markdown(
+        "**Layout only.** No change to the graph structure; just plot with a different "
+        "layout to test whether the noise is structural or visual."
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Default BFS-layered**")
+        fig1 = create_behavior_graph_plot(
+            baseline_graph, min_probability=min_prob_display, height=height,
+            title="BFS-layered (default)",
+        )
+        st.plotly_chart(fig1, use_container_width=True, key="layout_bfs")
+    with c2:
+        st.markdown("**Temporal (mean-timestep x)**")
+        pos = gs.temporal_layout(baseline_graph, labels0, meta, level=level)
+        fig2 = create_behavior_graph_plot(
+            baseline_graph, min_probability=min_prob_display, height=height,
+            title="Temporal layout (E1)", pos=pos,
+        )
+        st.plotly_chart(fig2, use_container_width=True, key="layout_temporal")
+
+
+# ── Tab 6: Combined pipeline ─────────────────────────────────────────────────
+
+with tab_combo:
+    st.markdown(
+        "**Stack methods.** Order: smooth → re-cluster (optional) → merge → prune."
+    )
+    col_l, col_r = st.columns([1, 2])
+    with col_l:
+        st.markdown("##### Pipeline configuration")
+        use_smooth = st.checkbox("Smooth labels", value=True)
+        smooth_mode = st.selectbox("Smoother", ["median", "sticky"], disabled=not use_smooth)
+        smooth_strength = st.slider("Smoother strength", 1.0, 20.0, 5.0, key="combo_smooth")
+        use_merge = st.checkbox("Merge similar centroids", value=False)
+        merge_thresh = st.slider("Centroid sim threshold", 0.0, 0.999, 0.92, key="combo_merge")
+        use_prune = st.checkbox("Prune low-count edges", value=True)
+        prune_count = st.slider("Min edge count", 1, 100, 5, key="combo_prune")
+        use_stable = st.checkbox("ENAP stable-phase prune", value=False)
+
+    new_labels = labels0.copy()
+    if use_smooth:
+        if smooth_mode == "median":
+            new_labels = gs.median_filter_labels(new_labels, meta, window=int(smooth_strength), level=level)
+        else:
+            if emb is None:
+                st.warning("This clustering has no embeddings_reduced.npy; sticky unavailable. Skipping.")
+            else:
+                new_labels = gs.sticky_decoder(new_labels, emb, meta, lambda_stick=smooth_strength, level=level)
+    if use_merge and emb is not None:
+        new_labels = gs.merge_similar_centroids(new_labels, emb, meta, sim_threshold=merge_thresh, level=level)
+    g = _build_graph(new_labels, id(meta) + hash(("combo", use_smooth, smooth_mode, smooth_strength, use_merge, merge_thresh, use_prune, prune_count, use_stable)))
+    if use_stable:
+        g, new_labels = gs.stable_phase_prune(g, new_labels, meta)
+    if use_prune:
+        g = gs.prune_edges_by_count(g, min_count=prune_count)
+    nn, ne = _graph_stats(g)
+    with col_r:
+        st.markdown(
+            f"**Combined pipeline** → {nn} nodes, {ne} edges  "
+            f"(baseline: {n_nodes0}/{n_edges0})"
+        )
+        st.plotly_chart(
+            _plot(g, new_labels, f"Combined: {nn} nodes / {ne} edges"),
+            use_container_width=True,
+            key="combined_main",
+        )
+
+
+# ── Tab 7: Compare representations ───────────────────────────────────────────
+
+with tab_reps:
+    st.markdown(
+        "Same simplification settings, different **feature representations**. "
+        "If the cleaned-up graph still looks bad in one representation but clean in another, "
+        "the feature space is the limiting factor — not the simplification method."
+    )
+    # Group by (task, representation, k) so the user can compare apples to apples.
+    @st.cache_data(show_spinner=False)
+    def _build_repr_index() -> List[Dict]:
+        import yaml as _y
+        entries: List[Dict] = []
+        for p in available:
+            try:
+                with open(p / "manifest.yaml") as f:
+                    mm = _y.safe_load(f) or {}
+            except Exception:
+                continue
+            rep = mm.get("influence_source") or mm.get("slice_representation") or "?"
+            # Try to infer a task tag from the path
+            ps = p.parts
+            task_tag = "?"
+            for i, part in enumerate(ps):
+                if part == "configs" and i + 1 < len(ps):
+                    task_tag = ps[i + 1]
+                    break
+                if part == "e1_experiments" and i + 1 < len(ps):
+                    task_tag = "e1/" + ps[i + 1]
+                    break
+            entries.append({
+                "path": p,
+                "rep": rep,
+                "k": mm.get("n_clusters", "?"),
+                "task": task_tag,
+                "has_emb": (p / "embeddings_reduced.npy").exists(),
+                "level": mm.get("level", "rollout"),
+            })
+        return entries
+
+    entries = _build_repr_index()
+    tasks = sorted({e["task"] for e in entries})
+    if not tasks:
+        st.info("No clusterings found.")
+    else:
+        task_pick = st.selectbox(
+            "Task / experiment family",
+            tasks,
+            index=tasks.index("transport_mh_jan28") if "transport_mh_jan28" in tasks else 0,
+        )
+        cands = [e for e in entries if e["task"] == task_pick]
+        if not cands:
+            st.info(f"No clusterings under task {task_pick}.")
+        else:
+            # Unique label per clustering
+            for e in cands:
+                e["label"] = f"{e['rep']}/k={e['k']} — {e['path'].name}"
+            choices = st.multiselect(
+                "Clusterings to compare",
+                options=[e["label"] for e in cands],
+                default=[e["label"] for e in cands][:6],
+            )
+            apply_pipe = st.checkbox(
+                "Apply simplification (sticky λ=5 + prune count≥5)", value=True
+            )
+            cols_per_row = 3
+            chosen = [e for e in cands if e["label"] in choices]
+            for i in range(0, len(chosen), cols_per_row):
+                cols = st.columns(cols_per_row)
+                for j, ent in enumerate(chosen[i : i + cols_per_row]):
+                    pp = ent["path"]
+                    with cols[j]:
+                        try:
+                            L, M, E, mm = _load_clustering(str(pp))
+                            L = L.astype(np.int64)
+                            n_eps_i = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in M))
+                            lvl = mm.get("level", "rollout")
+                            # Build baseline graph for "raw" view
+                            new = L.copy()
+                            if apply_pipe:
+                                if E is not None:
+                                    try:
+                                        new = gs.sticky_decoder(new, E, M, lambda_stick=5.0, level=lvl)
+                                    except Exception:
+                                        pass
+                            g = BehaviorGraph.from_cluster_assignments(new, M, level=lvl)
+                            n_raw_edges = sum(len(t) for t in g.transition_counts.values())
+                            if apply_pipe:
+                                g = gs.prune_edges_by_count(g, min_count=5)
+                            nn = len([n for n in g.nodes if n >= 0])
+                            ne = sum(len(t) for t in g.transition_counts.values())
+                            if E is not None:
+                                pos = gs.temporal_layout(g, new, M, level=lvl)
+                            else:
+                                pos = None
+                            fig = create_behavior_graph_plot(
+                                g, min_probability=min_prob_display, height=400,
+                                title=f"{ent['rep']} k={ent['k']}" + (" (smoothed)" if apply_pipe else " (raw)"),
+                                pos=pos,
+                            )
+                            st.plotly_chart(fig, use_container_width=True, key=f"rep_{pp.name}")
+                            st.caption(
+                                f"{nn} nodes · {ne} edges"
+                                + (f" (raw: {n_raw_edges} edges)" if apply_pipe else "")
+                                + f" · {n_eps_i} eps · emb={'yes' if E is not None else 'no'}"
+                            )
+                        except Exception as e:
+                            st.error(f"{ent['label']}: {e}")
