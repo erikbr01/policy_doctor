@@ -59,23 +59,42 @@ def mp4_player(
     uid = "v" + hashlib.md5((str(video_path) + key).encode()).hexdigest()[:8]
     b64 = base64.b64encode(raw).decode()
 
-    # Build CSS timeline marker
+    # Build timeline with live playhead
     if slice_start is not None and slice_end is not None and total_frames and total_frames > 0:
         pct_start = max(0, slice_start / total_frames * 100)
         pct_w = max(1, (slice_end - slice_start) / total_frames * 100)
         start_s = f"{slice_start / fps:.1f}s"
         end_s = f"{slice_end / fps:.1f}s"
+        total_s = total_frames / fps
         timeline = f"""
-        <div style="margin-top:6px;position:relative;height:10px;background:#333;border-radius:5px;">
+        <div id="tl_{uid}" style="margin-top:6px;position:relative;height:10px;
+             background:#333;border-radius:5px;cursor:pointer;">
+          <!-- Behavior segment -->
           <div style="position:absolute;left:{pct_start:.1f}%;width:{pct_w:.1f}%;height:100%;
-                      background:#f5a623;border-radius:5px;"></div>
+                      background:#f5a623;border-radius:5px;opacity:0.85;"></div>
+          <!-- Live playhead -->
+          <div id="ph_{uid}" style="position:absolute;top:-3px;left:0%;width:3px;height:16px;
+               background:#fff;border-radius:2px;transition:left 0.1s linear;"></div>
         </div>
         <div style="font-size:10px;color:#888;margin-top:3px;">
-          Behavior: {start_s} – {end_s} (highlighted above)
+          ▶ plays from behavior start &nbsp;|&nbsp; orange = {start_s}–{end_s}
         </div>"""
-        extra_h = 36
+        playhead_js = f"""
+  var ph=document.getElementById('ph_{uid}');
+  var tl=document.getElementById('tl_{uid}');
+  v.addEventListener('timeupdate',function(){{
+    var pct=v.currentTime/{total_s:.3f}*100;
+    if(ph) ph.style.left=Math.min(100,pct).toFixed(1)+'%';
+  }});
+  tl.addEventListener('click',function(e){{
+    var rect=tl.getBoundingClientRect();
+    var pct=(e.clientX-rect.left)/rect.width;
+    v.currentTime=pct*{total_s:.3f};
+  }});"""
+        extra_h = 38
     else:
         timeline = ""
+        playhead_js = ""
         extra_h = 4
 
     html = f"""
@@ -90,6 +109,7 @@ def mp4_player(
   if(!v) return;
   function seek(){{ if({start_sec:.2f}>0) v.currentTime={start_sec:.2f}; }}
   v.readyState>=1 ? seek() : v.addEventListener('loadedmetadata',seek,{{once:true}});
+  {playhead_js}
 }})();
 </script>"""
 

@@ -14,6 +14,7 @@ from policy_doctor.behaviors.behavior_graph import (
     FAILURE_NODE_ID,
     SUCCESS_NODE_ID,
 )
+from policy_doctor.streamlit_app.components.mp4_player import mp4_player
 from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
 from policy_doctor.streamlit_app.user_study.initial_conditions import (
     _initial_slice_per_episode,
@@ -229,12 +230,13 @@ with fa_left:
         node_failure_rates.append((nid, node.name, fail_weight / total_weight))
 
     node_failure_rates.sort(key=lambda t: -t[2])
-    top5 = node_failure_rates[:5]
+    top_failure_nodes = [(name, nid, rate) for nid, name, rate in node_failure_rates]
+    top5 = top_failure_nodes[:5]
 
     if top5:
         fig_fail = go.Figure(go.Bar(
             x=[r for _, _, r in top5],
-            y=[f"Node {nid}: {name}" for nid, name, _ in top5],
+            y=[f"{name}" for name, _, _ in top5],
             orientation="h",
             marker_color="#d62728",
         ))
@@ -292,7 +294,7 @@ def _failure_eps_for_node(node_id: int) -> list[tuple[int, int, int]]:
     for ep_idx, tss in ep_slices.items():
         if not ep_success_map.get(ep_idx, True):  # only failures
             result.append((ep_idx, min(tss), max(tss)))
-    return sorted(result)[:3]  # up to 3 failure clips per node
+    return sorted(result)[:6]  # up to 6 failure clips per node
 
 def _mp4_entry(ep_idx: int) -> Optional[dict]:
     for ep in index.get("episodes", []):
@@ -304,22 +306,28 @@ for node_name, node_id, rate in top_failure_nodes[:3]:
     fail_clips = _failure_eps_for_node(node_id)
     if not fail_clips:
         continue
-    with st.expander(f"**{node_name}** — {rate:.0%} failure rate  ({len(fail_clips)} failure clip{'s' if len(fail_clips)!=1 else ''} shown)", expanded=True):
-        cols = st.columns(min(3, len(fail_clips)))
-        for col, (ep_idx, ts_start, ts_end) in zip(cols, fail_clips):
-            entry = _mp4_entry(ep_idx)
-            if entry is None:
-                continue
-            with col:
-                st.caption(f"Episode {ep_idx} — robot in {node_name}")
-                mp4_player(
-                    mp4_dir / entry["path"],
-                    key=f"gb_fa_vid_{node_id}_{ep_idx}",
-                    max_height_px=200,
-                    slice_start=ts_start,
-                    slice_end=ts_end,
-                    total_frames=entry.get("frame_count"),
-                )
+    with st.expander(
+        f"**{node_name}** — {rate:.0%} of exits go to failure  ({len(fail_clips)} clips)",
+        expanded=True,
+    ):
+        # 3 per row
+        for row_start in range(0, len(fail_clips), 3):
+            row = fail_clips[row_start:row_start + 3]
+            cols = st.columns(3)
+            for col, (ep_idx, ts_start, ts_end) in zip(cols, row):
+                entry = _mp4_entry(ep_idx)
+                if entry is None:
+                    continue
+                with col:
+                    st.caption(f"Episode {ep_idx}")
+                    mp4_player(
+                        mp4_dir / entry["path"],
+                        key=f"gb_fa_vid_{node_id}_{ep_idx}",
+                        max_height_px=180,
+                        slice_start=ts_start,
+                        slice_end=ts_end,
+                        total_frames=entry.get("frame_count"),
+                    )
 
 # ── Section 5: Strategy design ────────────────────────────────────────────────
 st.divider()
