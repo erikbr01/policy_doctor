@@ -9,9 +9,6 @@ import plotly.graph_objects as go
 import streamlit as st
 import yaml
 
-import base64
-import cv2
-
 from policy_doctor.behaviors.behavior_graph import (
     BehaviorGraph,
     END_NODE_ID,
@@ -303,14 +300,14 @@ def _mp4_entry(ep_idx: int) -> Optional[dict]:
             return ep
     return None
 
-def _first_frame_b64(mp4_path: Path) -> Optional[str]:
-    cap = cv2.VideoCapture(str(mp4_path))
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        return None
-    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-    return base64.b64encode(buf.tobytes()).decode()
+def _ep_behavior_range(ep_idx: int, node_id: int) -> Optional[tuple[int, int]]:
+    """Timestep range of a specific behavior node within a specific episode."""
+    tss = [
+        m.get("window_start", m.get("timestep", 0))
+        for i, m in enumerate(metadata)
+        if m.get(ep_key_meta) == ep_idx and int(labels[i]) == node_id
+    ]
+    return (min(tss), max(tss)) if tss else None
 
 # ── 4A: High-failure-rate nodes (paginated) ───────────────────────────────────
 st.markdown("#### 4A — Nodes Most Likely to Lead to Failure")
@@ -391,7 +388,8 @@ st.markdown("#### 4B — Which Initial Behaviors Lead to Failure?")
 st.markdown(
     "Failing episodes are grouped by the **first behavior the robot exhibits after starting**. "
     "This reveals whether specific initial arm positions or object configurations "
-    "consistently funnel episodes toward failure. Thumbnails show the scene at frame 0."
+    "consistently funnel episodes toward failure. "
+    "The orange bar marks the window where the first behavior occurs in each episode."
 )
 
 _IC_SPECIAL = frozenset({START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
@@ -444,7 +442,6 @@ else:
                 )
                 st.caption(f"  {_fp_str}  ({_fn_ep} ep)")
 
-            st.markdown("**Initial scene** (frame 0):")
             _ic_show = _grp_eps[:9]
             _ic_cols = st.columns(3)
             for _ci, _ep_idx in enumerate(_ic_show):
@@ -452,10 +449,16 @@ else:
                 if _entry is None:
                     continue
                 with _ic_cols[_ci % 3]:
-                    _img = _first_frame_b64(mp4_dir / _entry["path"])
-                    if _img:
-                        st.caption(f"Ep {_ep_idx}")
-                        st.image(f"data:image/jpeg;base64,{_img}", use_container_width=True)
+                    _ts = _ep_behavior_range(_ep_idx, _fnid)
+                    st.caption(f"Ep {_ep_idx}")
+                    mp4_player(
+                        mp4_dir / _entry["path"],
+                        key=f"gb_ic_vid_{_fnid}_{_ep_idx}",
+                        max_height_px=180,
+                        slice_start=_ts[0] if _ts else None,
+                        slice_end=_ts[1] if _ts else None,
+                        total_frames=_entry.get("frame_count"),
+                    )
 
 st.info(
     "Use what you found above to guide your choices in Step 5 below. "

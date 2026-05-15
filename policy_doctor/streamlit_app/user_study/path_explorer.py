@@ -224,7 +224,7 @@ def render_path_explorer(
     flow_parts = []
     for nid in selected_path:
         if nid == START_NODE_ID:
-            part = "<span style='background:#eee;padding:4px 10px;border-radius:4px;font-weight:bold;'>START</span>"
+            part = "<span style='background:#444;color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold;'>START</span>"
         elif nid == SUCCESS_NODE_ID:
             part = f"<span style='background:{outcome_color};color:white;padding:4px 10px;border-radius:4px;font-weight:bold;'>✓ SUCCESS</span>"
         elif nid == FAILURE_NODE_ID:
@@ -243,7 +243,7 @@ def render_path_explorer(
 
     render_graph_component(
         graph,
-        height=300,
+        height=520,
         key=f"{key_prefix}_compact_graph",
         highlighted_path=selected_path,
     )
