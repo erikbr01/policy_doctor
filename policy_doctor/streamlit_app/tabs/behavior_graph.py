@@ -10,6 +10,7 @@ Workflow:
 
 from __future__ import annotations
 
+import pathlib
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -174,6 +175,13 @@ def render_tab(
                     metadata,
                     gamma_used,
                 )
+
+    with st.expander("4. Episode browser", expanded=False):
+        _render_episode_browser(
+            st.session_state.get("bg_slice_labels", labels),
+            metadata,
+            config,
+        )
 
     with st.expander("Export", expanded=False):
         _render_export(config, task_stem)
@@ -592,6 +600,226 @@ def _render_mrp_visualizations(
                 fig_hist, use_container_width=True, key="bg_plotly_adv_hist_mrp"
             )
             st.metric("Mean advantage", f"{advantages[valid].mean():.4f}")
+
+
+def _build_per_frame_labels(
+    episode_idx: int,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    ep_key: str = "rollout_idx",
+) -> np.ndarray:
+    """Reconstruct a per-frame cluster label array for one episode.
+
+    Each slice covers [window_start, window_end). Frames are assigned
+    to the label of the last slice whose window_start ≤ frame.
+    Returns an int64 array of length = last window_end for the episode.
+    """
+    ep_slices = [
+        (m["window_start"], m["window_end"], int(labels[i]))
+        for i, m in enumerate(metadata)
+        if m.get(ep_key) == episode_idx and int(labels[i]) != -1
+    ]
+    if not ep_slices:
+        return np.array([], dtype=np.int64)
+
+    total = max(s[1] for s in ep_slices)
+    per_frame = np.full(total, -1, dtype=np.int64)
+    for ws, we, lbl in sorted(ep_slices, key=lambda x: x[0]):
+        per_frame[ws:we] = lbl
+    return per_frame
+
+
+def _render_episode_browser(
+    labels: np.ndarray,
+    metadata: List[Dict],
+    config: Any,
+) -> None:
+    """Browse episodes with multi-cluster timeline annotations and optional video."""
+    from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
+    from policy_doctor.streamlit_app.components.mp4_player import cluster_timeline, mp4_player
+
+    ep_key = "rollout_idx" if (metadata and "rollout_idx" in metadata[0]) else "demo_idx"
+    ep_indices = sorted(set(m.get(ep_key, -1) for m in metadata if m.get(ep_key, -1) >= 0))
+    if not ep_indices:
+        st.info("No episode indices found in clustering metadata.")
+        return
+
+    cluster_ids = sorted(set(int(l) for l in labels if l >= 0))
+    n_clusters = len(cluster_ids)
+
+    st.caption(
+        "Select an episode to see its cluster assignment timeline. "
+        "Each color segment is a distinct behavior cluster. "
+        "Point to a segment to see its cluster ID and time range."
+    )
+
+    col_ep, col_fps = st.columns([3, 1])
+    with col_ep:
+        ep_i = st.selectbox(
+            "Episode",
+            ep_indices,
+            format_func=lambda i: f"Episode {i} — {'✓ success' if _ep_success(i, metadata, ep_key) is True else '✗ failure' if _ep_success(i, metadata, ep_key) is False else '?'}",
+            key="bg_ep_browser_idx",
+        )
+    with col_fps:
+        fps = st.number_input("FPS", 1, 60, 10, key="bg_ep_browser_fps")
+
+    per_frame = _build_per_frame_labels(ep_i, labels, metadata, ep_key)
+    if len(per_frame) == 0:
+        st.warning(f"No labeled slices found for episode {ep_i}.")
+        return
+
+    total_frames = len(per_frame)
+
+    # Cluster name map
+    graph = st.session_state.get("bg_graph")
+    cluster_names = {}
+    if graph is not None:
+        for nid, node in graph.nodes.items():
+            if nid >= 0:
+                cluster_names[nid] = node.name
+
+    # Multi-cluster timeline (always shown)
+    st.markdown(f"**Cluster timeline** — episode {ep_i}  ({total_frames} frames)")
+    cluster_timeline(
+        per_frame,
+        cluster_colors=CLUSTER_COLORS,
+        fps=fps,
+        height=80,
+        key=f"bg_ep_tl_{ep_i}",
+        cluster_names=cluster_names or None,
+    )
+
+    # Cluster sequence summary
+    with st.expander("Cluster sequence", expanded=False):
+        _render_cluster_sequence(per_frame, cluster_ids, CLUSTER_COLORS, cluster_names)
+
+    # Optional video with timeline
+    st.markdown("**Video**")
+    st.caption(
+        "Point to a directory containing ``ep{N}.mp4`` files. "
+        "Leave blank to skip video playback."
+    )
+    mp4_dir_str = st.text_input(
+        "MP4 directory",
+        value=st.session_state.get("bg_ep_mp4_dir", ""),
+        key="bg_ep_mp4_dir_input",
+        placeholder="/path/to/mp4_dir",
+    )
+    if mp4_dir_str:
+        st.session_state["bg_ep_mp4_dir"] = mp4_dir_str
+        mp4_dir = pathlib.Path(mp4_dir_str)
+        mp4_path = mp4_dir / f"ep{ep_i}.mp4"
+        if not mp4_path.exists():
+            st.warning(f"Not found: `{mp4_path}`")
+        else:
+            mp4_player(
+                mp4_path,
+                key=f"bg_ep_vid_{ep_i}",
+                max_height_px=360,
+                fps=fps,
+                total_frames=total_frames,
+            )
+            # Also show current-frame cluster info via frame slider
+            frame_i = st.slider(
+                "Inspect frame",
+                0, total_frames - 1, 0,
+                key=f"bg_ep_frame_{ep_i}",
+            )
+            cid = int(per_frame[frame_i])
+            cname = cluster_names.get(cid, f"Cluster {cid}") if cid >= 0 else "Unlabeled"
+            color = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)] if cid >= 0 else "#555"
+            st.markdown(
+                f"Frame **{frame_i}** → "
+                f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;">'
+                f"{cname}</span>",
+                unsafe_allow_html=True,
+            )
+    else:
+        # No video: show frame-level cluster inspector from PKL if eval_dir is set
+        if config.eval_dir:
+            import pathlib as _pl
+            from policy_doctor.paths import REPO_ROOT
+            eval_path = _pl.Path(config.eval_dir)
+            if not eval_path.is_absolute():
+                eval_path = REPO_ROOT / eval_path
+            pkls = sorted(eval_path.glob("episodes/ep*.pkl"))
+            if pkls and ep_i < len(pkls):
+                frame_i = st.slider(
+                    "Inspect frame",
+                    0, total_frames - 1, 0,
+                    key=f"bg_ep_frame_{ep_i}",
+                )
+                cid = int(per_frame[frame_i])
+                cname = cluster_names.get(cid, f"Cluster {cid}") if cid >= 0 else "Unlabeled"
+                color = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)] if cid >= 0 else "#555"
+                st.markdown(
+                    f"Frame **{frame_i}** → "
+                    f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;">'
+                    f"{cname}</span>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("Load frame from PKL", key=f"bg_ep_pklfr_{ep_i}"):
+                    import pickle
+                    with open(pkls[ep_i], "rb") as f:
+                        df = pickle.load(f)
+                    if frame_i < len(df):
+                        row = df.iloc[frame_i]
+                        if "obs" in row:
+                            _show_obs_frame(row["obs"])
+
+
+def _ep_success(ep_idx: int, metadata: List[Dict], ep_key: str) -> Optional[bool]:
+    for m in metadata:
+        if m.get(ep_key) == ep_idx:
+            return m.get("success")
+    return None
+
+
+def _render_cluster_sequence(
+    per_frame: np.ndarray,
+    cluster_ids: List[int],
+    colors: List[str],
+    names: dict,
+) -> None:
+    """Show the run-length-encoded sequence of cluster visits."""
+    import pandas as pd
+
+    n = len(colors)
+    rows = []
+    prev = None
+    for frame_i, cid in enumerate(per_frame):
+        cid = int(cid)
+        if cid != prev:
+            rows.append({"cluster": names.get(cid, f"Cluster {cid}") if cid >= 0 else "Unlabeled",
+                         "start_frame": frame_i, "color": colors[cid % n] if cid >= 0 else "#555"})
+            prev = cid
+    for i in range(len(rows) - 1):
+        rows[i]["end_frame"] = rows[i + 1]["start_frame"] - 1
+    if rows:
+        rows[-1]["end_frame"] = len(per_frame) - 1
+
+    df = pd.DataFrame(rows)[["cluster", "start_frame", "end_frame"]]
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def _show_obs_frame(obs: Any) -> None:
+    """Try to render an observation array as an image."""
+    arr = np.asarray(obs)
+    if arr.ndim == 3 and arr.shape[-1] in (1, 3, 4):
+        from PIL import Image
+        if arr.max() <= 1.0:
+            arr = (arr * 255).astype(np.uint8)
+        st.image(Image.fromarray(arr.astype(np.uint8)), use_container_width=True)
+    elif arr.ndim == 3:
+        # Might be (C, H, W) — try transposing
+        arr_t = arr.transpose(1, 2, 0)
+        if arr_t.shape[-1] in (1, 3, 4):
+            _show_obs_frame(arr_t)
+        else:
+            st.caption(f"obs shape {arr.shape} — cannot render as image")
+    else:
+        st.caption(f"obs shape {arr.shape} — not an image")
 
 
 def _render_export(config: VisualizerConfig, task_stem: str) -> None:

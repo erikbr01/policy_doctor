@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import pathlib
+from typing import List, Optional
 
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
@@ -30,6 +32,77 @@ def slice_indicator(
         xaxis=dict(range=[0, total_frames], title=None),
         yaxis=dict(visible=False),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig, use_container_width=True, key=key)
+    return fig
+
+
+def cluster_timeline(
+    per_frame_labels: np.ndarray,
+    cluster_colors: List[str],
+    fps: int = 10,
+    height: int = 80,
+    key: str = "clust_tl",
+    cluster_names: Optional[dict] = None,
+) -> go.Figure:
+    """Multi-colored timeline bar showing cluster assignment across an episode.
+
+    Args:
+        per_frame_labels: Integer cluster label per frame, shape (T,). -1 = unlabeled.
+        cluster_colors: Color palette indexed by cluster id.
+        fps: Frames-per-second, used to format hover labels.
+        height: Plotly figure height in pixels.
+        key: Streamlit widget key.
+        cluster_names: Optional {cluster_id: name} mapping for hover text.
+
+    Returns the Plotly figure (also renders it).
+    """
+    if len(per_frame_labels) == 0:
+        return go.Figure()
+
+    # Run-length encode to get contiguous segments
+    labels = np.asarray(per_frame_labels, dtype=np.int64)
+    total_frames = len(labels)
+    segments: list[tuple[int, int, int]] = []  # (start, end_excl, label)
+    i = 0
+    while i < total_frames:
+        j = i + 1
+        while j < total_frames and labels[j] == labels[i]:
+            j += 1
+        segments.append((i, j, int(labels[i])))
+        i = j
+
+    fig = go.Figure()
+    n_colors = len(cluster_colors)
+    for seg_start, seg_end, cid in segments:
+        color = "#555555" if cid < 0 else cluster_colors[cid % n_colors]
+        name = (cluster_names or {}).get(cid, f"Cluster {cid}") if cid >= 0 else "Unlabeled"
+        width = seg_end - seg_start
+        hover = (
+            f"<b>{name}</b><br>"
+            f"Frames {seg_start}–{seg_end - 1}<br>"
+            f"Time {seg_start / fps:.1f}s–{(seg_end - 1) / fps:.1f}s"
+        )
+        fig.add_trace(go.Bar(
+            x=[width], y=[""],
+            base=seg_start,
+            orientation="h",
+            marker_color=color,
+            marker_line_width=0,
+            showlegend=False,
+            hovertemplate=hover + "<extra></extra>",
+            name=name,
+        ))
+
+    fig.update_layout(
+        barmode="overlay",
+        height=height,
+        margin=dict(l=0, r=0, t=0, b=20),
+        xaxis=dict(range=[0, total_frames], title="frame", tickfont=dict(size=10)),
+        yaxis=dict(visible=False),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        hoverlabel=dict(bgcolor="rgba(30,30,30,0.9)", font_color="white"),
+    )
     st.plotly_chart(fig, use_container_width=True, key=key)
     return fig
 
