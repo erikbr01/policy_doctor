@@ -1,0 +1,81 @@
+# @package _global_
+# MimicGen budget × replicate sweep — Square D1, Apr 26 2026.
+#
+# Controlled heuristic comparison experiment: fixes the upstream pipeline
+# (baseline policy, clustering, behavior graph) from the completed seed=1 d60
+# apr26 run, and varies only the seed-draw random_seed for rep-2 and rep-3.
+#
+# Design mirrors the apr23 replicate experiment but sweeps all four budgets,
+# giving a clean heuristic signal without the pipeline-wide noise of the main
+# apr26 sweep (where seeds 0/1/2 vary the entire pipeline).
+#
+# Rep-1 arms (random_seed=null, already complete in the apr26 sweep for seed=1)
+# are reused via skip_if_done.  Only rep-2 (random_seed=1) and rep-3
+# (random_seed=2) are new.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     +experiment=mimicgen_square_rep_sweep_apr26 \
+#     steps=[mimicgen_budget_rep_sweep]
+#
+# Or via the launch script:
+#   ./scripts/run_budget_rep_sweep.sh
+
+task_config: square_mh_apr26_sweep_demos60
+experiment_name: mimicgen_square_rep_sweep_apr26
+
+# Reuse the fully-completed seed=1 d60 pipeline run dir.
+# All upstream steps (train_baseline → run_clustering) are already done here.
+run_dir: data/pipeline_runs/mimicgen_square_apr26_sweep_seed1_demos60
+
+seeds: [1]
+reference_seed: 0
+
+train_date: apr26_sweep_demos60
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr26, budget_sweep, rep_sweep]
+
+baseline:
+  max_train_episodes: 60
+  checkpoint_topk: 5
+
+evaluation:
+  train_date: apr26_sweep_demos60
+  eval_date: apr26_sweep_demos60
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: apr26_sweep_demos60
+  eval_date: apr26_sweep_demos60
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+mimicgen_datagen:
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+
+# ---------------------------------------------------------------------------
+# Replicate sweep configuration
+# ---------------------------------------------------------------------------
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [20, 100, 500, 1000]
+  rep_seeds: [1, 2]              # random_seed values for rep-2 and rep-3
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]   # 4 concurrent arms
+
+steps: [mimicgen_budget_rep_sweep]

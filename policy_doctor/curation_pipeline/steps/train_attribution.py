@@ -2,16 +2,30 @@
 
 from __future__ import annotations
 
+import subprocess
+
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_eval_dir, get_train_dir
+from policy_doctor.paths import CUPID_ROOT
 
 
-def _call_train_trak_diffusion(cmd_args: list) -> None:
-    from train_trak_diffusion import main  # noqa: PLC0415
-
-    main(cmd_args, standalone_mode=False)
+def _call_train_trak_diffusion(cmd_args: list, conda_env: str | None = None) -> None:
+    if conda_env:
+        cmd = [
+            "conda", "run", "-n", conda_env, "--no-capture-output",
+            "python", str(CUPID_ROOT / "train_trak_diffusion.py"),
+            *cmd_args,
+        ]
+        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"[train_attribution] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"
+            )
+    else:
+        from train_trak_diffusion import main  # noqa: PLC0415
+        main(cmd_args, standalone_mode=False)
 
 
 class TrainAttributionStep(PipelineStep[None]):
@@ -56,6 +70,10 @@ class TrainAttributionStep(PipelineStep[None]):
         finalize_on_train = OmegaConf.select(attribution, "finalize_on_train")
         if finalize_on_train is None:
             finalize_on_train = True
+        conda_env = (
+            OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+        )
 
         proj_dim = OmegaConf.select(attribution, "proj_dim") or 4000
         lambda_reg = OmegaConf.select(attribution, "lambda_reg") or 0.0
@@ -116,5 +134,5 @@ class TrainAttributionStep(PipelineStep[None]):
                 print(f"[dry_run]   {' '.join(cmd_args)}")
                 continue
 
-            print(f"  [train_attribution] seed={seed}  model_id={model_id}")
-            _call_train_trak_diffusion(cmd_args=cmd_args)
+            print(f"  [train_attribution] seed={seed}  model_id={model_id}  conda_env={conda_env}")
+            _call_train_trak_diffusion(cmd_args=cmd_args, conda_env=conda_env)

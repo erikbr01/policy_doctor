@@ -37,4 +37,7 @@ def baseline_diffusion_extra_overrides(baseline: Any) -> List[str]:
             # ``skip_runner_dataset_path: true`` in the baseline config to omit this.
             if not OmegaConf.select(baseline, "skip_runner_dataset_path"):
                 extra.append(f"++task.env_runner.dataset_path={p}")
+    n_test_rollouts = OmegaConf.select(baseline, "n_test_rollouts")
+    if n_test_rollouts is not None:
+        extra.append(f"++task.env_runner.n_test={int(n_test_rollouts)}")
     return extra

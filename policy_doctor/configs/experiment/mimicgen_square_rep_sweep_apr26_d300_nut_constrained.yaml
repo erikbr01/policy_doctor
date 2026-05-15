@@ -1,0 +1,112 @@
+# @package _global_
+# MimicGen budget × replicate sweep — Square D1, Apr 26 2026, 300-demo baseline,
+# nut-constrained initial poses.
+#
+# Identical to mimicgen_square_rep_sweep_apr26_d300 except that MimicGen
+# generation constrains the nut's initial pose to offsets relative to the seed
+# demo pose:
+#   x:     ±50 mm   (same as D0)
+#   y:     ±200 mm  (same as D0)
+#   z_rot: ±90°     (same as D0)
+#
+# The peg pose is left unconstrained (full D1 randomisation), so only the nut
+# constraint changes relative to the baseline d300 experiment.
+#
+# Reuses the completed seed=1 d300 pipeline run dir for upstream steps
+# (train_baseline → run_clustering).  The run_clustering symlink in the new
+# constrained run dir points to the original so seed selection works correctly.
+#
+# Budget restricted to [100, 500] — same as the unconstrained d300 sweep.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     +experiment=mimicgen_square_rep_sweep_apr26_d300_nut_constrained \
+#     steps=[mimicgen_budget_sweep]
+#
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     +experiment=mimicgen_square_rep_sweep_apr26_d300_nut_constrained \
+#     steps=[mimicgen_budget_rep_sweep]
+#
+# Or via the launch script:
+#   ./scripts/run_budget_rep_sweep_d300_nut_constrained.sh
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_rep_sweep_apr26_d300_nut_constrained
+
+# New run dir with run_clustering symlinked from the original d300 seed=1 run.
+# Sweep arms write to fresh subdirs here.
+run_dir: data/pipeline_runs/mimicgen_square_apr26_seed1_d300_nut_constrained
+
+seeds: [1]
+reference_seed: 0
+
+train_date: apr26_sweep_demos300_nut_constrained
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr26, budget_sweep, rep_sweep, d300, nut_constrained]
+
+baseline:
+  max_train_episodes: 300
+  checkpoint_topk: 5
+
+evaluation:
+  # train_date points to the existing d300 baseline rollouts — reused for seed
+  # selection (select_mimicgen_seed finds rollouts.hdf5 here).
+  train_date: apr26_sweep_demos300
+  eval_date: apr26_sweep_demos300_nut_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: apr26_sweep_demos300
+  eval_date: apr26_sweep_demos300_nut_constrained
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+mimicgen_datagen:
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  # Constrain nut initial pose; leave peg fully unconstrained (null = free).
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    nut:
+      x: [-0.05, 0.05]     # ±50 mm
+      y: [-0.2, 0.2]       # ±200 mm
+      z_rot: [-1.57, 1.57] # ±90°
+    peg:
+      x: null   # leave env's original D1 range
+      y: null
+      z_rot: null
+
+# ---------------------------------------------------------------------------
+# Rep-1: budget sweep (random_seed=null — deterministic draw)
+# ---------------------------------------------------------------------------
+mimicgen_budget_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [300, 1000]
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]
+
+# ---------------------------------------------------------------------------
+# Rep-2/3: replicate sweep (fixed upstream, varying draw seed)
+# ---------------------------------------------------------------------------
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [300, 1000]
+  rep_seeds: [1, 2]
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]
+
+steps: [mimicgen_budget_sweep, mimicgen_budget_rep_sweep]

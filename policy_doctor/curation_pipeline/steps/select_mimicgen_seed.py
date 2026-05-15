@@ -26,8 +26,9 @@ Config keys (under ``mimicgen_datagen``):
     random_seed                RNG seed for ``random`` heuristic (default None).
     policy_seed                Which policy seed's clustering to use (default: first available).
 
-Also reads standard pipeline config keys used by ``RunClusteringStep``:
-    task_config, config_root, reference_seed  (to resolve eval dir and rollout HDF5).
+Also reads standard pipeline config keys:
+    reference_seed  (to resolve eval dir via evaluation.train_date / evaluation.task /
+    evaluation.policy or the clustering_eval_dir override).
 
 Result JSON:
     seed_hdf5_path       Absolute path to the materialised ``seed.hdf5``.
@@ -88,12 +89,34 @@ class SelectMimicgenSeedStep(PipelineStep[dict]):
         )
 
         # --- Load clustering result ---
-        # Use parent_run_dir so this step finds RunClusteringStep when running
-        # inside a CompositeStep (where run_dir is the composite's sub-directory).
-        prior = RunClusteringStep(self.cfg, self.parent_run_dir).load()
+        # clustering_run_dir allows K-sweep downstream runs to point at a different
+        # run dir where run_clustering already completed (e.g. the original experiment
+        # run dir when this step runs in a per-K sub-run dir).
+        _clustering_run_dir_override = OmegaConf.select(self.cfg, "clustering_run_dir")
+        _clustering_lookup_dir = (
+            Path(_clustering_run_dir_override)
+            if _clustering_run_dir_override
+            else self.parent_run_dir
+        )
+        if _clustering_run_dir_override and not _clustering_lookup_dir.is_absolute():
+            _clustering_lookup_dir = (self.repo_root / _clustering_lookup_dir).resolve()
+        prior = RunClusteringStep(self.cfg, _clustering_lookup_dir).load()
         clustering_dirs: dict[str, str] = {}
-        if prior and isinstance(prior.get("clustering_dirs"), dict):
-            clustering_dirs = {str(k): str(v) for k, v in prior["clustering_dirs"].items()}
+        if prior:
+            n_clusters_cfg = int(OmegaConf.select(self.cfg, "clustering_n_clusters") or 20)
+            dirs_by_k = prior.get("clustering_dirs_by_k") or {}
+            k_key = str(n_clusters_cfg)
+            if dirs_by_k and k_key in dirs_by_k:
+                clustering_dirs = {str(s): str(p) for s, p in dirs_by_k[k_key].items()}
+            elif dirs_by_k:
+                available_ks = sorted(dirs_by_k.keys(), key=lambda x: int(x))
+                raise KeyError(
+                    f"clustering_n_clusters={n_clusters_cfg} not found in sweep results. "
+                    f"Available K values: {available_ks}. "
+                    f"Set clustering_n_clusters to one of these values."
+                )
+            elif isinstance(prior.get("clustering_dirs"), dict):
+                clustering_dirs = {str(k): str(v) for k, v in prior["clustering_dirs"].items()}
 
         explicit = OmegaConf.select(self.cfg, "clustering_dir")
         if explicit and not clustering_dirs:

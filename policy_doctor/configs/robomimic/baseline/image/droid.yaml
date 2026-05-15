@@ -28,5 +28,7 @@ tf32: true
 compile: false  # set true once obs encoder is stable
 num_steps: null
 
-# Set this to the path produced by convert_droid_to_robomimic.py.
-diffusion_dataset_path: data/source/droid/droid_dataset.hdf5
+# Set this to the path produced by convert_droid_hdf5_debug.py.
+diffusion_dataset_path: /mnt/ssdB/erik/droid_data/droid_dataset.hdf5
+# NoOpImageRunner (used for real-robot data) does not accept dataset_path.
+skip_runner_dataset_path: true

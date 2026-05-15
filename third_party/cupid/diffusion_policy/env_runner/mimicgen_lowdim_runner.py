@@ -318,10 +318,10 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
 
         # total number of timesteps across episodes
         all_sim_episodes: list = []  # per-episode dicts from _get_episode_sim_data()
+        episode_lengths = []  # always tracked; written to log_data
+        episode_successes = []
         if self.save_episodes:
             total_timesteps = 0
-            episode_lengths = []
-            episode_successes = []
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -340,6 +340,11 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             env.call_each('run_dill_function', 
                 args_list=[(x,) for x in this_init_fns])
             
+            episode_steps = 0
+            # Per-env step at which success was first observed (None until success).
+            # Updated each step from the full env.call("_is_success") result so we
+            # can record true per-env lengths rather than the env-0 chunk length.
+            chunk_success_steps = [None] * n_envs
             # save episodes
             if self.save_episodes:
                 timestep = 0
@@ -412,18 +417,27 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
 
                 obs, reward, done, info = env.step(env_action)
                 done = np.all(done)
-                
-                # Terminate on success if saving episodes or collecting sim data.
-                if self.save_episodes or self.write_rollouts_hdf5:
-                    success = env.call("_is_success")[0]
-                    done = success if not done else done
+
+                # update pbar / step counter first so we can record success step
+                n_steps = action.shape[1]
+
+                # Vectorized per-env success check: record each env's first-success step.
+                # IMPORTANT: we do NOT terminate the chunk on success — every env runs for
+                # the full max_steps as in the original eval methodology. This keeps success
+                # rates comparable to the backup data. We just track the first-success step
+                # per env as a side-channel measurement for episode length statistics.
+                successes_per_env = env.call("_is_success")
+                step_at_check = episode_steps + n_steps
+                for env_idx in range(n_envs):
+                    if successes_per_env[env_idx] and chunk_success_steps[env_idx] is None:
+                        chunk_success_steps[env_idx] = step_at_check
+                success = successes_per_env[0]  # kept for downstream code that references it
 
                 past_action = action
-
-                # update pbar
-                pbar.update(action.shape[1])
+                pbar.update(n_steps)
+                episode_steps += n_steps
                 if self.save_episodes:
-                    timestep += action.shape[1]
+                    timestep += n_steps
                     total_timesteps += 1
             pbar.close()
 
@@ -441,11 +455,18 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                     print(f"[MimicgenLowdimRunner] WARNING: could not collect sim data for "
                           f"episode {chunk_idx}: {e}")
 
+            # Record episode length for each env in this chunk.
+            # Uses chunk_success_steps[j] when env j succeeded (true per-env length),
+            # falling back to episode_steps for envs that never succeeded.
+            # Per-env success is read from all_rewards (already collected above).
+            for j in range(this_n_active_envs):
+                length = chunk_success_steps[j] if chunk_success_steps[j] is not None else episode_steps
+                episode_lengths.append(length)
+                episode_successes.append(bool(np.max(all_rewards[start + j]) > 0))
+
             # save episode data
             if self.save_episodes:
                 postfix = "succ" if success else "fail"
-                episode_lengths.append(len(episode_data))
-                episode_successes.append(success)
                 episode_data = pd.DataFrame(episode_data)
                 episode_data["reward"] = reward[0]
                 episode_data["success"] = success
@@ -485,6 +506,20 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             name = prefix+'mean_score'
             value = np.mean(value)
             log_data[name] = value
+
+        # log episode length statistics (always available; meaningful because we terminate on success)
+        for i in range(n_inits):
+            seed = self.env_seeds[i]
+            prefix = self.env_prefixs[i]
+            log_data[prefix+f'episode_length_{seed}'] = episode_lengths[i]
+        for prefix in set(self.env_prefixs):
+            prefix_lengths = [episode_lengths[i] for i in range(n_inits) if self.env_prefixs[i] == prefix]
+            succ_lengths = [episode_lengths[i] for i in range(n_inits)
+                            if self.env_prefixs[i] == prefix and episode_successes[i]]
+            log_data[prefix+'mean_episode_length'] = float(np.mean(prefix_lengths))
+            log_data[prefix+'mean_success_episode_length'] = (
+                float(np.mean(succ_lengths)) if succ_lengths else float('nan')
+            )
 
         if (self.save_episodes or self.write_rollouts_hdf5) and all_sim_episodes:
             self._write_rollouts_hdf5(all_sim_episodes)

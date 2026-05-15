@@ -154,10 +154,11 @@ def _merge_hdf5s(hdf5_paths: list[pathlib.Path], output_path: pathlib.Path) -> i
     output_path.parent.mkdir(parents=True, exist_ok=True)
     existing = [p for p in hdf5_paths if p.exists()]
     if not existing:
-        # Write an empty shell so downstream code can detect the path
-        with h5py.File(output_path, "w") as out_f:
-            out_f.require_group("data")
-        return 0
+        raise RuntimeError(
+            f"[_merge_hdf5s] All {len(hdf5_paths)} per-seed generation jobs produced no output. "
+            f"Expected files: {[str(p) for p in hdf5_paths]}. "
+            f"Check subprocess logs above for failure details."
+        )
 
     counter = 0
     with h5py.File(output_path, "w") as out_f:
@@ -546,40 +547,139 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         failed_hdf5 = gen_output_dir / "demo_failed.hdf5"
 
         if use_per_seed:
-            per_seed_budget = _math.ceil(success_budget / n_seeds_in_hdf5)
-            per_seed_trials = int(_math.ceil(per_seed_budget / 0.40) * 1.20)
+            max_total_trials = success_budget * 20  # hard upper limit
             print(
-                f"  [generate_mimicgen_demos] per-seed mode: {n_seeds_in_hdf5} seeds × "
-                f"{per_seed_budget} target successes = {per_seed_trials} trials each"
+                f"  [generate_mimicgen_demos] per-seed mode: {n_seeds_in_hdf5} seeds, "
+                f"target={success_budget} successes, hard limit={max_total_trials} trials"
             )
 
-            per_seed_stats: list[dict] = []
-            per_seed_hdf5s: list[pathlib.Path] = []
-
+            # Pre-extract each seed into its own HDF5 (done once, reused across passes).
+            seed_hdf5s: list[tuple[int, pathlib.Path, pathlib.Path]] = []
             for seed_i in range(n_seeds_in_hdf5):
                 seed_i_dir = gen_output_dir / f"seed_{seed_i}"
                 seed_i_dir.mkdir(parents=True, exist_ok=True)
-
-                # Extract single demo to a temp HDF5
                 seed_i_hdf5 = seed_i_dir / "seed.hdf5"
                 _extract_single_seed(seed_hdf5, f"demo_{seed_i}", seed_i_hdf5)
+                seed_hdf5s.append((seed_i, seed_i_dir, seed_i_hdf5))
 
-                print(f"  [generate_mimicgen_demos] seed {seed_i + 1}/{n_seeds_in_hdf5} ...")
-                res = subprocess.run(_build_cmd(seed_i_hdf5, seed_i_dir, per_seed_trials))
-                if res.returncode != 0:
+            # Per-seed accumulated stats (one entry per seed, summed across passes).
+            per_seed_acc: list[dict] = [{} for _ in range(n_seeds_in_hdf5)]
+            per_seed_hdf5s: list[pathlib.Path] = []
+            total_successes = 0
+            total_trials = 0
+            pass_num = 0
+            failed_seed_passes: list[tuple[int, int]] = []  # (seed_i, pass_num) pairs
+
+            while total_successes < success_budget and total_trials < max_total_trials:
+                pass_num += 1
+                remaining_needed = success_budget - total_successes
+                remaining_budget = max_total_trials - total_trials
+
+                # Estimate trials per seed using observed rate (40% floor to avoid explosion).
+                observed_rate = total_successes / total_trials if total_trials > 0 else 0.40
+                effective_rate = max(observed_rate, 0.05)
+                trials_per_seed = int(
+                    _math.ceil(remaining_needed / n_seeds_in_hdf5 / effective_rate * 1.2)
+                )
+                # Cap so we never overshoot the total trial budget.
+                trials_per_seed = min(
+                    trials_per_seed,
+                    max(1, remaining_budget // n_seeds_in_hdf5),
+                )
+
+                print(
+                    f"  [generate_mimicgen_demos] pass {pass_num}: "
+                    f"{total_successes}/{success_budget} successes, "
+                    f"{total_trials}/{max_total_trials} trials used — "
+                    f"running {trials_per_seed} trials/seed"
+                )
+
+                for seed_i, seed_i_dir, seed_i_hdf5 in seed_hdf5s:
+                    if total_successes >= success_budget or total_trials >= max_total_trials:
+                        break
+
+                    # Each pass writes to its own subdirectory to avoid overwriting.
+                    pass_out_dir = seed_i_dir / f"_gen_tmp_pass{pass_num:04d}"
+                    pass_out_dir.mkdir(parents=True, exist_ok=True)
+
                     print(
-                        f"  [generate_mimicgen_demos] WARNING: seed {seed_i} subprocess "
-                        f"failed (exit={res.returncode}), skipping."
+                        f"  [generate_mimicgen_demos] "
+                        f"seed {seed_i + 1}/{n_seeds_in_hdf5} pass {pass_num} ..."
                     )
-                    continue
+                    res = subprocess.run(
+                        _build_cmd(seed_i_hdf5, pass_out_dir, trials_per_seed)
+                    )
+                    if res.returncode != 0:
+                        # Count only actual attempts, not the requested budget, so that
+                        # early subprocess crashes (e.g. RandomizationError on reset)
+                        # don't consume the full trials_per_seed from total_trials.
+                        s_path = pass_out_dir / "stats.json"
+                        n_att_crashed = (
+                            json.loads(s_path.read_text()).get("num_attempts", 0)
+                            if s_path.exists() else 0
+                        )
+                        n_succ_crashed = (
+                            json.loads(s_path.read_text()).get("num_success", 0)
+                            if s_path.exists() else 0
+                        )
+                        print(
+                            f"  [generate_mimicgen_demos] ERROR: seed {seed_i} "
+                            f"pass {pass_num} subprocess failed "
+                            f"(exit={res.returncode}, actual_attempts={n_att_crashed}), "
+                            "skipping this seed/pass."
+                        )
+                        failed_seed_passes.append((seed_i, pass_num))
+                        total_trials += max(n_att_crashed, 1)  # count actual attempts (min 1)
+                        total_successes += n_succ_crashed
+                        if (pass_out_dir / "demo.hdf5").exists():
+                            per_seed_hdf5s.append(pass_out_dir / "demo.hdf5")
+                        continue
 
-                s_path = seed_i_dir / "stats.json"
-                per_seed_stats.append(json.loads(s_path.read_text()) if s_path.exists() else {})
-                if (seed_i_dir / "demo.hdf5").exists():
-                    per_seed_hdf5s.append(seed_i_dir / "demo.hdf5")
+                    s_path = pass_out_dir / "stats.json"
+                    s = json.loads(s_path.read_text()) if s_path.exists() else {}
+                    n_succ = s.get("num_success", 0)
+                    n_att = s.get("num_attempts", 0)
+                    total_successes += n_succ
+                    total_trials += n_att
 
-            # Merge all per-seed outputs, then subsample down to success_budget so
-            # every arm trains on exactly the same number of generated demos.
+                    # Accumulate per-seed stats across passes.
+                    acc = per_seed_acc[seed_i]
+                    for k in ("num_success", "num_failures", "num_attempts", "num_problematic"):
+                        acc[k] = acc.get(k, 0) + s.get(k, 0)
+                    acc["success_rate"] = (
+                        100.0 * acc["num_success"] / acc["num_attempts"]
+                        if acc["num_attempts"] > 0 else 0.0
+                    )
+                    acc["failure_rate"] = (
+                        100.0 * acc["num_failures"] / acc["num_attempts"]
+                        if acc["num_attempts"] > 0 else 0.0
+                    )
+                    acc.setdefault("generation_path", str(pass_out_dir))
+                    for ep_k in ("ep_length_mean", "ep_length_std", "ep_length_max", "ep_length_3std"):
+                        if ep_k in s:
+                            acc[ep_k] = s[ep_k]  # last pass wins for episode lengths
+                    acc["time spent (hrs)"] = s.get("time spent (hrs)", "0.00")
+
+                    if (pass_out_dir / "demo.hdf5").exists():
+                        per_seed_hdf5s.append(pass_out_dir / "demo.hdf5")
+
+            if total_successes < success_budget:
+                print(
+                    f"  [generate_mimicgen_demos] WARNING: hit trial limit "
+                    f"({total_trials}/{max_total_trials}) with only "
+                    f"{total_successes}/{success_budget} successes."
+                )
+
+            if failed_seed_passes:
+                n_failed = len(failed_seed_passes)
+                n_total_passes = pass_num * n_seeds_in_hdf5
+                print(
+                    f"  [generate_mimicgen_demos] WARNING: {n_failed}/{n_total_passes} "
+                    f"seed/pass jobs failed: {failed_seed_passes}"
+                )
+
+            # Merge all per-seed/per-pass outputs, then subsample to success_budget
+            # so every arm trains on exactly the same number of generated demos.
             _merge_hdf5s(per_seed_hdf5s, generated_hdf5)
             merged_count = sum(1 for _ in h5py.File(generated_hdf5, "r")["data"].keys()
                                if _.startswith("demo_"))
@@ -590,10 +690,11 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                     f"{final_count} demos (success_budget={success_budget})"
                 )
 
+            per_seed_stats = per_seed_acc  # keep variable name for stats block below
             stats = {
-                "num_success":  sum(s.get("num_success", 0) for s in per_seed_stats),
-                "num_failures": sum(s.get("num_failures", 0) for s in per_seed_stats),
-                "num_attempts": sum(s.get("num_attempts", 0) for s in per_seed_stats),
+                "num_success":  total_successes,
+                "num_failures": total_trials - total_successes,
+                "num_attempts": total_trials,
                 "per_seed_stats": per_seed_stats,
             }
             if stats["num_attempts"] > 0:

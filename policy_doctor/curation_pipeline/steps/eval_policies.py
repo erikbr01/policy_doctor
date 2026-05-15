@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_eval_dir, get_train_dir
+from policy_doctor.paths import CUPID_ROOT
 
 
 def _call_eval_save_episodes(
@@ -18,21 +20,34 @@ def _call_eval_save_episodes(
     test_start_seed: int,
     overwrite: bool,
     device: str,
+    conda_env: str | None = None,
 ) -> None:
-    from eval_save_episodes import main  # noqa: PLC0415
-
-    main(
-        [
-            f"--output_dir={output_dir}",
-            f"--train_dir={train_dir}",
-            f"--train_ckpt={train_ckpt}",
-            f"--num_episodes={num_episodes}",
-            f"--test_start_seed={test_start_seed}",
-            f"--overwrite={overwrite}",
-            f"--device={device}",
-        ],
-        standalone_mode=False,
-    )
+    args = [
+        f"--output_dir={output_dir}",
+        f"--train_dir={train_dir}",
+        f"--train_ckpt={train_ckpt}",
+        f"--num_episodes={num_episodes}",
+        f"--test_start_seed={test_start_seed}",
+        f"--overwrite={overwrite}",
+        f"--device={device}",
+        "--n_test_vis=0",   # disable video recording — offscreen renderer unavailable in headless training env
+    ]
+    if conda_env:
+        # Dispatch as a subprocess in the specified conda env so that env-specific
+        # packages (e.g. pytorch3d in mimicgen_torch2) are available.
+        cmd = [
+            "conda", "run", "-n", conda_env, "--no-capture-output",
+            "python", str(CUPID_ROOT / "eval_save_episodes.py"),
+            *args,
+        ]
+        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"[eval_policies] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"
+            )
+    else:
+        from eval_save_episodes import main  # noqa: PLC0415
+        main(args, standalone_mode=False)
 
 
 class EvalPoliciesStep(PipelineStep[None]):
@@ -69,6 +84,10 @@ class EvalPoliciesStep(PipelineStep[None]):
         eval_as_train_seed = OmegaConf.select(evaluation, "eval_as_train_seed")
         if eval_as_train_seed is None:
             eval_as_train_seed = True
+        conda_env = (
+            OmegaConf.select(evaluation, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+        )
 
         for seed in seeds:
             train_dir = str(self.repo_root / get_train_dir(train_output_dir, train_date, task, policy, seed))
@@ -83,7 +102,7 @@ class EvalPoliciesStep(PipelineStep[None]):
                 print(f"[dry_run] EvalPoliciesStep seed={seed}  output_dir={output_dir}")
                 continue
 
-            print(f"  [eval_policies] seed={seed}  output_dir={output_dir}")
+            print(f"  [eval_policies] seed={seed}  conda_env={conda_env}  output_dir={output_dir}")
             _call_eval_save_episodes(
                 output_dir=output_dir,
                 train_dir=train_dir,
@@ -92,4 +111,5 @@ class EvalPoliciesStep(PipelineStep[None]):
                 test_start_seed=test_start_seed,
                 overwrite=overwrite,
                 device=device,
+                conda_env=conda_env,
             )

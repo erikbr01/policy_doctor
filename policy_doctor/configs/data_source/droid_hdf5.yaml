@@ -24,7 +24,7 @@ data_source:
   policy_stack: diffusion_unet_hybrid_image
   attribution_stack: trak_infembed
   visualization: artifact_agnostic
-  conda_env_train: cupid_torch2
+  conda_env_train: cupid_torch25
   conda_env_datagen: null
   droid_submodule: true
   robocasa_submodule: false

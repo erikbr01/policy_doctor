@@ -1,0 +1,86 @@
+# @package _global_
+# MimicGen budget × replicate sweep — Square D1, Apr 26 2026, 60-demo baseline,
+# nut-constrained initial poses, budget=300.
+#
+# Identical to mimicgen_square_rep_sweep_apr26_d60_nut_constrained except the
+# generation budget is raised from 100 to 300 episodes.
+#
+# Reuses the same upstream d60 seed=1 run_clustering (via symlink) and the
+# same baseline rollouts for seed selection.
+#
+# Usage:
+#   ./scripts/run_budget_rep_sweep_d60_budget300_nut_constrained.sh
+
+task_config: square_mh_apr26_sweep_demos60
+experiment_name: mimicgen_square_rep_sweep_apr26_d60_budget300_nut_constrained
+
+run_dir: data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained
+
+seeds: [1]
+reference_seed: 0
+
+train_date: apr26_sweep_demos60_budget300_nut_constrained
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr26, budget_sweep, rep_sweep, nut_constrained, budget300]
+
+baseline:
+  max_train_episodes: 60
+  checkpoint_topk: 5
+
+evaluation:
+  train_date: apr26_sweep_demos60
+  eval_date: apr26_sweep_demos60_budget300_nut_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: apr26_sweep_demos60
+  eval_date: apr26_sweep_demos60_budget300_nut_constrained
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+mimicgen_datagen:
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    nut:
+      x: [-0.05, 0.05]     # ±50 mm
+      y: [-0.2, 0.2]       # ±200 mm
+      z_rot: [-1.57, 1.57] # ±90°
+    peg:
+      x: null   # leave env's original D1 range
+      y: null
+      z_rot: null
+
+# ---------------------------------------------------------------------------
+# Rep-1: budget sweep (random_seed=null — deterministic draw)
+# ---------------------------------------------------------------------------
+mimicgen_budget_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [300]
+  devices: [cuda:0, cuda:0]
+
+# ---------------------------------------------------------------------------
+# Rep-2/3: replicate sweep (fixed upstream, varying draw seed)
+# ---------------------------------------------------------------------------
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [300]
+  rep_seeds: [1, 2]
+  devices: [cuda:0, cuda:0]
+
+steps: [mimicgen_budget_sweep, mimicgen_budget_rep_sweep]

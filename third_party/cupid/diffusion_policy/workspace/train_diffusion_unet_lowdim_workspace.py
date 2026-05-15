@@ -128,20 +128,31 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
         import math
         _num_steps = cfg.training.get("num_steps", None)
         _steps_per_epoch = len(train_dataloader)
-        num_epochs_to_run = (
+
+        # Total steps for the full intended run — used by the LR scheduler so that
+        # last_epoch=global_step-1 correctly positions it on resume.
+        _total_epochs = (
             math.ceil(_num_steps / _steps_per_epoch)
             if _num_steps is not None
             else cfg.training.num_epochs
         )
+        _total_lr_steps = (
+            _num_steps if _num_steps is not None else _steps_per_epoch * _total_epochs
+        ) // cfg.training.gradient_accumulate_every
+
+        # Remaining epochs to loop — subtract already-completed epochs/steps so that
+        # resuming from a checkpoint never exceeds the intended training budget.
+        if _num_steps is not None:
+            num_epochs_to_run = max(0, math.ceil((_num_steps - self.global_step) / _steps_per_epoch))
+        else:
+            num_epochs_to_run = max(0, cfg.training.num_epochs - self.epoch)
 
         # configure lr scheduler
         lr_scheduler = get_scheduler(
             cfg.training.lr_scheduler,
             optimizer=self.optimizer,
             num_warmup_steps=cfg.training.lr_warmup_steps,
-            num_training_steps=(
-                (_num_steps if _num_steps is not None else _steps_per_epoch * num_epochs_to_run)
-                // cfg.training.gradient_accumulate_every),
+            num_training_steps=_total_lr_steps,
             # pytorch assumes stepping LRScheduler every epoch
             # however huggingface diffusers steps it every batch
             last_epoch=self.global_step-1
@@ -188,8 +199,8 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
 
         # compile before DDP wrap (torch 2.x recommendation)
         if use_compile:
-            from diffusion_policy.common.ddp_util import compile_model
-            self.model = compile_model(self.model)
+            from diffusion_policy.common.ddp_util import compile_policy
+            compile_policy(self.model)
 
         # DDP wrap
         if world_size > 1:

@@ -66,12 +66,14 @@ def _render_saved_clustering_parameters(
         "State (proprioceptive obs)",
         "State+action (obs + action concat)",
         "TRAK (influence / explanations matrix)",
+        "Policy embeddings (pre-computed activations)",
     ]
-    _INF_TO_IDX = {"infembed": 0, "state": 1, "state_action": 2, "trak": 3}
+    _INF_TO_IDX = {"infembed": 0, "state": 1, "state_action": 2, "trak": 3, "policy_emb": 4}
     emb_idx = _INF_TO_IDX.get(inf, 0)
     use_infembed = inf == "infembed"
     use_state = inf == "state"
     use_state_action = inf == "state_action"
+    use_policy_emb_ld = inf == "policy_emb"
 
     st.radio(
         "Embedding source",
@@ -105,6 +107,14 @@ def _render_saved_clustering_parameters(
                     key="clust_ld_action_strategy",
                     disabled=True,
                 )
+    elif use_policy_emb_ld:
+        rep_kwargs = manifest.get("rep_kwargs", {}) if manifest else {}
+        st.text_input(
+            "Embedding layer",
+            value=str(rep_kwargs.get("layer", merged.get("policy_emb_layer", "bottleneck"))),
+            key="clust_ld_policy_layer",
+            disabled=True,
+        )
     elif not use_infembed:
         _trak_split_labels = {
             "train": "Train demos only (train-split columns)",
@@ -265,6 +275,21 @@ def _state_slice_windows_cached(
 
 
 @st.cache_data
+def _policy_emb_slice_windows_cached(
+    eval_dir_resolved: str,
+    layer: str,
+    window_width: int,
+    stride: int,
+    aggregation: str,
+) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
+
+    rep = PolicyEmbeddingRepresentation()
+    params = SliceWindowParams(window_width=window_width, stride=stride, aggregation=aggregation)
+    return rep.extract(pathlib.Path(eval_dir_resolved), params, layer=layer)
+
+
+@st.cache_data
 def _run_clustering_cached(
     cache_key: str,
     window_embeddings: np.ndarray,
@@ -418,6 +443,7 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
         "State (proprioceptive obs)",
         "State+action (obs + action concat)",
         "TRAK (influence / explanations matrix)",
+        "Policy embeddings (pre-computed activations)",
     ]
     embedding_source = st.radio(
         "Embedding source",
@@ -426,13 +452,16 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
         help=(
             "InfEmbed: sliding windows over InfEmbed vectors. "
             "State / State+action: proprioceptive features from episode PKL files (no GPU needed). "
-            "TRAK: sliding windows over the loaded influence matrix vs demos."
+            "TRAK: sliding windows over the loaded influence matrix vs demos. "
+            "Policy embeddings: internal activations from the policy network, "
+            "pre-computed via compute_policy_embeddings.py (needs cupid_torch2 env)."
         ),
     )
     use_infembed = embedding_source.startswith("InfEmbed")
     use_state = embedding_source.startswith("State (")
     use_state_action = embedding_source.startswith("State+action")
     use_trak = embedding_source.startswith("TRAK")
+    use_policy_emb = embedding_source.startswith("Policy")
 
     eval_dir = config.eval_dir
     if not eval_dir:
@@ -444,6 +473,11 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
         st.caption(f"Eval dir: `{eval_path}` (latest ``default_trak_results-*`` + ``infembed_embeddings.npz``)")
     elif use_state or use_state_action:
         st.caption(f"Eval dir: `{eval_path}` (reads ``ep*.pkl`` episode files — no GPU needed)")
+    elif use_policy_emb:
+        st.caption(
+            f"Eval dir: `{eval_path}` — reads ``policy_embeddings/<layer>.npz``. "
+            "Compute first with ``compute_policy_embeddings.py`` (cupid_torch2 env, GPU required)."
+        )
     else:
         if data is None:
             st.warning(
@@ -455,6 +489,19 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
             "Influence matrix shape is **(rollout timesteps × demo timesteps)**. "
             "Clustering still windows along **rollouts** (or along demos if you pick demo-level windows); "
             "the option below only changes which **demonstration** columns are kept."
+        )
+
+    policy_emb_layer = "bottleneck"
+    if use_policy_emb:
+        policy_emb_layer = st.text_input(
+            "Embedding layer",
+            value="bottleneck",
+            key="clust_policy_emb_layer",
+            help=(
+                "Name of the layer whose activations to load "
+                "(must match the filename under policy_embeddings/<layer>.npz). "
+                "Common values: 'bottleneck', 'obs_encoder', 'noise_pred'."
+            ),
         )
 
     obs_strategy = "current"
@@ -536,6 +583,8 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
         influence_tag = "state"
     elif use_state_action:
         influence_tag = "state_action"
+    elif use_policy_emb:
+        influence_tag = "policy_emb"
     else:
         influence_tag = "trak"
 
@@ -558,6 +607,14 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
                         aggregation,
                         obs_strategy,
                         action_strategy,
+                    )
+                elif use_policy_emb:
+                    window_emb, metadata = _policy_emb_slice_windows_cached(
+                        str(eval_path.resolve()),
+                        policy_emb_layer,
+                        int(window_width),
+                        int(stride),
+                        aggregation,
                     )
                 else:
                     from policy_doctor.data.clustering_embeddings import (
@@ -612,6 +669,7 @@ def _render_run_new(config: VisualizerConfig, data: Any, task_stem: str) -> None
             "clustering_level": level,
             "obs_strategy": obs_strategy,
             "action_strategy": action_strategy,
+            "policy_emb_layer": policy_emb_layer if use_policy_emb else None,
         }
         n_actual = len(set(labels) - {-1})
         st.success(

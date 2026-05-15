@@ -11,15 +11,14 @@ import pathlib
 from typing import Dict
 
 import numpy as np
-import yaml
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
+from policy_doctor.curation_pipeline.paths import get_eval_dir
 from policy_doctor.data.clustering_embeddings import (
     extract_infembed_slice_windows,
     extract_trak_slice_windows,
 )
-from policy_doctor.paths import PACKAGE_ROOT, iv_task_configs_base
 
 
 class RunClusteringStep(PipelineStep[Dict[str, str]]):
@@ -41,20 +40,35 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         from influence_visualizer.data_loader import get_eval_dir_for_seed
 
         cfg = self.cfg
-        task_config = OmegaConf.select(cfg, "task_config")
-        config_root = OmegaConf.select(cfg, "config_root") or "iv"
 
-        if config_root == "iv":
-            base = iv_task_configs_base(self.repo_root)
+        # Resolve eval_dir_base: prefer explicit override, then evaluation config.
+        clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
+        if clustering_eval_dir_override:
+            eval_dir_base = clustering_eval_dir_override
         else:
-            base = PACKAGE_ROOT / "configs"
+            evaluation = OmegaConf.select(cfg, "evaluation") or {}
+            eval_date = (
+                OmegaConf.select(evaluation, "train_date")
+                or OmegaConf.select(cfg, "evaluation.eval_date")
+                or OmegaConf.select(cfg, "train_date")
+            )
+            eval_task = OmegaConf.select(evaluation, "task")
+            eval_policy = OmegaConf.select(evaluation, "policy")
+            eval_output_dir = OmegaConf.select(evaluation, "eval_output_dir") or "data/outputs/eval_save_episodes"
+            if eval_date and eval_task and eval_policy:
+                eval_dir_base = get_eval_dir(eval_output_dir, eval_date, eval_task, eval_policy, 0)
+            else:
+                raise ValueError(
+                    "Cannot resolve eval_dir for clustering: set evaluation.train_date, "
+                    "evaluation.task, and evaluation.policy in the Hydra config. "
+                    "The task_config YAML fallback has been removed."
+                )
+        print(f"  eval_dir_base: {eval_dir_base}")
 
-        task_yaml = base / f"{task_config}.yaml"
-        with open(task_yaml) as f:
-            task_cfg = yaml.safe_load(f)
+        train_dir_base = OmegaConf.select(cfg, "clustering_train_dir")
+        train_ckpt = OmegaConf.select(cfg, "evaluation.train_ckpt") or "latest"
+        exp_date = OmegaConf.select(cfg, "evaluation.exp_date") or "default"
 
-        eval_dir_base = task_cfg["eval_dir"]
-        train_dir_base = task_cfg.get("train_dir")
         reference_seed = str(OmegaConf.select(cfg, "reference_seed") or 0)
         seeds = OmegaConf.select(cfg, "seeds") or OmegaConf.select(cfg, "policy_seeds") or [0, 1, 2]
         seeds = [str(s) for s in seeds]
@@ -72,26 +86,42 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         umap_n_jobs = OmegaConf.select(cfg, "clustering_umap_n_jobs") or -1
         umap_prescale = OmegaConf.select(cfg, "clustering_umap_prescale") or "standard"
 
+        # Sweep over multiple K values when clustering_n_clusters_sweep is set.
+        # UMAP runs once per seed (expensive); K-Means runs once per K (cheap).
+        k_sweep_cfg = OmegaConf.select(cfg, "clustering_n_clusters_sweep")
+        if k_sweep_cfg is not None:
+            k_values = [int(k) for k in k_sweep_cfg]
+            if not k_values:
+                raise ValueError(
+                    "clustering_n_clusters_sweep is set but empty. "
+                    "Provide at least one K value, or remove the key to use clustering_n_clusters."
+                )
+        else:
+            k_values = [int(n_clusters)]
+
         if self.dry_run:
             for seed in seeds:
                 print(
                     f"[dry_run] RunClusteringStep seed={seed}: "
                     f"source={influence_source}, level={level}, split={demo_split}, "
                     f"window={window_width}, stride={stride}, umap_dim={umap_n_components}, "
-                    f"k={n_clusters}, normalize={normalize}, prescale={umap_prescale}, agg={aggregation}"
+                    f"k_sweep={k_values}, normalize={normalize}, prescale={umap_prescale}, agg={aggregation}"
                 )
-            return {"clustering_dirs": {}}
+            return {"clustering_dirs": {}, "clustering_dirs_by_k": {str(k): {} for k in k_values}}
 
         result_dirs: Dict[str, str] = {}
+        result_dirs_by_k: Dict[str, Dict[str, str]] = {str(k): {} for k in k_values}
+
         for seed in seeds:
             eval_dir_seed = get_eval_dir_for_seed(eval_dir_base, seed, reference_seed)
             eval_dir_abs = self.repo_root / eval_dir_seed
 
             if influence_source == "trak":
                 embeddings_arr, all_metadata = extract_trak_slice_windows(
-                    eval_dir_abs, train_dir_base, task_cfg, self.repo_root,
+                    eval_dir_abs, train_dir_base, self.repo_root,
                     seed, reference_seed,
                     window_width, stride, aggregation, demo_split, level,
+                    train_ckpt=train_ckpt, exp_date=exp_date,
                 )
             else:
                 if level == "demo":
@@ -115,39 +145,55 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                 embeddings_scaled, method="umap", n_components=umap_n_components, n_jobs=umap_n_jobs
             )
 
-            print(f"  K-Means: k={n_clusters}")
-            labels, kmeans_model = fit_cluster_kmeans(embeddings_reduced, n_clusters=n_clusters)
+            for k in k_values:
+                print(f"  K-Means: k={k}")
+                labels, kmeans_model = fit_cluster_kmeans(embeddings_reduced, n_clusters=k)
 
-            n_actual = len(set(labels) - {-1})
-            print(f"  Clusters: {n_actual}, noise: {int((labels == -1).sum())}")
+                n_actual = len(set(labels) - {-1})
+                print(f"  Clusters: {n_actual}, noise: {int((labels == -1).sum())}")
 
-            clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{n_clusters}"
-            result_dir = save_clustering_result(
-                task_config=task_config,
-                name=clustering_name,
-                cluster_labels=labels,
-                metadata=all_metadata,
-                algorithm="kmeans",
-                scaling=normalize,
-                influence_source=influence_source,
-                representation="sliding_window",
-                level=level,
-                n_clusters=n_actual,
-                n_samples=len(labels),
-                embeddings_reduced=embeddings_reduced,
-            )
-            models_path = save_clustering_models(
-                result_dir=result_dir,
-                normalizer=normalizer_model,
-                normalizer_method=normalize,
-                prescaler=prescaler_model,
-                prescaler_method=umap_prescale,
-                reducer=umap_model,
-                reducer_method="umap",
-                kmeans=kmeans_model,
-            )
-            print(f"  Saved: {result_dir}  (models: {models_path.name})")
-            result_dirs[seed] = str(result_dir)
+                clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{k}"
+                k_output_dir = self.step_dir / "clustering" / f"k{k}"
+                result_dir = save_clustering_result(
+                    name=clustering_name,
+                    cluster_labels=labels,
+                    metadata=all_metadata,
+                    algorithm="kmeans",
+                    scaling=normalize,
+                    influence_source=influence_source,
+                    representation="sliding_window",
+                    level=level,
+                    n_clusters=n_actual,
+                    n_samples=len(labels),
+                    embeddings_reduced=embeddings_reduced,
+                    output_dir=k_output_dir,
+                )
+                models_path = save_clustering_models(
+                    result_dir=result_dir,
+                    normalizer=normalizer_model,
+                    normalizer_method=normalize,
+                    prescaler=prescaler_model,
+                    prescaler_method=umap_prescale,
+                    reducer=umap_model,
+                    reducer_method="umap",
+                    kmeans=kmeans_model,
+                )
+                print(f"  Saved: {result_dir}  (models: {models_path.name})")
+                result_dirs_by_k[str(k)][seed] = str(result_dir)
 
-        return {"clustering_dirs": result_dirs}
+            # clustering_dirs points to the default K (clustering_n_clusters).
+            # If clustering_n_clusters is not in the sweep, warn and use the first K.
+            default_k = str(int(n_clusters))
+            if default_k in result_dirs_by_k and seed in result_dirs_by_k[default_k]:
+                result_dirs[seed] = result_dirs_by_k[default_k][seed]
+            else:
+                fallback_k = str(k_values[0])
+                print(
+                    f"  WARNING: clustering_n_clusters={n_clusters} is not in "
+                    f"clustering_n_clusters_sweep={k_values}. "
+                    f"clustering_dirs will point to k={fallback_k} as a convenience default. "
+                    f"Use clustering_dirs_by_k to select a specific K."
+                )
+                result_dirs[seed] = result_dirs_by_k[fallback_k][seed]
 
+        return {"clustering_dirs": result_dirs, "clustering_dirs_by_k": result_dirs_by_k}

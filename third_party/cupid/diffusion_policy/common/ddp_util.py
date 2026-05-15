@@ -13,6 +13,7 @@ config.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 from typing import Any, Callable, Dict
@@ -55,6 +56,29 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     m = getattr(model, "module", model)      # unwrap DistributedDataParallel
     m = getattr(m, "_orig_mod", m)           # unwrap torch.compile OptimizedModule
     return m
+
+
+@contextlib.contextmanager
+def ema_safe_model(policy):
+    """Temporarily swap compiled sub-modules back to their originals for EMA.
+
+    torch.compile wraps sub-modules in OptimizedModule, which changes the
+    module tree structure.  EMAModel.step iterates zip(model.modules(),
+    ema.modules()) and breaks when the two trees don't align.  This context
+    manager restores the original sub-modules for the duration of the EMA
+    update, then puts the compiled wrappers back.
+    """
+    swapped = {}
+    for attr in ("obs_encoder", "model"):
+        sub = getattr(policy, attr, None)
+        if sub is not None and hasattr(sub, "_orig_mod"):
+            swapped[attr] = sub
+            setattr(policy, attr, sub._orig_mod)
+    try:
+        yield policy
+    finally:
+        for attr, compiled in swapped.items():
+            setattr(policy, attr, compiled)
 
 
 def cleanup_ddp() -> None:
@@ -115,6 +139,15 @@ def compile_model(model, **kwargs):
     fixed batch/sequence shapes, which is the normal training regime; a new
     shape triggers recompilation rather than a crash.
 
+    IMPORTANT — image hybrid workspace:
+        Training calls ``policy.compute_loss()``, not ``policy.forward()``, so
+        wrapping the whole policy here has NO effect on training speed.  The
+        hybrid workspace instead compiles ``policy.obs_encoder`` and
+        ``policy.model`` (ConditionalUnet1D) directly — see
+        ``train_diffusion_unet_hybrid_workspace.py``.  This function is kept for
+        lowdim workspaces where the policy's forward IS the compute path, and for
+        wrapping individual sub-modules.
+
     Pass explicit kwargs to override the defaults, e.g.
     ``compile_model(model, dynamic=True)`` if you need variable shapes.
 
@@ -133,6 +166,40 @@ def compile_model(model, **kwargs):
     kwargs.setdefault("fullgraph", True)
     kwargs.setdefault("dynamic", False)
     return torch.compile(model, **kwargs)
+
+
+def compile_policy(policy) -> None:
+    """Compile the GPU-intensive sub-modules of a diffusion policy in-place.
+
+    All diffusion policy classes store the noise-prediction net as
+    ``policy.model`` and, for image policies, the observation encoder as
+    ``policy.obs_encoder``.  Training calls ``policy.compute_loss()`` (not
+    ``policy.forward()``), so wrapping the policy itself with torch.compile has
+    no effect.  Compiling the sub-modules ensures both their forward AND backward
+    passes run through inductor-compiled kernels.
+
+    obs_encoder uses ``fullgraph=False`` because robomimic's ObservationEncoder
+    contains ``set.issubset()`` which dynamo cannot trace with fullgraph=True.
+    The noise-prediction net (UNet / Transformer) uses ``fullgraph=True``.
+    """
+    import torch
+
+    if not hasattr(torch, "compile"):
+        return  # silently skip on older torch
+
+    # obs_encoder: fullgraph=False required due to set.issubset() in
+    # ObservationEncoder and Tensor.item() calls in crop_randomizer (removed).
+    # Requires torch 2.5+ — torch 2.4.x had a TensorAlias bug in AOT autograd
+    # backward that caused a crash here (fixed upstream in 2.5.0).
+    if hasattr(policy, "obs_encoder"):
+        policy.obs_encoder = torch.compile(
+            policy.obs_encoder, fullgraph=False, dynamic=False
+        )
+
+    if hasattr(policy, "model"):
+        policy.model = torch.compile(
+            policy.model, fullgraph=True, dynamic=False
+        )
 
 
 def spawn_ddp(

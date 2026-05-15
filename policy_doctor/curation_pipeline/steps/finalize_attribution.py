@@ -2,16 +2,30 @@
 
 from __future__ import annotations
 
+import subprocess
+
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_eval_dir, get_train_dir
+from policy_doctor.paths import CUPID_ROOT
 
 
-def _call_finalize_trak(cmd_args: list) -> None:
-    from finalize_trak import main  # noqa: PLC0415
-
-    main(cmd_args, standalone_mode=False)
+def _call_finalize_trak(cmd_args: list, conda_env: str | None = None) -> None:
+    if conda_env:
+        cmd = [
+            "conda", "run", "-n", conda_env, "--no-capture-output",
+            "python", str(CUPID_ROOT / "finalize_trak.py"),
+            *cmd_args,
+        ]
+        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"[finalize_attribution] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"
+            )
+    else:
+        from finalize_trak import main  # noqa: PLC0415
+        main(cmd_args, standalone_mode=False)
 
 
 class FinalizeAttributionStep(PipelineStep[None]):
@@ -47,6 +61,10 @@ class FinalizeAttributionStep(PipelineStep[None]):
         train_output_dir = OmegaConf.select(attribution, "train_output_dir") or "data/outputs/train"
         eval_output_dir = OmegaConf.select(attribution, "eval_output_dir") or "data/outputs/eval_save_episodes"
 
+        conda_env = (
+            OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
+        )
         result_date = OmegaConf.select(attribution, "result_date") or "default"
         exp_seed = OmegaConf.select(attribution, "seed") or 0
         proj_dim = OmegaConf.select(attribution, "proj_dim") or 4000
@@ -94,5 +112,5 @@ class FinalizeAttributionStep(PipelineStep[None]):
                 print(f"[dry_run]   {' '.join(cmd_args)}")
                 continue
 
-            print(f"  [finalize_attribution] seed={seed}")
-            _call_finalize_trak(cmd_args=cmd_args)
+            print(f"  [finalize_attribution] seed={seed}  conda_env={conda_env}")
+            _call_finalize_trak(cmd_args=cmd_args, conda_env=conda_env)

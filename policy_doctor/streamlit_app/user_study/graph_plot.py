@@ -322,7 +322,7 @@ def render_graph_component(
             if node_id == -1:
                 st.session_state.pop(f"{key}_selected", None)
                 st.session_state.pop(f"{key}_selected_edge", None)
-                return None
+                st.rerun()  # forces a second render so component receives selected_node_id=null
             if node_id in graph.nodes:
                 st.session_state[f"{key}_selected"] = node_id
                 st.session_state.pop(f"{key}_selected_edge", None)
