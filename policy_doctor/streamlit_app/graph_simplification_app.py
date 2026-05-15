@@ -246,9 +246,22 @@ min_prob_display = st.sidebar.slider(
     "Display min-prob (post-method)", 0.0, 0.5, 0.0, step=0.01,
     help="Hides edges below this probability AFTER the method runs. Display-only.",
 )
-use_temporal_layout = st.sidebar.checkbox(
-    "Use temporal (mean-timestep) layout instead of BFS-layered",
-    value=True,
+layout_mode = st.sidebar.radio(
+    "Layout",
+    options=["temporal", "sugiyama", "force_directed", "bfs"],
+    index=0,
+    format_func=lambda v: {
+        "temporal": "Temporal (rank by time)",
+        "sugiyama": "Sugiyama (layered DAG)",
+        "force_directed": "Force-directed (x pinned)",
+        "bfs": "BFS-layered (original)",
+    }[v],
+    help=(
+        "temporal: x = median fraction-of-episode-length rank. "
+        "sugiyama: NetworkX multipartite_layout with rank as layer. "
+        "force_directed: spring layout with x pinned to temporal rank. "
+        "bfs: original BFS-depth layered layout."
+    ),
 )
 use_native_renderer = st.sidebar.checkbox(
     "Use native SVG renderer (clickable nodes/edges, video clips)",
@@ -274,9 +287,21 @@ def _build_graph(labels: np.ndarray, _meta_id: int) -> BehaviorGraph:
 
 
 def _layout_for(graph: BehaviorGraph, labels: np.ndarray) -> Optional[Dict[int, Tuple[float, float]]]:
-    if use_temporal_layout:
+    if layout_mode == "temporal":
         return gs.temporal_layout(graph, labels, meta, level=level)
-    return None
+    if layout_mode == "sugiyama":
+        try:
+            return gs.sugiyama_layout(graph, labels, meta, level=level)
+        except Exception as e:
+            st.warning(f"Sugiyama layout failed ({e}); falling back to temporal.")
+            return gs.temporal_layout(graph, labels, meta, level=level)
+    if layout_mode == "force_directed":
+        try:
+            return gs.force_directed_x_pinned_layout(graph, labels, meta, level=level)
+        except Exception as e:
+            st.warning(f"Force-directed layout failed ({e}); falling back to temporal.")
+            return gs.temporal_layout(graph, labels, meta, level=level)
+    return None  # bfs → let the native renderer compute its own
 
 
 def _graph_stats(graph: BehaviorGraph) -> Tuple[int, int]:
@@ -926,25 +951,40 @@ with tab_recluster:
 
 with tab_layout:
     st.markdown(
-        "**Layout only.** No change to the graph structure; just plot with a different "
-        "layout to test whether the noise is structural or visual."
+        "**Layout-only.** Same graph (baseline), four different layouts. "
+        "Edges in all variants are drawn as curves whose curvature scales "
+        "with chord length so multi-column hops arc around intermediate nodes."
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Default BFS-layered**")
-        fig1 = create_behavior_graph_plot(
-            baseline_graph, min_probability=min_prob_display, height=height,
-            title="BFS-layered (default)",
-        )
-        st.plotly_chart(fig1, use_container_width=True, key="layout_bfs")
-    with c2:
-        st.markdown("**Temporal (mean-timestep x)**")
-        pos = gs.temporal_layout(baseline_graph, labels0, meta, level=level)
-        fig2 = create_behavior_graph_plot(
-            baseline_graph, min_probability=min_prob_display, height=height,
-            title="Temporal layout (E1)", pos=pos,
-        )
-        st.plotly_chart(fig2, use_container_width=True, key="layout_temporal")
+    layouts_to_show = ["bfs", "temporal", "sugiyama", "force_directed"]
+    labels_for = {
+        "bfs": "BFS-layered (original)",
+        "temporal": "Temporal (rank by time)",
+        "sugiyama": "Sugiyama (layered DAG)",
+        "force_directed": "Force-directed (x pinned to time)",
+    }
+    pos_for = {
+        "bfs": None,
+        "temporal": lambda: gs.temporal_layout(baseline_graph, labels0, meta, level=level),
+        "sugiyama": lambda: gs.sugiyama_layout(baseline_graph, labels0, meta, level=level),
+        "force_directed": lambda: gs.force_directed_x_pinned_layout(baseline_graph, labels0, meta, level=level),
+    }
+    # 2x2 grid
+    for row_start in [0, 2]:
+        cs = st.columns(2)
+        for col, mode in zip(cs, layouts_to_show[row_start:row_start + 2]):
+            with col:
+                st.markdown(f"**{labels_for[mode]}**")
+                pos = pos_for[mode]() if pos_for[mode] else None
+                render_graph_full_width(
+                    graph=baseline_graph,
+                    labels=labels0,
+                    metadata=meta,
+                    mp4_dir=_MP4_DIR if _MP4_DIR is not None else Path("/tmp/_nonexistent"),
+                    mp4_index=_MP4_INDEX,
+                    key_prefix=f"layout_only_{mode}",
+                    min_edge_prob=min_prob_display,
+                    pos=pos,
+                )
 
 
 # ── Tab 6: Combined pipeline ─────────────────────────────────────────────────

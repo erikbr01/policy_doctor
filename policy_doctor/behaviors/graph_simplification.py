@@ -629,3 +629,146 @@ def temporal_layout(
         pos[END_NODE_ID] = (pos[END_NODE_ID][0], 0.0)
 
     return pos
+
+
+def sugiyama_layout(
+    graph: BehaviorGraph,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    level: str = "rollout",
+    x_min: float = -2.5,
+    x_max: float = 2.5,
+    y_scale: float = 1.2,
+) -> Dict[int, Tuple[float, float]]:
+    """Layered (Sugiyama) layout using NetworkX multipartite_layout.
+
+    Builds a *layered DAG* where each cluster node's layer = its rank by
+    median fraction-of-episode-length. Edges within and across layers are
+    routed by NetworkX; the resulting y-positions minimise visual crossings
+    while keeping x meaningful (= temporal rank).
+
+    START is pinned left, terminals right.
+    """
+    import networkx as nx
+
+    ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+    ep_max_t: Dict[int, float] = defaultdict(float)
+    for m in metadata:
+        ep = m[ep_key]
+        t = float(m.get("timestep", m.get("window_start", 0)))
+        if t > ep_max_t[ep]:
+            ep_max_t[ep] = t
+
+    cluster_med: Dict[int, float] = {}
+    by_cluster: Dict[int, List[float]] = defaultdict(list)
+    for i, m in enumerate(metadata):
+        c = int(labels[i])
+        if c == -1:
+            continue
+        t = float(m.get("timestep", m.get("window_start", 0)))
+        ep_len = max(1.0, ep_max_t[m[ep_key]])
+        by_cluster[c].append(t / ep_len)
+    for c, ts in by_cluster.items():
+        cluster_med[c] = float(np.median(ts))
+
+    sorted_clusters = sorted(cluster_med, key=lambda c: cluster_med[c])
+    rank = {c: i + 1 for i, c in enumerate(sorted_clusters)}
+    K = len(sorted_clusters)
+
+    G = nx.DiGraph()
+    layer_of: Dict[int, int] = {}
+    for nid in graph.nodes:
+        if nid == START_NODE_ID:
+            layer_of[nid] = 0
+        elif nid in TERMINAL_NODE_IDS:
+            layer_of[nid] = K + 1
+        else:
+            layer_of[nid] = rank.get(nid, K // 2 + 1)
+        G.add_node(nid, layer=layer_of[nid])
+    for src, targets in graph.transition_probs.items():
+        for tgt, p in targets.items():
+            if src in G and tgt in G and p > 0:
+                G.add_edge(src, tgt, weight=p)
+
+    raw = nx.multipartite_layout(G, subset_key="layer", align="vertical")
+    # multipartite_layout returns x in [-0.5, 0.5]-ish — we re-scale.
+    xs = [raw[n][0] for n in raw]
+    ys = [raw[n][1] for n in raw]
+    x_lo, x_hi = min(xs), max(xs)
+    y_lo, y_hi = min(ys), max(ys)
+    span_x = max(1e-6, x_hi - x_lo)
+    span_y = max(1e-6, y_hi - y_lo)
+    pos: Dict[int, Tuple[float, float]] = {}
+    for n in raw:
+        rx, ry = raw[n]
+        nx_norm = (rx - x_lo) / span_x
+        ny_norm = (ry - y_lo) / span_y - 0.5
+        pos[n] = (x_min + nx_norm * (x_max - x_min),
+                  ny_norm * y_scale * 4)
+
+    # Force terminals
+    if SUCCESS_NODE_ID in pos and FAILURE_NODE_ID in pos:
+        pos[SUCCESS_NODE_ID] = (x_max, max(2.0, pos[SUCCESS_NODE_ID][1]))
+        pos[FAILURE_NODE_ID] = (x_max, min(-2.0, pos[FAILURE_NODE_ID][1]))
+    return pos
+
+
+def force_directed_x_pinned_layout(
+    graph: BehaviorGraph,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    level: str = "rollout",
+    x_min: float = -2.5,
+    x_max: float = 2.5,
+    iterations: int = 200,
+    seed: int = 42,
+) -> Dict[int, Tuple[float, float]]:
+    """Spring layout with x fixed to temporal rank.
+
+    Each node's x is set by its median timestep rank; spring_layout then
+    only adjusts y to minimise edge length. The result preserves the
+    temporal axis while letting y-positions drift to avoid edges passing
+    through nodes.
+    """
+    import networkx as nx
+
+    base = temporal_layout(
+        graph, labels, metadata, level=level, x_min=x_min, x_max=x_max,
+    )
+    # Build a NetworkX graph with weights so spring layout treats high-
+    # probability edges as stronger springs.
+    G = nx.DiGraph()
+    for nid in graph.nodes:
+        G.add_node(nid)
+    for src, targets in graph.transition_probs.items():
+        for tgt, p in targets.items():
+            if src in G and tgt in G and p > 0:
+                G.add_edge(src, tgt, weight=float(p))
+
+    # spring_layout treats fixed positions in raw (x, y); we want only x
+    # fixed. Workaround: run unconstrained spring, then override x.
+    initial = {nid: np.array([x, np.random.default_rng(seed + nid).uniform(-0.5, 0.5)])
+               for nid, (x, _) in base.items()}
+    new_pos = nx.spring_layout(
+        G.to_undirected(),
+        pos=initial,
+        iterations=iterations,
+        seed=seed,
+        k=0.6,
+    )
+    # Rescale y to a readable range, restore x from base
+    ys = [v[1] for v in new_pos.values()]
+    y_lo, y_hi = min(ys), max(ys)
+    span = max(1e-6, y_hi - y_lo)
+    out: Dict[int, Tuple[float, float]] = {}
+    for nid, (x_base, _) in base.items():
+        y_raw = new_pos[nid][1]
+        y_norm = (y_raw - y_lo) / span - 0.5  # in [-0.5, 0.5]
+        out[nid] = (x_base, y_norm * 5.0)
+    # Force terminals
+    if SUCCESS_NODE_ID in out and FAILURE_NODE_ID in out:
+        out[SUCCESS_NODE_ID] = (x_max, 2.0)
+        out[FAILURE_NODE_ID] = (x_max, -2.0)
+    if START_NODE_ID in out:
+        out[START_NODE_ID] = (x_min, 0.0)
+    return out
