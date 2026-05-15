@@ -299,66 +299,60 @@ def _render_pruning_section(
     st.divider()
     st.markdown("**Interactive graph** (current build / after pruning)")
     viz_graph = st.session_state["bg_graph"]
-    min_prob_prune = st.slider(
-        "Min edge probability",
-        0.0,
-        0.5,
-        0.0,
-        0.01,
-        key="bg_min_prob_prune",
-    )
-    prune_view = st.selectbox(
-        "View",
-        options=["plain", "timesteps"],
-        format_func=lambda x: {
-            "plain": "Cluster palette",
-            "timesteps": "Timestep count (viridis)",
-        }[x],
-        key="bg_graph_view_prune",
-    )
-    from policy_doctor.plotting.plotly.behavior_graph import create_interactive_behavior_graph
-    from policy_doctor.plotting.plotly.behavior_graph_timesteps import (
-        create_timestep_colored_interactive_graph,
+    _prune_labels = st.session_state.get("bg_slice_labels")
+    if _prune_labels is None:
+        _prune_labels = np.asarray(clustering_labels, dtype=np.int64).copy()
+    _render_graph_with_selector(
+        viz_graph, _prune_labels, metadata,
+        min_prob_key="bg_min_prob_prune",
+        view_key="bg_graph_view_prune",
+        graph_key="bg_graph_svg_prune",
+        height=560,
     )
 
-    if prune_view == "timesteps":
-        html_prune = create_timestep_colored_interactive_graph(
-            viz_graph, min_probability=min_prob_prune
-        )
-    else:
-        html_prune = create_interactive_behavior_graph(
-            viz_graph,
-            min_probability=min_prob_prune,
-            layout_algorithm="layeredStatic",
-            physics_enabled=False,
-        )
-    components.html(html_prune, height=560, scrolling=True)
 
-
-def _render_structure_visualizations(
+def _render_graph_with_selector(
     graph: Any,
     labels: np.ndarray,
     metadata: List[Dict],
+    min_prob_key: str,
+    view_key: str,
+    graph_key: str,
+    height: int = 700,
+    show_value_option: bool = False,
+    values: Optional[Dict] = None,
+    gamma: float = 0.99,
 ) -> None:
-    """Pyvis + transition matrix only (no V(s), transition values, or advantage)."""
+    """Shared graph renderer: SVG component or Pyvis, with node panel."""
     from policy_doctor import plotting
     from policy_doctor.plotting.plotly.behavior_graph import create_interactive_behavior_graph
     from policy_doctor.plotting.plotly.behavior_graph_timesteps import (
         create_timestep_colored_interactive_graph,
     )
 
-    st.markdown("**Interactive graph**")
-
-    view_mode = st.selectbox(
-        "View",
-        options=["plain", "timesteps"],
-        format_func=lambda x: {
-            "plain": "Cluster palette (structure only)",
+    renderer_col, view_col = st.columns([1, 2])
+    with renderer_col:
+        renderer = st.selectbox(
+            "Renderer",
+            options=["svg", "pyvis"],
+            format_func=lambda x: {"svg": "SVG (clickable nodes)", "pyvis": "Pyvis (physics)"}[x],
+            key=f"{view_key}_renderer",
+        )
+    with view_col:
+        view_options = ["plain", "timesteps"]
+        view_labels = {
+            "plain": "Cluster palette",
             "timesteps": "Timestep count (viridis)",
-        }[x],
-        key="bg_graph_view_structure",
-        help="No value function — only topology and transition probabilities.",
-    )
+        }
+        if show_value_option and values:
+            view_options = ["value"] + view_options
+            view_labels["value"] = "Value-colored (V(s))"
+        view_mode = st.selectbox(
+            "Color mode",
+            options=view_options,
+            format_func=lambda x: view_labels.get(x, x),
+            key=view_key,
+        )
 
     min_prob = st.slider(
         "Min edge probability",
@@ -366,19 +360,139 @@ def _render_structure_visualizations(
         0.5,
         0.0,
         0.01,
-        key="bg_min_prob",
+        key=min_prob_key,
     )
 
-    if view_mode == "timesteps":
-        html = create_timestep_colored_interactive_graph(graph, min_probability=min_prob)
-    else:
-        html = create_interactive_behavior_graph(
-            graph,
-            min_probability=min_prob,
-            layout_algorithm="layeredStatic",
-            physics_enabled=False,
+    # Show what representation was used for this clustering
+    clust_src = st.session_state.get("clustering_influence_source") or st.session_state.get(
+        "clustering_params", {}
+    ).get("clustering_influence_source")
+    if clust_src:
+        _SRC_LABELS = {
+            "infembed": "InfEmbed",
+            "state": "State",
+            "state_action": "State+Action",
+            "trak": "TRAK",
+            "policy_emb": "Policy embeddings",
+        }
+        emb_label = _SRC_LABELS.get(str(clust_src), str(clust_src))
+        st.caption(f"Graph built from **{emb_label}** clustering")
+
+    if renderer == "svg":
+        from policy_doctor.streamlit_app.user_study.graph_plot import (
+            compute_pruned_graph_nodes,
+            render_graph_component,
         )
-    components.html(html, height=700, scrolling=True)
+        excluded = compute_pruned_graph_nodes(
+            graph, min_visit_prob=0.0, n_total=graph.num_episodes, min_edge_prob=min_prob
+        )
+        clicked = render_graph_component(
+            graph,
+            height=height,
+            key=graph_key,
+            excluded_node_ids=excluded,
+            min_edge_prob=min_prob,
+        )
+        if clicked is not None and clicked in graph.nodes:
+            _render_node_panel(clicked, graph, labels, metadata, key_prefix=graph_key)
+        else:
+            st.caption("Click a node to explore it — stats and transitions appear here.")
+    else:
+        if show_value_option and view_mode == "value" and values:
+            from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
+            html = create_value_colored_interactive_graph(graph, values, gamma=gamma, min_probability=min_prob)
+        elif view_mode == "timesteps":
+            html = create_timestep_colored_interactive_graph(graph, min_probability=min_prob)
+        else:
+            html = create_interactive_behavior_graph(
+                graph,
+                min_probability=min_prob,
+                layout_algorithm="layeredStatic",
+                physics_enabled=False,
+            )
+        components.html(html, height=height, scrolling=True)
+
+
+def _render_node_panel(
+    node_id: int,
+    graph: Any,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    key_prefix: str,
+) -> None:
+    """Stats panel for a clicked node in the SVG graph."""
+    import plotly.graph_objects as go
+    from policy_doctor.behaviors.behavior_graph import FAILURE_NODE_ID, SUCCESS_NODE_ID
+
+    node = graph.nodes.get(node_id)
+    if node is None:
+        return
+
+    with st.container(border=True):
+        header_col, close_col = st.columns([10, 1])
+        with header_col:
+            st.subheader(f"Node: {node.name}")
+        with close_col:
+            if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
+                st.session_state.pop(f"{key_prefix}_selected", None)
+                st.rerun()
+
+        # Episode success stats
+        ep_key = "rollout_idx" if graph.level == "rollout" else "demo_idx"
+        ep_success: Dict = {}
+        for meta in metadata:
+            eidx = meta.get(ep_key)
+            if eidx is not None and eidx not in ep_success:
+                ep_success[eidx] = meta.get("success")
+
+        success_count = sum(1 for eidx in node.episode_indices if ep_success.get(eidx) is True)
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Timesteps", node.num_timesteps)
+        m2.metric("Episodes", node.num_episodes)
+        m3.metric(
+            "Success rate",
+            f"{success_count / node.num_episodes:.0%}" if node.num_episodes else "—"
+        )
+
+        # Outgoing transitions bar chart
+        outgoing = graph.transition_probs.get(node_id, {})
+        if outgoing and not node.is_special:
+            tgt_labels = [graph.nodes[t].name if t in graph.nodes else str(t) for t in outgoing]
+            tgt_probs = list(outgoing.values())
+            bar_colors = [
+                "#2ca02c" if t == SUCCESS_NODE_ID else "#d62728" if t == FAILURE_NODE_ID else "#1f77b4"
+                for t in outgoing
+            ]
+            fig_trans = go.Figure(go.Bar(
+                x=tgt_probs, y=tgt_labels, orientation="h", marker_color=bar_colors
+            ))
+            fig_trans.update_layout(
+                title="Where does this node lead?",
+                height=max(100, 32 * len(tgt_labels) + 60),
+                margin=dict(l=0, r=0, t=36, b=0),
+                xaxis=dict(range=[0, 1], title="Probability"),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_trans, use_container_width=True, key=f"{key_prefix}_node_trans")
+
+
+def _render_structure_visualizations(
+    graph: Any,
+    labels: np.ndarray,
+    metadata: List[Dict],
+) -> None:
+    """Graph structure (no value function)."""
+    from policy_doctor import plotting
+
+    st.markdown("**Interactive graph**")
+    _render_graph_with_selector(
+        graph, labels, metadata,
+        min_prob_key="bg_min_prob",
+        view_key="bg_graph_view_structure",
+        graph_key="bg_graph_svg_structure",
+        height=700,
+    )
 
     with st.expander("Transition matrix", expanded=False):
         fig_trans = plotting.create_transition_matrix_heatmap(graph)
@@ -398,55 +512,18 @@ def _render_mrp_visualizations(
 ) -> None:
     """Value-colored graph, node values, advantage views, timelines."""
     from policy_doctor import plotting
-    from policy_doctor.plotting.plotly.behavior_graph import (
-        create_interactive_behavior_graph,
-        create_value_colored_interactive_graph,
-    )
-    from policy_doctor.plotting.plotly.behavior_graph_timesteps import (
-        create_timestep_colored_interactive_graph,
-    )
 
     st.markdown("**Interactive graph (with values)**")
-
-    view_mode = st.selectbox(
-        "View",
-        options=["value", "plain", "timesteps"],
-        format_func=lambda x: {
-            "value": "Value-colored (V(s) on nodes, transition values on edges)",
-            "plain": "Cluster palette",
-            "timesteps": "Timestep count (viridis)",
-        }[x],
-        key="bg_graph_view_mrp",
+    _render_graph_with_selector(
+        graph, labels, metadata,
+        min_prob_key="bg_min_prob_mrp",
+        view_key="bg_graph_view_mrp",
+        graph_key="bg_graph_svg_mrp",
+        height=700,
+        show_value_option=True,
+        values=values,
+        gamma=gamma,
     )
-
-    min_prob_mrp = st.slider(
-        "Min edge probability",
-        0.0,
-        0.5,
-        0.0,
-        0.01,
-        key="bg_min_prob_mrp",
-    )
-
-    if view_mode == "value":
-        html = create_value_colored_interactive_graph(
-            graph,
-            values,
-            gamma=gamma,
-            min_probability=min_prob_mrp,
-        )
-    elif view_mode == "timesteps":
-        html = create_timestep_colored_interactive_graph(
-            graph, min_probability=min_prob_mrp
-        )
-    else:
-        html = create_interactive_behavior_graph(
-            graph,
-            min_probability=min_prob_mrp,
-            layout_algorithm="layeredStatic",
-            physics_enabled=False,
-        )
-    components.html(html, height=700, scrolling=True)
 
     with st.expander("Node values (V per state)", expanded=False):
         fig_values = plotting.create_node_value_bar_chart(graph, values)
