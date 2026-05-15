@@ -250,38 +250,80 @@ def _plot(graph: BehaviorGraph, labels: np.ndarray, title: str) -> go.Figure:
     )
 
 
-# Auto-discover MP4s for the source clustering's task. The path looks like
-# .../configs/<task>/clustering/<name>; we use the <task> as the subdir name.
-def _resolve_mp4_dir_and_index() -> Tuple[Optional[Path], Dict]:
+# Auto-discover MP4s for the source clustering's task. Only accept MP4s
+# whose episode indices and frame counts are consistent with the clustering's
+# metadata — otherwise we'd display wrong videos for the wrong task.
+def _task_tag_from_path(p: Path) -> Optional[str]:
+    parts = p.parts
+    for i, part in enumerate(parts):
+        if part == "configs" and i + 1 < len(parts):
+            return parts[i + 1]
+        if part == "e1_experiments" and i + 1 < len(parts):
+            return None  # e1 experiments are on different tasks; can't match
+    return None
+
+
+def _mp4_matches_clustering(mp4_index: Dict, meta_list: List[Dict]) -> bool:
+    """Verify the MP4 index's episodes cover the clustering's windows.
+
+    Each (rollout_idx, window_end) in meta must be ≤ the corresponding
+    episode's frame_count in the MP4 index. Otherwise the MP4s are for a
+    different task / shorter rollouts.
+    """
+    ep_frames = {ep["index"]: int(ep.get("frame_count", 0)) for ep in mp4_index.get("episodes", [])}
+    if not ep_frames:
+        return False
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in meta_list) else "demo_idx"
+    sample = meta_list[::max(1, len(meta_list) // 200)]  # 200-pt sanity sample
+    for m in sample:
+        ep = m.get(ep_key)
+        if ep is None or ep not in ep_frames:
+            return False
+        we = int(m.get("window_end", m.get("timestep", 0) + 1))
+        if we > ep_frames[ep]:
+            return False
+    return True
+
+
+def _resolve_mp4_dir_and_index() -> Tuple[Optional[Path], Dict, Optional[str]]:
+    """Returns (path, index, mismatch_reason)."""
     if not mp4_root.exists():
-        return None, {"episodes": []}
-    parts = clustering_path.parts
-    task_tag = None
-    for i, p in enumerate(parts):
-        if p == "configs" and i + 1 < len(parts):
-            task_tag = parts[i + 1]
-            break
-    candidates = []
+        return None, {"episodes": []}, f"MP4 root `{mp4_root}` does not exist."
+    task_tag = _task_tag_from_path(clustering_path)
+    candidates: List[Path] = []
     if task_tag:
         candidates.append(mp4_root / task_tag)
-    # Try discovering ANY subdir of mp4_root with index.json
-    for c in mp4_root.iterdir() if mp4_root.is_dir() else []:
-        idx = c / "index.json"
-        if idx.exists():
-            candidates.append(c)
+    if mp4_root.is_dir():
+        for c in mp4_root.iterdir():
+            if (c / "index.json").exists() and c not in candidates:
+                candidates.append(c)
     for c in candidates:
-        idx = c / "index.json"
-        if idx.exists():
-            try:
-                return c, json.load(open(idx))
-            except Exception:
-                pass
-    return None, {"episodes": []}
+        idx_path = c / "index.json"
+        if not idx_path.exists():
+            continue
+        try:
+            mp4_idx = json.load(open(idx_path))
+        except Exception:
+            continue
+        if _mp4_matches_clustering(mp4_idx, meta):
+            return c, mp4_idx, None
+    if task_tag:
+        return None, {"episodes": []}, (
+            f"No MP4 directory in `{mp4_root}` matches the source clustering's task "
+            f"`{task_tag}` (episode indices / frame counts disagree). "
+            f"Cluster inspector and episode browser are disabled."
+        )
+    return None, {"episodes": []}, (
+        f"This clustering is from an e1_experiments sweep — no MP4s available. "
+        f"Cluster inspector and episode browser are disabled."
+    )
 
 
-_MP4_DIR, _MP4_INDEX = _resolve_mp4_dir_and_index()
+_MP4_DIR, _MP4_INDEX, _MP4_MISMATCH = _resolve_mp4_dir_and_index()
 if _MP4_DIR is not None:
     st.sidebar.success(f"MP4s: {_MP4_DIR.name} ({len(_MP4_INDEX.get('episodes', []))} eps)")
+elif _MP4_MISMATCH:
+    st.sidebar.warning(_MP4_MISMATCH)
 
 
 # ── Cluster names: per-clustering YAML persistence ───────────────────────────
@@ -605,8 +647,12 @@ with tab_inspect:
                 success_rate = eps_success_in / len(eps_in) if eps_in else 0.0
                 pos_fracs = []
                 for _, ep_idx, ws, we, _ in wins:
-                    total_f = mp4_by_ep.get(ep_idx, {}).get("frame_count") or 1
-                    pos_fracs.append(((ws + we) / 2) / total_f)
+                    total_f = mp4_by_ep.get(ep_idx, {}).get("frame_count") or 0
+                    if total_f <= 0:
+                        continue  # skip windows for which we don't know episode length
+                    frac = ((ws + we) / 2) / total_f
+                    if 0.0 <= frac <= 1.5:  # tolerate small overshoot from window padding
+                        pos_fracs.append(min(1.0, frac))
                 mean_pos = float(np.mean(pos_fracs)) if pos_fracs else 0.0
 
                 # ── Build a deterministic ordering of windows for paging.    ──
