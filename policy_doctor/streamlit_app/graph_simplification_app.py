@@ -263,7 +263,7 @@ def _render_episode_browser(
     labels: np.ndarray,
     title: str,
     key_prefix: str,
-    episodes_per_page: int = 5,
+    episodes_per_page: int = 6,
 ) -> None:
     """Paginated episodes with MP4 player + per-frame cluster-assignment timeline.
 
