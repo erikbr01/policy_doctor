@@ -25,6 +25,20 @@ def render_strategy_allocator(
 ) -> dict[str, int]:
     allocations: dict[str, int] = {}
 
+    # Show current remaining budget from last render (reads session state before widgets render)
+    current_total = sum(
+        int(st.session_state.get(f"{key_prefix}_{s['id']}", 0)) for s in strategies
+    )
+    remaining_header = total_budget - current_total
+    cols_hdr = st.columns([3, 1])
+    cols_hdr[0].caption(f"Each click adds/removes **{allocation_step} demos**.")
+    if remaining_header > 0:
+        cols_hdr[1].caption(f"**{remaining_header}** of {total_budget} remaining")
+    elif remaining_header == 0:
+        cols_hdr[1].caption(f"✓ fully allocated")
+    else:
+        cols_hdr[1].caption(f"⚠ over by {-remaining_header}")
+
     for strategy in strategies:
         sid = strategy["id"]
         current = st.session_state.get(f"{key_prefix}_{sid}", 0)

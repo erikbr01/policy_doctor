@@ -31,8 +31,7 @@ def _node_display_name(node_id: int, graph: BehaviorGraph) -> str:
     if node_id == END_NODE_ID:
         return "END"
     node = graph.nodes.get(node_id)
-    name = node.name if node else str(node_id)
-    return f"Node {node_id}: {name}"
+    return node.name if node else str(node_id)
 
 
 def _format_path(path_nodes: list[int], graph: BehaviorGraph) -> str:
@@ -48,8 +47,7 @@ def _format_path(path_nodes: list[int], graph: BehaviorGraph) -> str:
             parts.append("END")
         else:
             node = graph.nodes.get(nid)
-            name = node.name if node else str(nid)
-            parts.append(f"Node {nid}: {name}")
+            parts.append(node.name if node else str(nid))
     return " → ".join(parts)
 
 
@@ -157,19 +155,18 @@ def render_path_explorer(
     ep_counts = [len(_get_episodes_for_path(path, labels, metadata)) for path, _, _ in terminal_paths]
 
     path_labels = []
-    path_probs = []
     path_colors = []
     path_texts = []
     for (path, prob, _), n_ep in zip(terminal_paths, ep_counts):
         terminal = path[-1]
         label = _format_path(path, graph)
         path_labels.append(label)
-        path_probs.append(prob)
         path_colors.append("#2ca02c" if terminal == SUCCESS_NODE_ID else "#d62728")
-        path_texts.append(f"{n_ep} ep")
+        path_texts.append(f"p={prob:.3f}")
 
+    max_ep = max(ep_counts) if ep_counts else 1
     fig_paths = go.Figure(go.Bar(
-        x=path_probs,
+        x=ep_counts,
         y=path_labels,
         orientation="h",
         marker_color=path_colors,
@@ -179,8 +176,8 @@ def render_path_explorer(
     ))
     fig_paths.update_layout(
         height=max(120, 40 * len(path_labels) + 60),
-        margin=dict(l=0, r=60, t=20, b=20),
-        xaxis=dict(title="Path probability", range=[0, max(path_probs) * 1.35]),
+        margin=dict(l=0, r=80, t=20, b=20),
+        xaxis=dict(title="Episodes following this path", range=[0, max_ep * 1.45]),
         yaxis=dict(title=None, autorange="reversed"),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -189,15 +186,15 @@ def render_path_explorer(
 
     st.divider()
 
-    def _path_select_label(i: int, path: list[int], prob: float) -> str:
+    def _path_select_label(i: int, path: list[int], prob: float, n_ep: int) -> str:
         terminal = path[-1]
         outcome = "SUCCESS" if terminal == SUCCESS_NODE_ID else "FAILURE"
         short = " → ".join(_node_display_name(n, graph) for n in path)
-        return f"Path {i + 1} (p={prob:.3f}, {outcome}) — {short}"
+        return f"Path {i + 1} ({n_ep} ep, {outcome}) — {short}"
 
     _NO_SELECTION = "— Select a path to explore and highlight it in the graph —"
     select_options = [_NO_SELECTION] + [
-        _path_select_label(i, path, prob)
+        _path_select_label(i, path, prob, ep_counts[i])
         for i, (path, prob, _) in enumerate(terminal_paths)
     ]
     selected_label = st.selectbox(
@@ -237,7 +234,7 @@ def render_path_explorer(
         else:
             node = graph.nodes.get(nid)
             name = node.name if node else str(nid)
-            part = f"<span style='background:#1f77b4;color:white;padding:4px 10px;border-radius:4px;'>Node {nid}: {name}</span>"
+            part = f"<span style='background:#1f77b4;color:white;padding:4px 10px;border-radius:4px;'>{name}</span>"
         flow_parts.append(part)
 
     arrow = " <span style='color:#aaa;font-size:1.2em;'>→</span> "

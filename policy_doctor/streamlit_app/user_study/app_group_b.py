@@ -9,14 +9,20 @@ import plotly.graph_objects as go
 import streamlit as st
 import yaml
 
+import base64
+import cv2
+
 from policy_doctor.behaviors.behavior_graph import (
     BehaviorGraph,
+    END_NODE_ID,
     FAILURE_NODE_ID,
+    START_NODE_ID,
     SUCCESS_NODE_ID,
 )
 from policy_doctor.streamlit_app.components.mp4_player import mp4_player
 from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
 from policy_doctor.streamlit_app.user_study.initial_conditions import (
+    _episodes_for_path as _ic_episodes_for_path,
     _initial_slice_per_episode,
     _success_per_episode,
 )
@@ -127,7 +133,7 @@ if index is None or strategies is None or graph is None:
         "**Group B** — You have access to rollout videos and a behavior graph. "
         "Use the sidebar to load data, then follow the guided steps below."
     )
-    st.info("Use the sidebar to load an MP4 directory, study config, and clustering directory, then click **Load**.")
+    st.info("Select a session from the sidebar and click **Load** to begin.")
     st.stop()
 
 mp4_dir = Path(mp4_dir_str)
@@ -173,7 +179,7 @@ st.markdown(
 st.markdown(
     "> **How to read it:** Each circle is a behavioral mode. "
     "Arrows show how often the policy moves from one mode to another. "
-    "Use the selector below the graph to pick a node and watch example videos from that mode."
+    "**Click any node** to see example videos and outgoing transitions from that mode."
 )
 
 highlighted_path = st.session_state.get("gb_pex_highlighted_path")
@@ -270,16 +276,11 @@ with fa_right:
         )
         st.plotly_chart(fig_pie, use_container_width=True, key="gb_fa_pie")
 
-st.markdown("**Explore failure behavior at high-risk nodes**")
-st.caption(
-    "Each panel below shows a node where the policy frequently transitions to failure. "
-    "Watch the clips to understand what the robot is doing in these states."
-)
-
 ep_key_meta = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
 
-# Build per-node failure episode list: episodes that pass through this node AND fail
+# ── Shared helpers ─────────────────────────────────────────────────────────────
 def _failure_eps_for_node(node_id: int) -> list[tuple[int, int, int]]:
+    """All (ep_idx, ts_start, ts_end) triples in this node that belong to failing episodes."""
     ep_slices: dict[int, list[int]] = {}
     ep_success_map: dict[int, bool] = {}
     for i, m in enumerate(metadata):
@@ -292,9 +293,9 @@ def _failure_eps_for_node(node_id: int) -> list[tuple[int, int, int]]:
             ep_success_map[ep_idx] = bool(m["success"])
     result = []
     for ep_idx, tss in ep_slices.items():
-        if not ep_success_map.get(ep_idx, True):  # only failures
+        if not ep_success_map.get(ep_idx, True):
             result.append((ep_idx, min(tss), max(tss)))
-    return sorted(result)[:6]  # up to 6 failure clips per node
+    return sorted(result)
 
 def _mp4_entry(ep_idx: int) -> Optional[dict]:
     for ep in index.get("episodes", []):
@@ -302,17 +303,72 @@ def _mp4_entry(ep_idx: int) -> Optional[dict]:
             return ep
     return None
 
-for node_name, node_id, rate in top_failure_nodes[:3]:
+def _first_frame_b64(mp4_path: Path) -> Optional[str]:
+    cap = cv2.VideoCapture(str(mp4_path))
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        return None
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return base64.b64encode(buf.tobytes()).decode()
+
+# ── 4A: High-failure-rate nodes (paginated) ───────────────────────────────────
+st.markdown("#### 4A — Nodes Most Likely to Lead to Failure")
+st.caption(
+    "Each panel shows a behavior node where exits frequently go to FAILURE. "
+    "Watch the highlighted clips to understand what the robot is doing in these states."
+)
+
+_fa_nodes = [(name, nid, rate) for name, nid, rate in top_failure_nodes if rate > 0]
+_FA_PAGE_SIZE = 3
+_fa_page_key = "gb_fa_node_page"
+_fa_page = st.session_state.get(_fa_page_key, 0)
+_fa_n_pages = max(1, (len(_fa_nodes) + _FA_PAGE_SIZE - 1) // _FA_PAGE_SIZE)
+
+if _fa_n_pages > 1:
+    _pc, _pp, _pn = st.columns([1, 3, 1])
+    with _pc:
+        if st.button("← Prev", disabled=(_fa_page == 0), key="gb_fa_prev"):
+            st.session_state[_fa_page_key] = max(0, _fa_page - 1)
+            st.rerun()
+    _pp.caption(f"Nodes {_fa_page * _FA_PAGE_SIZE + 1}–{min((_fa_page + 1) * _FA_PAGE_SIZE, len(_fa_nodes))} of {len(_fa_nodes)}")
+    with _pn:
+        if st.button("Next →", disabled=(_fa_page >= _fa_n_pages - 1), key="gb_fa_next"):
+            st.session_state[_fa_page_key] = min(_fa_n_pages - 1, _fa_page + 1)
+            st.rerun()
+
+_page_fa_nodes = _fa_nodes[_fa_page * _FA_PAGE_SIZE:(_fa_page + 1) * _FA_PAGE_SIZE]
+_CLIPS_PER_PAGE = 6
+
+for node_name, node_id, rate in _page_fa_nodes:
     fail_clips = _failure_eps_for_node(node_id)
     if not fail_clips:
         continue
+    n_clips = len(fail_clips)
+    clip_word = "clip" if n_clips == 1 else "clips"
     with st.expander(
-        f"**{node_name}** — {rate:.0%} of exits go to failure  ({len(fail_clips)} clips)",
-        expanded=True,
+        f"**{node_name}** — {rate:.0%} of exits go to failure  ({n_clips} {clip_word})",
+        expanded=False,
     ):
-        # 3 per row
-        for row_start in range(0, len(fail_clips), 3):
-            row = fail_clips[row_start:row_start + 3]
+        _cp_key = f"gb_fa_clip_page_{node_id}"
+        _cp = st.session_state.get(_cp_key, 0)
+        _cn_pages = max(1, (n_clips + _CLIPS_PER_PAGE - 1) // _CLIPS_PER_PAGE)
+        _page_clips = fail_clips[_cp * _CLIPS_PER_PAGE:(_cp + 1) * _CLIPS_PER_PAGE]
+
+        if _cn_pages > 1:
+            _cc1, _cc2, _cc3 = st.columns([1, 3, 1])
+            with _cc1:
+                if st.button("← Prev", disabled=(_cp == 0), key=f"gb_fa_cp_prev_{node_id}"):
+                    st.session_state[_cp_key] = max(0, _cp - 1)
+                    st.rerun()
+            _cc2.caption(f"Clips {_cp * _CLIPS_PER_PAGE + 1}–{min((_cp + 1) * _CLIPS_PER_PAGE, n_clips)} of {n_clips}")
+            with _cc3:
+                if st.button("Next →", disabled=(_cp >= _cn_pages - 1), key=f"gb_fa_cp_next_{node_id}"):
+                    st.session_state[_cp_key] = min(_cn_pages - 1, _cp + 1)
+                    st.rerun()
+
+        for row_start in range(0, len(_page_clips), 3):
+            row = _page_clips[row_start:row_start + 3]
             cols = st.columns(3)
             for col, (ep_idx, ts_start, ts_end) in zip(cols, row):
                 entry = _mp4_entry(ep_idx)
@@ -328,6 +384,84 @@ for node_name, node_id, rate in top_failure_nodes[:3]:
                         slice_end=ts_end,
                         total_frames=entry.get("frame_count"),
                     )
+
+# ── 4B: Failure traces by initial behavior ────────────────────────────────────
+st.divider()
+st.markdown("#### 4B — Which Initial Behaviors Lead to Failure?")
+st.markdown(
+    "Failing episodes are grouped by the **first behavior the robot exhibits after starting**. "
+    "This reveals whether specific initial arm positions or object configurations "
+    "consistently funnel episodes toward failure. Thumbnails show the scene at frame 0."
+)
+
+_IC_SPECIAL = frozenset({START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
+_fail_ep_ids: set[int] = {
+    ep.get("index") for ep in index.get("episodes", []) if ep.get("success") is False
+}
+
+_all_graph_paths = graph.enumerate_paths(max_paths=100)
+_failure_graph_paths = [
+    (path, prob) for path, prob, _ in _all_graph_paths
+    if path and path[-1] == FAILURE_NODE_ID
+]
+
+_ic_groups: dict[int, dict] = {}
+for _path, _prob in _failure_graph_paths:
+    _first_b = next((n for n in _path if n not in _IC_SPECIAL), None)
+    if _first_b is None:
+        continue
+    _matching = _ic_episodes_for_path(_path, labels, metadata)
+    _fail_matching = [ep for ep in _matching if ep in _fail_ep_ids]
+    if not _fail_matching:
+        continue
+    if _first_b not in _ic_groups:
+        _ic_groups[_first_b] = {"paths": [], "episodes": set()}
+    _ic_groups[_first_b]["paths"].append((_path, _prob, len(_fail_matching)))
+    _ic_groups[_first_b]["episodes"].update(_fail_matching)
+
+_sorted_ic = sorted(_ic_groups.items(), key=lambda x: -len(x[1]["episodes"]))
+
+if not _sorted_ic:
+    st.info("No failure paths with initial behavior grouping found.")
+else:
+    for _fnid, _grp in _sorted_ic:
+        _fnode = graph.nodes.get(_fnid)
+        _fnode_name = _fnode.name if _fnode else str(_fnid)
+        _grp_eps = sorted(_grp["episodes"])
+        _top_fps = sorted(_grp["paths"], key=lambda x: -x[2])
+
+        with st.expander(
+            f"**{_fnode_name}** — {len(_grp_eps)} failing episode(s)",
+            expanded=False,
+        ):
+            st.caption("Failure paths through this starting behavior (ranked by episode count):")
+            for _fp, _fprob, _fn_ep in _top_fps[:6]:
+                _fp_str = " → ".join(
+                    ("START" if n == START_NODE_ID
+                     else "✗ FAILURE" if n == FAILURE_NODE_ID
+                     else graph.nodes[n].name if n in graph.nodes else str(n))
+                    for n in _fp if n != END_NODE_ID
+                )
+                st.caption(f"  {_fp_str}  ({_fn_ep} ep)")
+
+            st.markdown("**Initial scene** (frame 0):")
+            _ic_show = _grp_eps[:9]
+            _ic_cols = st.columns(3)
+            for _ci, _ep_idx in enumerate(_ic_show):
+                _entry = _mp4_entry(_ep_idx)
+                if _entry is None:
+                    continue
+                with _ic_cols[_ci % 3]:
+                    _img = _first_frame_b64(mp4_dir / _entry["path"])
+                    if _img:
+                        st.caption(f"Ep {_ep_idx}")
+                        st.image(f"data:image/jpeg;base64,{_img}", use_container_width=True)
+
+st.info(
+    "Use what you found above to guide your choices in Step 5 below. "
+    "For example, nodes that frequently exit to failure suggest targeted data collection "
+    "around those behaviors (e.g. constrained initial positions or recovery demos)."
+)
 
 # ── Section 5: Strategy design ────────────────────────────────────────────────
 st.divider()

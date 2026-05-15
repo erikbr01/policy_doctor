@@ -108,11 +108,30 @@ def _render_node_panel(
         else:
             ep_slices = _episodes_for_node(node_id, labels, metadata)
             ep_slices_by_idx = {e[0]: (e[1], e[2]) for e in ep_slices}
-            show_eps = node.episode_indices[:3]
+            all_eps = node.episode_indices
+            n_eps = len(all_eps)
+            _VIDS_PER_PAGE = 3
 
-            if not show_eps:
+            if not all_eps:
                 st.info("No videos available for this node.")
             else:
+                _vp_key = f"{key_prefix}_vid_page_{node_id}"
+                _vp = st.session_state.get(_vp_key, 0)
+                _vp_total = max(1, (n_eps + _VIDS_PER_PAGE - 1) // _VIDS_PER_PAGE)
+                show_eps = all_eps[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
+
+                if _vp_total > 1:
+                    _vc1, _vc2, _vc3 = st.columns([1, 3, 1])
+                    with _vc1:
+                        if st.button("← Prev", disabled=(_vp == 0), key=f"{key_prefix}_vp_prev_{node_id}"):
+                            st.session_state[_vp_key] = max(0, _vp - 1)
+                            st.rerun()
+                    _vc2.caption(f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}")
+                    with _vc3:
+                        if st.button("Next →", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
+                            st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
+                            st.rerun()
+
                 vid_cols = st.columns(min(3, len(show_eps)))
                 available = 0
                 for col, ep_idx in zip(vid_cols, show_eps):
@@ -152,6 +171,7 @@ def _render_node_panel(
             m1.metric("Timesteps", node.num_timesteps)
             m2.metric("Episodes", node.num_episodes)
             m3.metric("Success rate", f"{success_count / node.num_episodes:.0%}" if node.num_episodes else "—")
+            st.caption("Success rate = fraction of episodes that visit this node and ultimately succeed.")
 
         outgoing = graph.transition_probs.get(node_id, {})
         with trans_col:
