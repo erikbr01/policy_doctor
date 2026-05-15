@@ -523,38 +523,72 @@ with tab_inspect:
                 eps_in = {w[1] for w in wins}
                 eps_success_in = sum(1 for e in eps_in if ep_success.get(e) is True)
                 success_rate = eps_success_in / len(eps_in) if eps_in else 0.0
-                # Window position fractions
                 pos_fracs = []
                 for _, ep_idx, ws, we, _ in wins:
                     total_f = mp4_by_ep.get(ep_idx, {}).get("frame_count") or 1
                     pos_fracs.append(((ws + we) / 2) / total_f)
                 mean_pos = float(np.mean(pos_fracs)) if pos_fracs else 0.0
 
-                # Header
-                st.markdown(
-                    f"### {cid}: **{_name_for(cid)}**  ·  "
-                    f"{n_total} windows · {len(eps_in)} episodes · "
-                    f"{success_rate:.0%} success · mean position {mean_pos:.0%} through episode"
-                )
-
-                # Sample windows (one per episode if possible — much more diverse than raw random)
-                wins_by_ep: Dict[int, List[Tuple[int, int, int, int, Optional[bool]]]] = {}
+                # ── Build a deterministic ordering of windows for paging.    ──
+                # Strategy "diverse first": iterate episodes round-robin so each
+                # page samples from many episodes before repeating; then fall
+                # back to remaining windows in order.
+                cluster_rng = np.random.default_rng(int(cid) * 9967 + 42)
+                wins_by_ep_local: Dict[int, List] = {}
                 for w in wins:
-                    wins_by_ep.setdefault(w[1], []).append(w)
-                ep_order = list(wins_by_ep.keys())
-                rng.shuffle(ep_order)
-                samples = []
-                for ep in ep_order:
-                    samples.append(rng.choice(wins_by_ep[ep]))
-                    if len(samples) >= n_clips:
+                    wins_by_ep_local.setdefault(w[1], []).append(w)
+                # Shuffle within each episode (random clip pick), then shuffle episode order
+                for ep, lst in wins_by_ep_local.items():
+                    cluster_rng.shuffle(lst)
+                ep_order_local = list(wins_by_ep_local.keys())
+                cluster_rng.shuffle(ep_order_local)
+                # Round-robin: take 1 from each episode, then 2 from each, ...
+                ordered: List = []
+                round_idx = 0
+                while sum(len(v) for v in wins_by_ep_local.values()) > 0:
+                    for ep in ep_order_local:
+                        bucket = wins_by_ep_local[ep]
+                        if round_idx < len(bucket):
+                            ordered.append(bucket[round_idx])
+                    round_idx += 1
+                    if all(round_idx >= len(b) for b in wins_by_ep_local.values()):
                         break
-                # Fill from remaining if we don't have enough distinct episodes
-                if len(samples) < n_clips:
-                    remaining = [w for w in wins if w not in samples]
-                    rng.shuffle(remaining)
-                    samples.extend(remaining[: n_clips - len(samples)])
 
-                # 3-column grid
+                # Pagination state
+                page_key = f"inspect_page_{_names_key()}_{cid}"
+                if page_key not in st.session_state:
+                    st.session_state[page_key] = 0
+                total_pages = max(1, (n_total + int(n_clips) - 1) // int(n_clips))
+                page = max(0, min(st.session_state[page_key], total_pages - 1))
+
+                # Header + pager controls
+                h_col, prev_col, page_col, next_col = st.columns([8, 1, 2, 1])
+                with h_col:
+                    st.markdown(
+                        f"### {cid}: **{_name_for(cid)}**  ·  "
+                        f"{n_total} windows · {len(eps_in)} episodes · "
+                        f"{success_rate:.0%} success · mean position {mean_pos:.0%} through episode"
+                    )
+                with prev_col:
+                    if st.button("←", key=f"{page_key}_prev", disabled=(page == 0)):
+                        st.session_state[page_key] = max(0, page - 1)
+                        st.rerun()
+                with page_col:
+                    st.markdown(
+                        f"<div style='text-align:center;padding-top:8px;color:#888;font-size:0.85em;'>"
+                        f"Page {page + 1}/{total_pages} · clips {page * int(n_clips) + 1}–"
+                        f"{min((page + 1) * int(n_clips), n_total)} of {n_total}"
+                        f"</div>", unsafe_allow_html=True,
+                    )
+                with next_col:
+                    if st.button("→", key=f"{page_key}_next", disabled=(page >= total_pages - 1)):
+                        st.session_state[page_key] = min(total_pages - 1, page + 1)
+                        st.rerun()
+
+                lo = page * int(n_clips)
+                hi = min(lo + int(n_clips), n_total)
+                samples = ordered[lo:hi]
+
                 cpr = 3
                 for row_i in range(0, len(samples), cpr):
                     row = samples[row_i:row_i + cpr]
@@ -569,7 +603,7 @@ with tab_inspect:
                             st.caption(f"Ep {ep_idx} {status} · frames {ws}–{we}")
                             mp4_player(
                                 _MP4_DIR / ep_entry["path"],
-                                key=f"inspect_{cid}_{ep_idx}_{ws}",
+                                key=f"inspect_{cid}_{ep_idx}_{ws}_p{page}",
                                 max_height_px=180,
                                 total_frames=total_f,
                                 fps=fps,
