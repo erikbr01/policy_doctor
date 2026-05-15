@@ -75,7 +75,7 @@ All found and fixed 2026-05-14 during initial launch attempts:
 | `run_k_sweep_tight.sh` | `evaluation.eval_output_dir` can't be overridden directly | → `~evaluation.eval_output_dir` delete + `+evaluation.eval_output_dir=` re-add |
 | `run_k_sweep_tight.sh` | `run_name=` ignored when config already sets `run_dir` | → `run_dir=data/pipeline_runs/${RUN_NAME}` |
 | `mimicgen_lowdim_runner.py:332` | Empty `if self.save_episodes:` block (no body) after merge resolution → `IndentationError` on import in `mimicgen_torch2`, crashes all training | → deleted the empty `if` block |
-| `square_mh_mimicgen.yaml` | `compile: true` → `torch.compile(policy.model)` makes `OptimizedModule` appear as extra module in `modules()`, misaligning EMA zip → shape mismatch crash on first EMA update | → `compile: false` |
+| `square_mh_mimicgen.yaml` | `compile: true` → `torch.compile(policy.model)` makes `OptimizedModule` appear as extra module in `modules()`, misaligning EMA zip → shape mismatch crash on first EMA update | → `compile: false` (workaround); **properly fixed** by pulling `ema_safe_model()` from main and applying to lowdim workspace |
 | `mimicgen_lowdim_runner.py:307` | `dummy_env_fn=self.dummy_env_fn` passed to `AsyncVectorEnv` but attribute never set in `__init__` (merge artifact from HEAD branch) → `AttributeError` on env creation | → removed `dummy_env_fn` arg |
 
 ## Notes
