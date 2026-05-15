@@ -5,11 +5,20 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import plotly.graph_objects as go
 import streamlit as st
 import yaml
 
-from policy_doctor.behaviors.behavior_graph import BehaviorGraph
+from policy_doctor.behaviors.behavior_graph import (
+    BehaviorGraph,
+    FAILURE_NODE_ID,
+    SUCCESS_NODE_ID,
+)
 from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
+from policy_doctor.streamlit_app.user_study.initial_conditions import (
+    _initial_slice_per_episode,
+    _success_per_episode,
+)
 from policy_doctor.streamlit_app.user_study.path_explorer import render_path_explorer
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
@@ -196,9 +205,116 @@ render_path_explorer(
     key_prefix="gb_pex",
 )
 
-# ── Section 4: Strategy design ────────────────────────────────────────────────
+# ── Section 4: Failure analysis ───────────────────────────────────────────────
 st.divider()
-st.header("Step 4 — Design Your Data Collection Strategy")
+st.header("Step 4 — Where Does the Policy Struggle?")
+st.markdown(
+    "This step highlights the graph nodes and initial conditions most associated "
+    "with failure, to help you identify which behaviors need more data."
+)
+
+fa_left, fa_right = st.columns(2)
+
+with fa_left:
+    _SPECIAL = frozenset({SUCCESS_NODE_ID, FAILURE_NODE_ID})
+    node_failure_rates: list[tuple[int, str, float]] = []
+    for nid, node in graph.nodes.items():
+        if nid in _SPECIAL:
+            continue
+        outgoing = graph.transition_probs.get(nid, {})
+        total_weight = sum(outgoing.values())
+        if total_weight == 0:
+            continue
+        fail_weight = outgoing.get(FAILURE_NODE_ID, 0.0)
+        node_failure_rates.append((nid, node.name, fail_weight / total_weight))
+
+    node_failure_rates.sort(key=lambda t: -t[2])
+    top5 = node_failure_rates[:5]
+
+    if top5:
+        fig_fail = go.Figure(go.Bar(
+            x=[r for _, _, r in top5],
+            y=[f"Node {nid}: {name}" for nid, name, _ in top5],
+            orientation="h",
+            marker_color="#d62728",
+        ))
+        fig_fail.update_layout(
+            title="Nodes most likely to lead to failure",
+            height=280,
+            margin=dict(l=0, r=20, t=40, b=20),
+            xaxis=dict(title="Failure rate", range=[0, 1]),
+            yaxis=dict(title=None, autorange="reversed"),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_fail, use_container_width=True, key="gb_fa_fail_nodes")
+    else:
+        st.info("No cluster nodes with outgoing failure transitions found.")
+
+with fa_right:
+    st.metric("Overall success rate", f"{n_success / n_total:.0%}" if n_total else "—")
+    if n_total:
+        fig_pie = go.Figure(go.Pie(
+            labels=["Success", "Failure"],
+            values=[n_success, n_total - n_success],
+            marker=dict(colors=["#2ca02c", "#d62728"]),
+            hole=0.3,
+            textinfo="percent+label",
+        ))
+        fig_pie.update_layout(
+            height=280,
+            margin=dict(l=0, r=0, t=20, b=0),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_pie, use_container_width=True, key="gb_fa_pie")
+
+coords = st.session_state.get("gb_coords")
+if coords is not None:
+    ep_first = _initial_slice_per_episode(labels, metadata, coords)
+    ep_success_map = _success_per_episode(metadata)
+    all_ep_ids = sorted(ep_first.keys())
+    xs = [ep_first[e][3] for e in all_ep_ids]
+    ys = [ep_first[e][4] for e in all_ep_ids]
+    successes = [ep_success_map.get(e) for e in all_ep_ids]
+
+    fig_ic = go.Figure()
+    for outcome, color, name in [
+        (True, "#2ca02c", "Success"),
+        (False, "#d62728", "Failure"),
+        (None, "#aaaaaa", "Unknown"),
+    ]:
+        mask = [i for i, s in enumerate(successes) if s is outcome]
+        if not mask:
+            continue
+        fig_ic.add_trace(go.Scatter(
+            x=[xs[i] for i in mask],
+            y=[ys[i] for i in mask],
+            mode="markers",
+            marker=dict(color=color, size=7),
+            name=name,
+            text=[f"Episode {all_ep_ids[i]}" for i in mask],
+            hoverinfo="text",
+        ))
+    fig_ic.update_layout(
+        title="Initial conditions (2D embedding of first timestep)",
+        height=380,
+        margin=dict(l=0, r=0, t=40, b=0),
+        xaxis=dict(title="Embedding dim 1", showgrid=True, gridcolor="#f0f0f0"),
+        yaxis=dict(title="Embedding dim 2", showgrid=True, gridcolor="#f0f0f0"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_ic, use_container_width=True, key="gb_fa_ic_scatter")
+    st.caption(
+        "Each point is one episode, plotted at its start embedding. "
+        "Clusters of red points indicate initial conditions where the policy consistently fails."
+    )
+else:
+    st.info("Run UMAP reduction to enable initial conditions view.")
+
+# ── Section 5: Strategy design ────────────────────────────────────────────────
+st.divider()
+st.header("Step 5 — Design Your Data Collection Strategy")
 st.markdown(
     "Based on what you observed above, allocate your **{} demo budget** across the "
     "strategies below. Each strategy targets a specific data collection protocol. "
@@ -213,9 +329,9 @@ allocations = render_strategy_allocator(
 )
 render_strategy_summary(allocations, strategies, total_budget)
 
-# ── Section 5: Submit ─────────────────────────────────────────────────────────
+# ── Section 6: Submit ─────────────────────────────────────────────────────────
 st.divider()
-st.header("Step 5 — Submit")
+st.header("Step 6 — Submit")
 
 notes = st.text_area(
     "Any additional notes or reasoning about your choices",

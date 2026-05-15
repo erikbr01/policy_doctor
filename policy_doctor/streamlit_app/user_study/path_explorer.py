@@ -16,6 +16,7 @@ from policy_doctor.behaviors.behavior_graph import (
     SUCCESS_NODE_ID,
 )
 from policy_doctor.streamlit_app.components.mp4_player import mp4_player
+from policy_doctor.streamlit_app.user_study.graph_plot import render_graph_component
 
 _SPECIAL_IDS = frozenset({START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
 
@@ -242,6 +243,13 @@ def render_path_explorer(
     arrow = " <span style='color:#aaa;font-size:1.2em;'>→</span> "
     st.markdown(arrow.join(flow_parts), unsafe_allow_html=True)
     st.caption(f"Path probability: {selected_prob:.4f} | Outcome: {outcome_str}")
+
+    render_graph_component(
+        graph,
+        height=300,
+        key=f"{key_prefix}_compact_graph",
+        highlighted_path=selected_path,
+    )
 
     matching_episodes = _get_episodes_for_path(selected_path, labels, metadata)
     show_eps = matching_episodes[:5]

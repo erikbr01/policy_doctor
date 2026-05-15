@@ -39,8 +39,20 @@
     pointer-events: none;
     display: none;
     z-index: 999;
-    max-width: 220px;
+    max-width: 260px;
     white-space: pre-line;
+  }
+  .tt-thumbs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  .tt-thumbs img {
+    width: 72px;
+    height: 72px;
+    border-radius: 3px;
+    object-fit: cover;
+    flex-shrink: 0;
   }
 
   #instructions {
@@ -260,7 +272,23 @@ function render(data, svgW, svgH) {
     const tooltip = document.getElementById("tooltip");
     g.addEventListener("mouseenter", (e) => {
       tooltip.style.display = "block";
-      tooltip.textContent = node.tooltip;
+      // Build inner HTML: optional thumbnail row + text stats
+      let html = "";
+      if (node.thumbnails && node.thumbnails.length > 0) {
+        html += '<div class="tt-thumbs">';
+        for (const src of node.thumbnails) {
+          // Only allow data URIs that start with our known prefix
+          if (src.startsWith("data:image/jpeg;base64,")) {
+            html += `<img src="${src}">`;
+          }
+        }
+        html += "</div>";
+      }
+      // Escape text content to prevent XSS (tooltip text is our own JSON, but be safe)
+      const textDiv = document.createElement("div");
+      textDiv.textContent = node.tooltip;
+      html += textDiv.outerHTML;
+      tooltip.innerHTML = html;
       positionTooltip(e);
     });
     g.addEventListener("mousemove", positionTooltip);

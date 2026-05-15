@@ -63,6 +63,7 @@ def render_graph_full_width(
         graph, height=650,
         key=f"{key_prefix}_graph",
         highlighted_path=highlighted_path,
+        mp4_dir=mp4_dir,
     )
 
     # Inline node detail panel

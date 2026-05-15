@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 from pathlib import Path
 from typing import Optional
@@ -117,7 +119,53 @@ def _compute_layout(graph: BehaviorGraph) -> dict[int, tuple[float, float]]:
     return pos
 
 
-def _build_graph_json(graph: BehaviorGraph, pos: dict[int, tuple[float, float]]) -> str:
+def _extract_node_thumbnails(
+    graph: BehaviorGraph,
+    mp4_dir: Path,
+) -> dict[int, list[str]]:
+    """Extract representative frame thumbnails for each cluster node.
+
+    Returns a mapping from node_id to a list of up to 2 base64-encoded JPEG
+    strings (each suitable as a ``data:image/jpeg;base64,...`` src).
+    Missing or unreadable mp4 files are silently skipped.
+    """
+    try:
+        import imageio  # type: ignore
+        from PIL import Image  # type: ignore
+    except ImportError:
+        return {}
+
+    thumbnails: dict[int, list[str]] = {}
+    for nid, node in graph.nodes.items():
+        if nid in _SPECIAL_IDS:
+            continue
+        imgs: list[str] = []
+        for ep_idx in node.episode_indices[:2]:
+            mp4_path = mp4_dir / f"ep{ep_idx}.mp4"
+            if not mp4_path.exists():
+                continue
+            try:
+                reader = imageio.get_reader(str(mp4_path))
+                n_frames = len(reader)
+                frame = reader.get_data(n_frames // 2)
+                reader.close()
+                img = Image.fromarray(frame).resize((80, 80), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=70)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                imgs.append(b64)
+            except Exception:
+                continue
+        if imgs:
+            thumbnails[nid] = imgs
+    return thumbnails
+
+
+def _build_graph_json(
+    graph: BehaviorGraph,
+    pos: dict[int, tuple[float, float]],
+    thumbnails: dict[int, list[str]] | None = None,
+) -> str:
     """Serialize graph data for the SVG component."""
     nodes = []
     for nid, node in graph.nodes.items():
@@ -149,7 +197,7 @@ def _build_graph_json(graph: BehaviorGraph, pos: dict[int, tuple[float, float]])
                 f"Episodes: {node.num_episodes}  •  Timesteps: {node.num_timesteps}\n"
                 f"Top transitions:\n{out_lines}"
             )
-        nodes.append({
+        node_dict: dict = {
             "id": nid,
             "label": label,
             "color": color,
@@ -158,7 +206,12 @@ def _build_graph_json(graph: BehaviorGraph, pos: dict[int, tuple[float, float]])
             "num_timesteps": node.num_timesteps,
             "is_special": nid in _SPECIAL_IDS,
             "tooltip": tooltip,
-        })
+        }
+        if thumbnails and nid in thumbnails:
+            node_dict["thumbnails"] = [
+                f"data:image/jpeg;base64,{b64}" for b64 in thumbnails[nid]
+            ]
+        nodes.append(node_dict)
 
     edges = []
     for src, targets in graph.transition_probs.items():
@@ -176,18 +229,24 @@ def render_graph_component(
     height: int = 580,
     key: str = "behavior_graph",
     highlighted_path: Optional[list[int]] = None,
+    mp4_dir: Optional[Path] = None,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
     Args:
         highlighted_path: List of node IDs forming a path to highlight.
             Edges on the path are drawn in orange; off-path elements are dimmed.
+        mp4_dir: Directory containing ``ep<idx>.mp4`` files. When provided,
+            representative frame thumbnails are embedded in node hover tooltips.
 
     Returns:
         The node_id that was clicked, or the previously selected node.
     """
     pos = _compute_layout(graph)
-    graph_json = _build_graph_json(graph, pos)
+    thumbnails: dict[int, list[str]] | None = None
+    if mp4_dir is not None:
+        thumbnails = _extract_node_thumbnails(graph, mp4_dir)
+    graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails)
     selected = st.session_state.get(f"{key}_selected")
 
     clicked = _graph_component(
