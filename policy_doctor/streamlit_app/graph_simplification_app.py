@@ -955,7 +955,11 @@ with tab_tree:
             # Assign synthetic IDs. Each tree node — including each terminal
             # leaf — gets a unique ID so the tree stays a true tree (no
             # multiple paths converging on a single SUCCESS/FAILURE marker).
-            # Symbol/color overrides keep the special shapes for terminals.
+            # Symbol/color overrides keep the special shapes for terminals
+            # AND keep the cluster color consistent for every tree node that
+            # represents the same underlying cluster (so all "Behavior 0"
+            # tree nodes share one color regardless of their prefix path).
+            from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
             path_to_id: Dict[Tuple, int] = {}
             symbol_override: Dict[int, str] = {}
             color_override: Dict[int, str] = {}
@@ -976,6 +980,11 @@ with tab_tree:
                     elif cid == END_NODE_ID:
                         symbol_override[next_id] = "square"
                         color_override[next_id] = "#888888"
+                    else:
+                        # Regular cluster: pin color to the underlying
+                        # cluster_id so every instance of "Behavior c" looks
+                        # the same.
+                        color_override[next_id] = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
                     next_id += 1
 
             # Build BehaviorNode list. Aggregate stats for terminal nodes
