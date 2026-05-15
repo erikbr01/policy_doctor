@@ -129,58 +129,93 @@ def _pretty_label(p: Path) -> str:
     return f"{rep_full} · k={k} · {task_tag}{emb_tag}"
 
 
-# Group by representation, then sort by k within each group
-def _rep_key(p: Path) -> str:
+# Index every clustering by (representation, K, W, S, agg) so the user can
+# pick along each axis instead of choosing a whole directory.
+def _index_entry(p: Path) -> Dict:
     m = _short_manifest(str(p))
     rep = m.get("influence_source") or m.get("slice_representation") or "?"
     layer = (m.get("rep_kwargs") or {}).get("layer", "") if isinstance(m.get("rep_kwargs"), dict) else ""
-    return f"{rep}/{layer}" if layer else rep
+    rep_full = f"{rep}/{layer}" if layer else rep
+    return {
+        "path": p,
+        "rep": rep_full,
+        "k": int(m.get("n_clusters", 0) or 0),
+        "w": int(m.get("window_width", 5) or 5),
+        "s": int(m.get("stride", 2) or 2),
+        "agg": str(m.get("aggregation", "sum") or "sum"),
+    }
 
 
-available_sorted = sorted(
-    available,
-    key=lambda p: (_rep_key(p), int(_short_manifest(str(p)).get("n_clusters", 0) or 0), str(p)),
-)
+_index = [_index_entry(p) for p in available]
 
-# Default: prefer the cleanest known policy_emb clustering for jan28
-# (policy_emb/bottleneck_plan_t0 at k=5 — swap rate 5.1%, run length 13.3).
-# Falls back to InfEmbed k=20 (the original noisy baseline) if unavailable.
-default_idx = 0
-_preferred_patterns = [
-    "policy_emb_bottleneck_plan_t0_seed0_kmeans_k5",
-    "auto_pipeline_test_mar13_seed0_kmeans_k20",
-]
-for pat in _preferred_patterns:
-    found = False
-    for i, p in enumerate(available_sorted):
-        if pat in str(p):
-            default_idx = i
-            found = True
-            break
-    if found:
-        break
 
-st.sidebar.markdown("**Filter clusterings:**")
-all_reps = sorted({_rep_key(p) for p in available_sorted})
-chosen_reps = st.sidebar.multiselect(
-    "Representations",
-    options=all_reps,
-    default=all_reps,
-    help="Only show clusterings using one of these feature spaces.",
-)
-filtered = [p for p in available_sorted if _rep_key(p) in chosen_reps] or available_sorted
-# Re-map default if filtered out
-default_idx = min(default_idx, len(filtered) - 1)
-if available_sorted[default_idx] not in filtered:
-    default_idx = 0
+def _filter_index(rep=None, k=None, w=None, s=None, agg=None) -> List[Dict]:
+    out = _index
+    if rep is not None: out = [e for e in out if e["rep"] == rep]
+    if k is not None: out = [e for e in out if e["k"] == k]
+    if w is not None: out = [e for e in out if e["w"] == w]
+    if s is not None: out = [e for e in out if e["s"] == s]
+    if agg is not None: out = [e for e in out if e["agg"] == agg]
+    return out
 
-choice = st.sidebar.selectbox(
-    "Clustering",
-    options=range(len(filtered)),
-    format_func=lambda i: _pretty_label(filtered[i]),
-    index=default_idx,
-)
-clustering_path = filtered[choice]
+
+# Cascading dropdowns: each axis is restricted to values that are reachable
+# given the previously-selected ones (so the user never lands on an invalid
+# combo).
+st.sidebar.markdown("**Pick a clustering:**")
+
+# Default selection — prefer the cleanest known policy_emb for jan28.
+_DEFAULT_PREF = {"rep": "policy_emb/bottleneck_plan_t0", "k": 5}
+
+
+def _pick(label: str, options: List, key: str, default_value=None, format_func=None):
+    """Selectbox that prefers a session-state value, else default_value, else first."""
+    if not options:
+        st.sidebar.warning(f"No {label} available for current filter.")
+        return None
+    # Honor any prior choice if it's still valid
+    prev = st.session_state.get(key)
+    if prev in options:
+        idx = options.index(prev)
+    elif default_value in options:
+        idx = options.index(default_value)
+    else:
+        idx = 0
+    return st.sidebar.selectbox(label, options=options, index=idx, key=key, format_func=format_func or str)
+
+
+# 1. Representation
+reps = sorted({e["rep"] for e in _index})
+rep_pick = _pick("Embedding", reps, "pick_rep", default_value=_DEFAULT_PREF["rep"])
+filtered = _filter_index(rep=rep_pick)
+
+# 2. K
+ks = sorted({e["k"] for e in filtered})
+k_pick = _pick("K (clusters)", ks, "pick_k", default_value=_DEFAULT_PREF["k"])
+filtered = _filter_index(rep=rep_pick, k=k_pick)
+
+# 3. Window width
+ws = sorted({e["w"] for e in filtered})
+w_pick = _pick("W (window width)", ws, "pick_w")
+filtered = _filter_index(rep=rep_pick, k=k_pick, w=w_pick)
+
+# 4. Stride
+ss_ = sorted({e["s"] for e in filtered})
+s_pick = _pick("S (stride)", ss_, "pick_s")
+filtered = _filter_index(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick)
+
+# 5. Aggregation
+aggs = sorted({e["agg"] for e in filtered})
+agg_pick = _pick("agg", aggs, "pick_agg")
+filtered = _filter_index(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick, agg=agg_pick)
+
+# Resolve to a single clustering. If multiple match (seed variants), take first.
+if not filtered:
+    st.sidebar.error("No clustering matches the chosen combination.")
+    st.stop()
+clustering_path = filtered[0]["path"]
+if len(filtered) > 1:
+    st.sidebar.caption(f"({len(filtered)} variants match; using {clustering_path.name})")
 labels0, meta, emb, manifest = _load_clustering(str(clustering_path))
 labels0 = labels0.astype(np.int64)
 
