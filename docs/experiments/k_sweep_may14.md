@@ -59,6 +59,8 @@ Legend: ⏳ pending · 🔄 generating · 🏋 training · 📊 eval · ✅ done
 - **2026-05-14 22:38**: Launched Phase B for K=5 in parallel with Phase A (generation is CPU-only, independent). Also launched Phase A+B for K=10,15,20,25 all in parallel — 80 concurrent generation workers total.
 - **2026-05-15 01:10**: **CRASH** — K=5 behavior_graph Phase A training failed immediately with `IndentationError: expected an indented block` at `mimicgen_lowdim_runner.py:332`. Root cause: merge conflict resolution left an empty `if self.save_episodes:` block with no body. Fix: deleted the empty `if` block. All other arms continued generating. behavior_graph training relaunched manually (PID 39083, wandb run `qbt3ap1t`).
 - **2026-05-15 01:17**: **GPU training started** — K=5 behavior_graph Phase A epoch 0 running on cuda:0. 236 MiB GPU memory. ~2.5h expected to completion (1751 epochs).
+- **2026-05-15 01:18**: **CRASH 2** — EMA shape mismatch: `RuntimeError: tensor a (128) must match tensor b (5) at non-singleton dimension 2` in `ema_model.py`. Root cause: `torch.compile(policy.model)` replaces the UNet sub-module with `OptimizedModule`, which adds an extra level to `modules()` traversal. `EMAModel.step()` uses `zip(model.modules(), ema_model.modules())` which then misaligns module pairs → shape mismatch on the very first EMA update. Fix: `compile: true → false` in `square_mh_mimicgen.yaml`. Also fixed `dummy_env_fn=self.dummy_env_fn` (attribute never set in `__init__`) in runner.
+- **2026-05-15 01:18**: All live pipeline orchestration processes already loaded `compile: true` from config at startup. Strategy: let them fail gracefully at training → write composite `done` → restart with new config (skips gen, runs training with compile=false). behavior_graph training relaunched manually (compile=false, PID 45716).
 
 ## Bugs fixed during launch
 
@@ -73,6 +75,8 @@ All found and fixed 2026-05-14 during initial launch attempts:
 | `run_k_sweep_tight.sh` | `evaluation.eval_output_dir` can't be overridden directly | → `~evaluation.eval_output_dir` delete + `+evaluation.eval_output_dir=` re-add |
 | `run_k_sweep_tight.sh` | `run_name=` ignored when config already sets `run_dir` | → `run_dir=data/pipeline_runs/${RUN_NAME}` |
 | `mimicgen_lowdim_runner.py:332` | Empty `if self.save_episodes:` block (no body) after merge resolution → `IndentationError` on import in `mimicgen_torch2`, crashes all training | → deleted the empty `if` block |
+| `square_mh_mimicgen.yaml` | `compile: true` → `torch.compile(policy.model)` makes `OptimizedModule` appear as extra module in `modules()`, misaligning EMA zip → shape mismatch crash on first EMA update | → `compile: false` |
+| `mimicgen_lowdim_runner.py:307` | `dummy_env_fn=self.dummy_env_fn` passed to `AsyncVectorEnv` but attribute never set in `__init__` (merge artifact from HEAD branch) → `AttributeError` on env creation | → removed `dummy_env_fn` arg |
 
 ## Notes
 
