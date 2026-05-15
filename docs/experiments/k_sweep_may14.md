@@ -21,7 +21,7 @@ UMAP fit once (seed=1, 12978 windows × 100d); K-means re-fit per K.
 
 | K | Phase A (rep-1) | Phase B (rep-2) | Phase B (rep-3) |
 |---|-----------------|-----------------|-----------------|
-| 5  | 🔄 generating | ⏳ pending | ⏳ pending |
+| 5  | 🏋 training (BG+manual), gen active (rand/div) | 🔄 generating | ⏳ pending |
 | 10 | ⏳ pending | ⏳ pending | ⏳ pending |
 | 15 | ⏳ pending | ⏳ pending | ⏳ pending |
 | 20 | ⏳ pending | ⏳ pending | ⏳ pending |
@@ -56,6 +56,9 @@ Legend: ⏳ pending · 🔄 generating · 🏋 training · 📊 eval · ✅ done
 - **2026-05-14 22:26**: `run_k_sweep_tight.sh` launched (PID 14213).
 - **2026-05-14 22:26**: Step 1 complete — UMAP fit (12978×100 → 100d, n_jobs=-1, ~1 min). K-means run for K=5,10,15,20,25 using seed=1 infembed embeddings. All 5 clustering dirs written.
 - **2026-05-14 22:29**: K=5 Phase A generation started. 3 arms (random, behavior_graph, diversity) each running 3 `run_mimicgen_generate.py` workers in `mimicgen_torch2`. Tight constraint: nut ±40mm x/y, ±30° z_rot. 900 trials per arm (10 seeds × 90 trials/pass).
+- **2026-05-14 22:38**: Launched Phase B for K=5 in parallel with Phase A (generation is CPU-only, independent). Also launched Phase A+B for K=10,15,20,25 all in parallel — 80 concurrent generation workers total.
+- **2026-05-15 01:10**: **CRASH** — K=5 behavior_graph Phase A training failed immediately with `IndentationError: expected an indented block` at `mimicgen_lowdim_runner.py:332`. Root cause: merge conflict resolution left an empty `if self.save_episodes:` block with no body. Fix: deleted the empty `if` block. All other arms continued generating. behavior_graph training relaunched manually (PID 39083, wandb run `qbt3ap1t`).
+- **2026-05-15 01:17**: **GPU training started** — K=5 behavior_graph Phase A epoch 0 running on cuda:0. 236 MiB GPU memory. ~2.5h expected to completion (1751 epochs).
 
 ## Bugs fixed during launch
 
@@ -69,6 +72,7 @@ All found and fixed 2026-05-14 during initial launch attempts:
 | `run_k_sweep_tight.sh` | `clustering_n_clusters_sweep` / `clustering_run_dir` not in struct | → `+` prefix |
 | `run_k_sweep_tight.sh` | `evaluation.eval_output_dir` can't be overridden directly | → `~evaluation.eval_output_dir` delete + `+evaluation.eval_output_dir=` re-add |
 | `run_k_sweep_tight.sh` | `run_name=` ignored when config already sets `run_dir` | → `run_dir=data/pipeline_runs/${RUN_NAME}` |
+| `mimicgen_lowdim_runner.py:332` | Empty `if self.save_episodes:` block (no body) after merge resolution → `IndentationError` on import in `mimicgen_torch2`, crashes all training | → deleted the empty `if` block |
 
 ## Notes
 
