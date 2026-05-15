@@ -13,6 +13,7 @@ config.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 from typing import Any, Callable, Dict
@@ -55,6 +56,29 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     m = getattr(model, "module", model)      # unwrap DistributedDataParallel
     m = getattr(m, "_orig_mod", m)           # unwrap torch.compile OptimizedModule
     return m
+
+
+@contextlib.contextmanager
+def ema_safe_model(policy):
+    """Temporarily swap compiled sub-modules back to their originals for EMA.
+
+    torch.compile wraps sub-modules in OptimizedModule, which changes the
+    module tree structure.  EMAModel.step iterates zip(model.modules(),
+    ema.modules()) and breaks when the two trees don't align.  This context
+    manager restores the original sub-modules for the duration of the EMA
+    update, then puts the compiled wrappers back.
+    """
+    swapped = {}
+    for attr in ("obs_encoder", "model"):
+        sub = getattr(policy, attr, None)
+        if sub is not None and hasattr(sub, "_orig_mod"):
+            swapped[attr] = sub
+            setattr(policy, attr, sub._orig_mod)
+    try:
+        yield policy
+    finally:
+        for attr, compiled in swapped.items():
+            setattr(policy, attr, compiled)
 
 
 def cleanup_ddp() -> None:

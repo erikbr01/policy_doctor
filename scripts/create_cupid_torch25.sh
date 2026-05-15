@@ -53,6 +53,9 @@ conda run -n cupid_torch2 pip list --format=freeze 2>/dev/null \
 sed -i 's/^huggingface-hub==.*/huggingface-hub==0.17.3/' "${REQS}"
 conda run -n "${ENV}" pip install --no-deps -r "${REQS}"
 rm "${REQS}"
+# Pin packages where newer versions break the training stack
+# (protobuf 4+: _pb2 descriptor error; urllib3 2+: removes DEFAULT_CIPHERS)
+conda run -n "${ENV}" pip install "protobuf==3.19.6" "urllib3==1.26.19"
 
 # ── 5. robomimic / robosuite without mujoco-py ────────────────────────────────
 # robosuite 1.2.0 requires mujoco-py 2.0.2.9 which needs the legacy MuJoCo

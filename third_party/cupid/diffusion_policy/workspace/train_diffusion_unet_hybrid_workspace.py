@@ -245,7 +245,10 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         # update ema
                         if cfg.training.use_ema:
                             with step_timer.time("ema_update"):
-                                from diffusion_policy.common.ddp_util import unwrap_model; ema.step(unwrap_model(self.model))
+                                from diffusion_policy.common.ddp_util import unwrap_model, ema_safe_model
+                                raw = unwrap_model(self.model)
+                                with ema_safe_model(raw):
+                                    ema.step(raw)
 
                         # logging
                         raw_loss_cpu = raw_loss.item()
