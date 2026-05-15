@@ -427,7 +427,7 @@ def _render_episode_browser(
     Reflects the *current* labels — re-renders cleanly when a method changes them.
     """
     if _MP4_DIR is None:
-        st.info(f"No MP4 index at `{mp4_root}`; episode browser disabled.")
+        st.info(_MP4_MISMATCH or f"No MP4 index at `{mp4_root}`; episode browser disabled.")
         return
     with st.expander(f"📼 Episode browser — cluster timeline under each video ({title})", expanded=False):
         rep = "sliding_window"
@@ -560,7 +560,7 @@ with tab_inspect:
     )
 
     if _MP4_DIR is None:
-        st.warning(f"No MP4 index at `{mp4_root}`. Cluster inspector needs videos.")
+        st.warning(_MP4_MISMATCH or f"No MP4 index at `{mp4_root}`. Cluster inspector needs videos.")
     else:
         cluster_ids = sorted(set(int(c) for c in labels0) - {-1})
 
@@ -905,19 +905,37 @@ with tab_layout:
 
 with tab_combo:
     st.markdown(
-        "**Stack methods.** Order: smooth → re-cluster (optional) → merge → prune."
+        "**Stack methods.** Order: smooth → merge → stable-phase prune → edge prune."
     )
-    col_l, col_r = st.columns([1, 2])
-    with col_l:
+
+    # Controls in a single row above the graph.
+    with st.container(border=True):
         st.markdown("##### Pipeline configuration")
-        use_smooth = st.checkbox("Smooth labels", value=True)
-        smooth_mode = st.selectbox("Smoother", ["median", "sticky"], disabled=not use_smooth)
-        smooth_strength = st.slider("Smoother strength", 1.0, 20.0, 5.0, key="combo_smooth")
-        use_merge = st.checkbox("Merge similar centroids", value=False)
-        merge_thresh = st.slider("Centroid sim threshold", 0.0, 0.999, 0.92, key="combo_merge")
-        use_prune = st.checkbox("Prune low-count edges", value=True)
-        prune_count = st.slider("Min edge count", 1, 100, 5, key="combo_prune")
-        use_stable = st.checkbox("ENAP stable-phase prune", value=False)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            use_smooth = st.checkbox("Smooth labels", value=True, key="combo_use_smooth")
+            smooth_mode = st.selectbox(
+                "Smoother", ["median", "sticky"],
+                disabled=not use_smooth, key="combo_smooth_mode",
+            )
+            smooth_strength = st.slider(
+                "Smoother strength", 1.0, 20.0, 5.0,
+                disabled=not use_smooth, key="combo_smooth",
+            )
+        with c2:
+            use_merge = st.checkbox("Merge similar centroids", value=False, key="combo_use_merge")
+            merge_thresh = st.slider(
+                "Centroid sim threshold", 0.0, 0.999, 0.92,
+                disabled=not use_merge, key="combo_merge",
+            )
+        with c3:
+            use_stable = st.checkbox("ENAP stable-phase prune", value=False, key="combo_use_stable")
+        with c4:
+            use_prune = st.checkbox("Prune low-count edges", value=True, key="combo_use_prune")
+            prune_count = st.slider(
+                "Min edge count", 1, 100, 5,
+                disabled=not use_prune, key="combo_prune",
+            )
 
     new_labels = labels0.copy()
     if use_smooth:
@@ -936,12 +954,11 @@ with tab_combo:
     if use_prune:
         g = gs.prune_edges_by_count(g, min_count=prune_count)
     nn, ne = _graph_stats(g)
-    with col_r:
-        st.markdown(
-            f"**Combined pipeline** → {nn} nodes, {ne} edges  "
-            f"(baseline: {n_nodes0}/{n_edges0})"
-        )
-        _show_graph(g, new_labels, f"Combined: {nn} nodes / {ne} edges", key_prefix="combined_main")
+
+    st.markdown(
+        f"**Combined pipeline** → {nn} nodes, {ne} edges  (baseline: {n_nodes0}/{n_edges0})"
+    )
+    _show_graph(g, new_labels, f"Combined: {nn} nodes / {ne} edges", key_prefix="combined_main")
     _render_episode_browser(new_labels, "combined", key_prefix="combined_eps")
 
 
