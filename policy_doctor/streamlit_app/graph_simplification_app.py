@@ -97,40 +97,90 @@ if not available:
     st.stop()
 
 
-def _label_for(p: Path) -> str:
-    try:
-        return str(p.relative_to(_REPO_ROOT))
-    except ValueError:
-        return str(p)
-
-
-# Prefer clusterings with embeddings_reduced.npy (needed for sticky/HMM)
 def _has_emb(p: Path) -> bool:
     return (p / "embeddings_reduced.npy").exists()
 
 
-available_with_emb_first = sorted(available, key=lambda p: (not _has_emb(p), str(p)))
+@st.cache_data(show_spinner=False)
+def _short_manifest(path_str: str) -> Dict:
+    """Cheap manifest read for the dropdown labels."""
+    import yaml as _y
+    try:
+        with open(Path(path_str) / "manifest.yaml") as f:
+            return _y.safe_load(f) or {}
+    except Exception:
+        return {}
 
+
+def _pretty_label(p: Path) -> str:
+    """Compact label: 'policy_emb/bottleneck_plan_t0 · k=20 · jan28 ·emb'."""
+    m = _short_manifest(str(p))
+    rep = m.get("influence_source") or m.get("slice_representation") or "?"
+    k = m.get("n_clusters", "?")
+    layer = (m.get("rep_kwargs") or {}).get("layer", "") if isinstance(m.get("rep_kwargs"), dict) else ""
+    task_tag = "?"
+    for i, part in enumerate(p.parts):
+        if part == "configs" and i + 1 < len(p.parts):
+            task_tag = p.parts[i + 1]; break
+        if part == "e1_experiments" and i + 1 < len(p.parts):
+            task_tag = "e1/" + p.parts[i + 1]; break
+    rep_full = f"{rep}/{layer}" if layer else rep
+    emb_tag = " ·emb" if _has_emb(p) else ""
+    return f"{rep_full} · k={k} · {task_tag}{emb_tag}"
+
+
+# Group by representation, then sort by k within each group
+def _rep_key(p: Path) -> str:
+    m = _short_manifest(str(p))
+    rep = m.get("influence_source") or m.get("slice_representation") or "?"
+    layer = (m.get("rep_kwargs") or {}).get("layer", "") if isinstance(m.get("rep_kwargs"), dict) else ""
+    return f"{rep}/{layer}" if layer else rep
+
+
+available_sorted = sorted(
+    available,
+    key=lambda p: (_rep_key(p), int(_short_manifest(str(p)).get("n_clusters", 0) or 0), str(p)),
+)
+
+# Default: prefer the InfEmbed k=20 (the noisy one the user originally complained about)
 default_idx = 0
-# Prefer the transport_mh_jan28 / auto_pipeline / k20 if present
-for i, p in enumerate(available_with_emb_first):
+for i, p in enumerate(available_sorted):
     if "auto_pipeline_test_mar13" in str(p) and "k20" in str(p):
         default_idx = i
         break
 
+st.sidebar.markdown("**Filter clusterings:**")
+all_reps = sorted({_rep_key(p) for p in available_sorted})
+chosen_reps = st.sidebar.multiselect(
+    "Representations",
+    options=all_reps,
+    default=all_reps,
+    help="Only show clusterings using one of these feature spaces.",
+)
+filtered = [p for p in available_sorted if _rep_key(p) in chosen_reps] or available_sorted
+# Re-map default if filtered out
+default_idx = min(default_idx, len(filtered) - 1)
+if available_sorted[default_idx] not in filtered:
+    default_idx = 0
+
 choice = st.sidebar.selectbox(
-    "Clustering directory",
-    options=range(len(available_with_emb_first)),
-    format_func=lambda i: _label_for(available_with_emb_first[i]),
+    "Clustering",
+    options=range(len(filtered)),
+    format_func=lambda i: _pretty_label(filtered[i]),
     index=default_idx,
 )
-clustering_path = available_with_emb_first[choice]
+clustering_path = filtered[choice]
 labels0, meta, emb, manifest = _load_clustering(str(clustering_path))
 labels0 = labels0.astype(np.int64)
 
+rep_kwargs = manifest.get("rep_kwargs") or {}
+layer = rep_kwargs.get("layer", "") if isinstance(rep_kwargs, dict) else ""
 st.sidebar.markdown(
-    f"**source:** `{manifest.get('influence_source', '?')}`  \n"
-    f"**algo:** `{manifest.get('algorithm', '?')}`  k=`{manifest.get('n_clusters', '?')}`  \n"
+    f"**source:** `{manifest.get('influence_source', '?')}`"
+    + (f" / `{layer}`" if layer else "")
+    + f"  \n**algo:** `{manifest.get('algorithm', '?')}`  k=`{manifest.get('n_clusters', '?')}`  \n"
+    f"**windowing:** W=`{manifest.get('window_width', '?')}` "
+    f"S=`{manifest.get('stride', '?')}` agg=`{manifest.get('aggregation', '?')}`  \n"
     f"**n_samples:** {len(labels0):,}  \n"
     f"**emb shape:** {emb.shape if emb is not None else 'N/A'}"
 )
@@ -431,9 +481,39 @@ tab_inspect, tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_co
 # ── Tab 0: Cluster inspector ─────────────────────────────────────────────────
 
 with tab_inspect:
+    # ── What you're looking at ───────────────────────────────────────────────
+    _ww = manifest.get("window_width", 5)
+    _ss = manifest.get("stride", 2)
+    _agg = manifest.get("aggregation", "sum")
+    _layer = (manifest.get("rep_kwargs") or {}).get("layer", "") if isinstance(manifest.get("rep_kwargs"), dict) else ""
+    _src = manifest.get("influence_source") or manifest.get("slice_representation", "?")
+    _rep_pretty = f"{_src}/{_layer}" if _layer else _src
+    with st.container(border=True):
+        st.markdown(f"### 📋 What you're looking at")
+        st.markdown(
+            f"**Source clustering:** `{clustering_path.name}` "
+            f"(switch in the sidebar — try `policy_emb/bottleneck_plan_t0` for a cleaner baseline)\n\n"
+            f"**Pipeline that produced these clusters:**\n"
+            f"1. Take each rollout episode's per-timestep features in the **{_rep_pretty}** space.\n"
+            f"2. Slide a **W={_ww}** window with **stride={_ss}**, aggregate by **{_agg}** → "
+            f"one feature vector per window ({len(labels0):,} windows total across {n_eps} episodes).\n"
+            f"3. Pre-scale → UMAP to {emb.shape[1] if emb is not None else '?'} dims (saved to `embeddings_reduced.npy`).\n"
+            f"4. Run **{manifest.get('algorithm', 'kmeans')}** with K={manifest.get('n_clusters', '?')} → "
+            f"every window gets a single integer cluster label, in [0, K-1].\n\n"
+            f"**A 'cluster' is a set of windows the algorithm thinks are similar in feature space.** "
+            f"Each clip below is one such window — a {_ww}-frame slice of one rollout episode, "
+            f"played back at native fps with the orange bar marking the slice. "
+            f"If the clips in a cluster look like the *same kind of behavior* to you, the cluster "
+            f"is coherent; if not, the feature space and/or K are wrong for this task."
+        )
+        st.caption(
+            "All other tabs (smoothing / pruning / re-clustering / etc.) "
+            "operate as transformations *on top of* this baseline assignment."
+        )
+
     st.markdown(
-        "**Is this cluster actually one behavior?** Pick a cluster, sample N random windows "
-        "from it, watch each clip. Rename clusters as you go — names persist to "
+        "**Is this cluster actually one behavior?** Pick a cluster, page through its clips, "
+        "watch each. Rename clusters as you go — names persist to "
         f"`{_NAMES_DIR}` and propagate to every other tab in the app."
     )
 
@@ -930,57 +1010,94 @@ with tab_reps:
             df = pd.DataFrame(rows).sort_values(["swap rate", "edges"])
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.markdown("---")
-            # Unique label per clustering
+            # Group equivalent clusterings (same rep + k, different seeds) and
+            # use a single representative — the user just wants to compare
+            # algorithms, not enumerate seed variants.
+            import yaml as _yy
+            def _alg_label(e: Dict) -> str:
+                try:
+                    with open(e["path"] / "manifest.yaml") as _f:
+                        mm = _yy.safe_load(_f) or {}
+                except Exception:
+                    mm = {}
+                rep = mm.get("influence_source") or mm.get("slice_representation") or e["rep"]
+                layer = (mm.get("rep_kwargs") or {}).get("layer") if isinstance(mm.get("rep_kwargs"), dict) else None
+                rep_full = f"{rep}/{layer}" if layer else rep
+                return f"{rep_full} · k={e['k']}"
+            grouped: Dict[str, Path] = {}
             for e in cands:
-                e["label"] = f"{e['rep']}/k={e['k']} — {e['path'].name}"
+                lab = _alg_label(e)
+                if lab not in grouped:
+                    grouped[lab] = e["path"]
+                    e["label"] = lab
+            options_sorted = sorted(grouped.keys())
+            # Sensible defaults: prefer policy_emb if available, then state, then trak, then infembed
+            def _priority(lbl: str) -> int:
+                if lbl.startswith("policy_emb"): return 0
+                if lbl.startswith("state"): return 1
+                if lbl.startswith("trak"): return 2
+                if lbl.startswith("infembed"): return 3
+                return 4
+            default_choices = sorted(options_sorted, key=lambda l: (_priority(l), l))[:4]
             choices = st.multiselect(
-                "Clusterings to compare",
-                options=[e["label"] for e in cands],
-                default=[e["label"] for e in cands][:6],
+                "Algorithm × K",
+                options=options_sorted,
+                default=default_choices,
+                help="Each option is one (representation, K) pair. Seeds are collapsed.",
             )
-            apply_pipe = st.checkbox(
-                "Apply simplification (sticky λ=5 + prune count≥5)", value=True
-            )
-            cols_per_row = 3
-            chosen = [e for e in cands if e["label"] in choices]
-            for i in range(0, len(chosen), cols_per_row):
-                cols = st.columns(cols_per_row)
-                for j, ent in enumerate(chosen[i : i + cols_per_row]):
-                    pp = ent["path"]
+            ctrl_c1, ctrl_c2, ctrl_c3 = st.columns([2, 2, 3])
+            with ctrl_c1:
+                cols_per_row = st.radio(
+                    "Plots per row", [1, 2, 3], horizontal=True, index=1,
+                    help="1 = full-width, 2 = side-by-side (recommended), 3 = thumbnails",
+                )
+            with ctrl_c2:
+                rep_height = st.slider("Plot height", 300, 900, 550, step=50, key="rep_height")
+            with ctrl_c3:
+                apply_pipe = st.checkbox(
+                    "Apply simplification (sticky λ=5 + prune count≥5)", value=True
+                )
+            # Map each chosen label back to a single representative path.
+            chosen_paths = [grouped[lab] for lab in choices if lab in grouped]
+            chosen_labels = [lab for lab in choices if lab in grouped]
+            for i in range(0, len(chosen_paths), int(cols_per_row)):
+                cols = st.columns(int(cols_per_row))
+                for j, (lab, pp) in enumerate(zip(
+                    chosen_labels[i : i + int(cols_per_row)],
+                    chosen_paths[i : i + int(cols_per_row)],
+                )):
+                    ent = {"rep": lab.split(" · ")[0], "k": lab.split("k=")[1] if "k=" in lab else "?"}
                     with cols[j]:
                         try:
                             L, M, E, mm = _load_clustering(str(pp))
                             L = L.astype(np.int64)
                             n_eps_i = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in M))
                             lvl = mm.get("level", "rollout")
-                            # Build baseline graph for "raw" view
                             new = L.copy()
-                            if apply_pipe:
-                                if E is not None:
-                                    try:
-                                        new = gs.sticky_decoder(new, E, M, lambda_stick=5.0, level=lvl)
-                                    except Exception:
-                                        pass
+                            if apply_pipe and E is not None:
+                                try:
+                                    new = gs.sticky_decoder(new, E, M, lambda_stick=5.0, level=lvl)
+                                except Exception:
+                                    pass
                             g = BehaviorGraph.from_cluster_assignments(new, M, level=lvl)
                             n_raw_edges = sum(len(t) for t in g.transition_counts.values())
                             if apply_pipe:
                                 g = gs.prune_edges_by_count(g, min_count=5)
                             nn = len([n for n in g.nodes if n >= 0])
                             ne = sum(len(t) for t in g.transition_counts.values())
-                            if E is not None:
-                                pos = gs.temporal_layout(g, new, M, level=lvl)
-                            else:
-                                pos = None
+                            pos = gs.temporal_layout(g, new, M, level=lvl) if E is not None else None
+                            title_pretty = f"{ent['rep']} k={ent['k']}" + (" (smoothed)" if apply_pipe else " (raw)")
+                            st.markdown(
+                                f"##### {title_pretty}  ·  **{nn} nodes / {ne} edges**"
+                                + (f"  _(raw: {n_raw_edges})_" if apply_pipe else "")
+                            )
                             fig = create_behavior_graph_plot(
-                                g, min_probability=min_prob_display, height=400,
-                                title=f"{ent['rep']} k={ent['k']}" + (" (smoothed)" if apply_pipe else " (raw)"),
-                                pos=pos,
+                                g, min_probability=min_prob_display, height=int(rep_height),
+                                title="", pos=pos,
                             )
                             st.plotly_chart(fig, use_container_width=True, key=f"rep_{pp.name}")
                             st.caption(
-                                f"{nn} nodes · {ne} edges"
-                                + (f" (raw: {n_raw_edges} edges)" if apply_pipe else "")
-                                + f" · {n_eps_i} eps · emb={'yes' if E is not None else 'no'}"
+                                f"{n_eps_i} eps · emb={'yes' if E is not None else 'no'} · `{pp.name}`"
                             )
                         except Exception as e:
                             st.error(f"{ent['label']}: {e}")
