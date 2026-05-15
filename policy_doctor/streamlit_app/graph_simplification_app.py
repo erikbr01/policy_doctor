@@ -25,6 +25,7 @@ for _mod in [k for k in list(sys.modules.keys()) if k.startswith("policy_doctor"
 
 import json
 import time
+from collections import defaultdict, deque
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -831,7 +832,8 @@ with tab_tree:
     cc1, cc2, cc3 = st.columns([2, 2, 3])
     with cc1:
         view_mode = st.radio(
-            "View", ["Sunburst (radial)", "Icicle (horizontal)", "Treemap"],
+            "View",
+            ["Node-edge tree", "Sunburst (radial)", "Icicle (horizontal)", "Treemap"],
             horizontal=False, key="tree_view",
         )
     with cc2:
@@ -934,12 +936,128 @@ with tab_tree:
             fig = _go.Figure(_go.Sunburst(**common_kwargs, insidetextorientation="radial"))
         elif view_mode.startswith("Icicle"):
             fig = _go.Figure(_go.Icicle(**common_kwargs, tiling=dict(orientation="h")))
-        else:  # Treemap
+        elif view_mode.startswith("Treemap"):
             fig = _go.Figure(_go.Treemap(**common_kwargs))
-        fig.update_layout(
-            height=int(height) + 200,
-            margin=dict(l=10, r=10, t=20, b=10),
-        )
+        else:  # Node-edge tree
+            # ── Tree layout: recursively split [x_lo, x_hi] among children
+            # in proportion to subtree weight; y = depth (top-down).
+            by_path: Dict[Tuple, Dict] = {tuple(nd["path"]): nd for nd in nodes_f}
+            children_of: Dict[Tuple, List[Tuple]] = defaultdict(list)
+            for nd in nodes_f:
+                if nd["parent_path"] is not None and tuple(nd["parent_path"]) in by_path:
+                    children_of[tuple(nd["parent_path"])].append(tuple(nd["path"]))
+            for k in children_of:
+                children_of[k].sort(key=lambda p: by_path[p]["cluster_id"])
+
+            pos_tree: Dict[Tuple, Tuple[float, float]] = {}
+            from collections import deque
+            def _assign(path: Tuple, x_lo: float, x_hi: float, depth: int) -> None:
+                pos_tree[path] = ((x_lo + x_hi) / 2, -depth)
+                ch = children_of.get(path, [])
+                if not ch:
+                    return
+                weights = [by_path[c]["n_episodes"] for c in ch]
+                total = sum(weights) or 1
+                cur = x_lo
+                for c, w in zip(ch, weights):
+                    span = (x_hi - x_lo) * w / total
+                    _assign(c, cur, cur + span, depth + 1)
+                    cur += span
+            _assign((), 0.0, 1.0, 0)
+
+            max_depth = max(d for _, d in pos_tree.values())
+            # Scale y so the tree fills the plot height
+            y_scale = 1.0 / max(1, abs(max_depth)) if max_depth else 1.0
+
+            # Helpers (cluster colors, terminal markers)
+            from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
+            def _node_color(nd):
+                cid = nd["cluster_id"]
+                if cid == SUCCESS_NODE_ID: return "#2ca02c"
+                if cid == FAILURE_NODE_ID: return "#d62728"
+                if cid == END_NODE_ID: return "#888"
+                if cid == START_NODE_ID: return "#444"
+                return CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
+
+            def _outcome_color(rate):
+                # green→grey→red diverging
+                r = int(214 + (44 - 214) * rate)
+                g = int(39 + (160 - 39) * rate)
+                b = int(40 + (44 - 40) * rate)
+                return f"rgb({r},{g},{b})"
+
+            fig = _go.Figure()
+            # ── Edges first so they sit behind nodes ──────────────────────
+            for path, nd in by_path.items():
+                if nd["parent_path"] is None: continue
+                parent = tuple(nd["parent_path"])
+                if parent not in pos_tree: continue
+                x0, y0 = pos_tree[parent]
+                x1, y1 = pos_tree[path]
+                y0s, y1s = y0 * y_scale, y1 * y_scale
+                # Edge width = log of episodes through this branch
+                w = max(0.8, 0.6 + np.log1p(nd["n_episodes"]) * 0.9)
+                # Outcome-rate color
+                rate = nd["n_success"] / max(1, nd["n_episodes"])
+                ec = _outcome_color(rate) if color_by.startswith("Outcome") else "rgba(140,140,140,0.6)"
+                # Cubic-ish vertical curve for smoothness
+                cx, cy = (x0 + x1) / 2, (y0s + y1s) / 2
+                fig.add_trace(_go.Scatter(
+                    x=[x0, cx, x1], y=[y0s, cy, y1s],
+                    mode="lines",
+                    line=dict(width=w, color=ec, shape="spline", smoothing=1.0),
+                    hoverinfo="text",
+                    hovertext=(
+                        f"<b>{by_path[parent]['label']} → {nd['label']}</b><br>"
+                        f"Episodes: {nd['n_episodes']}<br>"
+                        f"Success rate of this branch: {rate:.0%}"
+                    ),
+                    showlegend=False,
+                ))
+            # ── Nodes ─────────────────────────────────────────────────────
+            xs, ys, txts, hovers, colors_, sizes = [], [], [], [], [], []
+            for path, nd in by_path.items():
+                x, y = pos_tree[path]
+                xs.append(x); ys.append(y * y_scale)
+                txts.append(nd["label"])
+                rate = nd["n_success"] / max(1, nd["n_episodes"])
+                hovers.append(
+                    f"<b>{nd['label']}</b><br>Depth: {nd['depth']}<br>"
+                    f"Episodes: {nd['n_episodes']}<br>"
+                    f"Success rate: {rate:.0%}<br>"
+                    f"Path: {' → '.join(str(c) for c in path)}"
+                )
+                if color_by.startswith("Outcome") and nd["cluster_id"] not in (
+                    START_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID
+                ):
+                    colors_.append(_outcome_color(rate))
+                else:
+                    colors_.append(_node_color(nd))
+                sizes.append(max(10, min(60, 8 + np.log1p(nd["n_episodes"]) * 8)))
+
+            fig.add_trace(_go.Scatter(
+                x=xs, y=ys, mode="markers+text",
+                marker=dict(size=sizes, color=colors_, line=dict(width=1.5, color="white")),
+                text=txts, textposition="middle right",
+                textfont=dict(size=11, color="#ddd"),
+                hovertext=hovers, hoverinfo="text",
+                showlegend=False,
+            ))
+            fig.update_layout(
+                height=int(height) + 200,
+                margin=dict(l=10, r=10, t=20, b=10),
+                xaxis=dict(visible=False, range=[-0.05, 1.15]),
+                yaxis=dict(visible=False),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                hovermode="closest",
+            )
+
+        if not view_mode.startswith("Node-edge"):
+            fig.update_layout(
+                height=int(height) + 200,
+                margin=dict(l=10, r=10, t=20, b=10),
+            )
         st.plotly_chart(fig, use_container_width=True, key="tree_main")
 
         # ── Stats ────────────────────────────────────────────────────────────
