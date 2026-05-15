@@ -213,26 +213,21 @@ _simplify = st.checkbox(
     ),
 )
 
-# Apply slider filters first, then simplify the resulting subgraph so that
-# merging operates only on the nodes that are actually visible.
-_slider_excluded = compute_pruned_graph_nodes(graph, _prune_pct / 100.0, n_total, _min_edge_prob)
-
+# Simplify first (on the full graph), then apply slider filters to what remains.
+# This way merging can absorb any node regardless of visit frequency, and the
+# sliders prune whatever is left in the simplified graph.
 if _simplify:
-    # Mask out filtered nodes in the labels so the rebuilt graph doesn't see them.
-    _masked_labels = _active_labels = labels.copy()
-    for _excl in _slider_excluded:
-        _masked_labels[_masked_labels == _excl] = -1
     _active_graph, _active_labels, _n_rounds, _n_merged = degree_one_prune_to_fixed_point(
-        graph, _masked_labels, metadata
+        graph, labels, metadata
     )
-    # After merging, re-check reachability under the edge-prob filter.
-    _excluded_nodes = compute_pruned_graph_nodes(_active_graph, 0.0, n_total, _min_edge_prob)
     _n_orig = sum(1 for nid in graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
-    _n_simp = sum(1 for nid in _active_graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID} and nid not in _excluded_nodes)
+    _n_simp = sum(1 for nid in _active_graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
     st.caption(f"Simplified: {_n_orig} → {_n_simp} behavior nodes ({_n_merged} merged over {_n_rounds} pass(es)).")
 else:
     _active_graph, _active_labels = graph, labels
-    _excluded_nodes = _slider_excluded
+
+# Slider filters applied to whichever graph is active.
+_excluded_nodes = compute_pruned_graph_nodes(_active_graph, _prune_pct / 100.0, n_total, _min_edge_prob)
 
 _summary = []
 if _excluded_nodes:
