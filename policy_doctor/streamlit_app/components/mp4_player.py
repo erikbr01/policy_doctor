@@ -43,6 +43,10 @@ def mp4_player(
     key: str = "mp4p",
     max_height_px: int | None = None,
     fps: int = 10,
+    slice2_start: int | None = None,
+    slice2_end: int | None = None,
+    bar1_label: str = "",
+    bar2_label: str = "",
 ) -> None:
     if label:
         st.caption(label)
@@ -66,18 +70,36 @@ def mp4_player(
         start_s = f"{slice_start / fps:.1f}s"
         end_s = f"{slice_end / fps:.1f}s"
         total_s = total_frames / fps
+
+        bar2_html = ""
+        legend2_html = ""
+        if slice2_start is not None and slice2_end is not None and slice2_end > slice2_start:
+            pct_start2 = max(0, slice2_start / total_frames * 100)
+            pct_w2 = max(1, (slice2_end - slice2_start) / total_frames * 100)
+            start_s2 = f"{slice2_start / fps:.1f}s"
+            end_s2 = f"{slice2_end / fps:.1f}s"
+            bar2_html = (
+                f'<div style="position:absolute;left:{pct_start2:.1f}%;width:{pct_w2:.1f}%;'
+                f'height:100%;background:#38bdf8;border-radius:5px;opacity:0.85;"></div>'
+            )
+            lbl2 = f" {bar2_label}" if bar2_label else ""
+            legend2_html = (
+                f'&nbsp;|&nbsp;<span style="color:#38bdf8;">■</span>'
+                f'<span style="color:#aaa;">{lbl2} {start_s2}–{end_s2}</span>'
+            )
+
+        lbl1 = f" {bar1_label}" if bar1_label else ""
         timeline = f"""
         <div id="tl_{uid}" style="margin-top:6px;position:relative;height:10px;
              background:#333;border-radius:5px;cursor:pointer;">
-          <!-- Behavior segment -->
           <div style="position:absolute;left:{pct_start:.1f}%;width:{pct_w:.1f}%;height:100%;
                       background:#f5a623;border-radius:5px;opacity:0.85;"></div>
-          <!-- Live playhead -->
+          {bar2_html}
           <div id="ph_{uid}" style="position:absolute;top:-3px;left:0%;width:3px;height:16px;
                background:#fff;border-radius:2px;transition:left 0.1s linear;"></div>
         </div>
         <div style="font-size:10px;color:#888;margin-top:3px;">
-          ▶ plays from behavior start &nbsp;|&nbsp; orange = {start_s}–{end_s}
+          ▶ plays from start &nbsp;|&nbsp;<span style="color:#f5a623;">■</span><span style="color:#aaa;">{lbl1} {start_s}–{end_s}</span>{legend2_html}
         </div>"""
         playhead_js = f"""
   var ph=document.getElementById('ph_{uid}');

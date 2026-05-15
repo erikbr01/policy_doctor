@@ -47,10 +47,11 @@ def _episodes_for_edge(
     tgt_id: int,
     labels: np.ndarray,
     metadata: list[dict],
-) -> list[tuple[int, int, int]]:
+) -> list[tuple[int, int, int, Optional[int]]]:
     """Find episodes containing the src -> tgt transition.
 
-    Returns [(ep_idx, ts_src, ts_tgt), ...] sorted by ep_idx.
+    Returns [(ep_idx, ts_src, ts_tgt, ts_tgt_end), ...] sorted by ep_idx.
+    ts_tgt_end is the start of the next behavior after tgt (or None if tgt is last).
     Handles edges involving special nodes (START, FAILURE, SUCCESS):
       START->X:  episodes whose first cluster is X  (ts_src == ts_tgt == first_ts)
       X->FAILURE: failing episodes whose last cluster is X
@@ -88,20 +89,22 @@ def _episodes_for_edge(
 
         if src_id == START_NODE_ID:
             if tgt_id == first_lab:
-                result.append((ep_idx, first_ts, first_ts))
+                tgt_end = rle[1][0] if len(rle) > 1 else None
+                result.append((ep_idx, first_ts, first_ts, tgt_end))
             continue
         if tgt_id == FAILURE_NODE_ID:
             if last_lab == src_id and success is False:
-                result.append((ep_idx, last_ts, last_ts))
+                result.append((ep_idx, last_ts, last_ts, None))
             continue
         if tgt_id == SUCCESS_NODE_ID:
             if last_lab == src_id and success is True:
-                result.append((ep_idx, last_ts, last_ts))
+                result.append((ep_idx, last_ts, last_ts, None))
             continue
 
         for i in range(len(rle) - 1):
             if rle[i][1] == src_id and rle[i + 1][1] == tgt_id:
-                result.append((ep_idx, rle[i][0], rle[i + 1][0]))
+                ts_tgt_end = rle[i + 2][0] if i + 2 < len(rle) else None
+                result.append((ep_idx, rle[i][0], rle[i + 1][0], ts_tgt_end))
                 break
 
     return sorted(result)
@@ -162,7 +165,7 @@ def _render_edge_panel(
                     st.rerun()
 
         vid_cols = st.columns(min(3, len(show_triples)))
-        for col, (ep_idx, ts_src, ts_tgt) in zip(vid_cols, show_triples):
+        for col, (ep_idx, ts_src, ts_tgt, ts_tgt_end) in zip(vid_cols, show_triples):
             ep_entry = _find_mp4_episode(ep_idx, mp4_index)
             if ep_entry is None:
                 continue
@@ -177,6 +180,10 @@ def _render_edge_panel(
                     slice_start=ts_src,
                     slice_end=ts_tgt,
                     total_frames=ep_entry.get("frame_count"),
+                    slice2_start=ts_tgt if ts_tgt_end is not None else None,
+                    slice2_end=ts_tgt_end,
+                    bar1_label=src_name,
+                    bar2_label=tgt_name,
                 )
 
 
