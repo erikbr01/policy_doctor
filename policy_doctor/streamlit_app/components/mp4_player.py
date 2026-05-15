@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import pathlib
 
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 def slice_indicator(
@@ -16,43 +19,17 @@ def slice_indicator(
     label = f"slice: frames {slice_start}–{slice_end} ({pct:.0f}%)"
 
     fig = go.Figure()
-
-    fig.add_trace(
-        go.Bar(
-            x=[total_frames],
-            y=[""],
-            orientation="h",
-            marker_color="lightgray",
-            showlegend=False,
-            hoverinfo="skip",
-        )
-    )
-
-    fig.add_trace(
-        go.Bar(
-            x=[slice_end - slice_start],
-            y=[""],
-            orientation="h",
-            base=slice_start,
-            marker_color="#e87722",
-            text=label,
-            textposition="inside",
-            insidetextanchor="middle",
-            showlegend=False,
-            hoverinfo="skip",
-        )
-    )
-
-    fig.update_layout(
-        barmode="overlay",
-        height=80,
+    fig.add_trace(go.Bar(x=[total_frames], y=[""], orientation="h",
+        marker_color="lightgray", showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Bar(x=[slice_end - slice_start], y=[""], orientation="h",
+        base=slice_start, marker_color="#e87722", text=label,
+        textposition="inside", insidetextanchor="middle",
+        showlegend=False, hoverinfo="skip"))
+    fig.update_layout(barmode="overlay", height=80,
         margin=dict(l=0, r=0, t=0, b=0),
         xaxis=dict(range=[0, total_frames], title=None),
         yaxis=dict(visible=False),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-    )
-
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, use_container_width=True, key=key)
     return fig
 
@@ -65,25 +42,55 @@ def mp4_player(
     total_frames: int | None = None,
     key: str = "mp4p",
     max_height_px: int | None = None,
+    fps: int = 10,
 ) -> None:
     if label:
         st.caption(label)
 
-    with open(pathlib.Path(video_path), "rb") as f:
-        bytes_data = f.read()
+    path = pathlib.Path(video_path)
+    with open(path, "rb") as f:
+        raw = f.read()
 
-    if max_height_px is not None:
-        # Wrap in a div that constrains height via CSS
-        import base64
-        b64 = base64.b64encode(bytes_data).decode()
-        st.markdown(
-            f'<video controls style="max-height:{max_height_px}px;width:100%;border-radius:4px">'
-            f'<source src="data:video/mp4;base64,{b64}" type="video/mp4"></video>',
-            unsafe_allow_html=True,
-        )
+    # Determine video height
+    vid_h = max_height_px if max_height_px else 400
+
+    # Auto-seek and timeline — use components.html so JS runs
+    start_sec = slice_start / fps if slice_start is not None else 0.0
+    uid = "v" + hashlib.md5((str(video_path) + key).encode()).hexdigest()[:8]
+    b64 = base64.b64encode(raw).decode()
+
+    # Build CSS timeline marker
+    if slice_start is not None and slice_end is not None and total_frames and total_frames > 0:
+        pct_start = max(0, slice_start / total_frames * 100)
+        pct_w = max(1, (slice_end - slice_start) / total_frames * 100)
+        start_s = f"{slice_start / fps:.1f}s"
+        end_s = f"{slice_end / fps:.1f}s"
+        timeline = f"""
+        <div style="margin-top:6px;position:relative;height:10px;background:#333;border-radius:5px;">
+          <div style="position:absolute;left:{pct_start:.1f}%;width:{pct_w:.1f}%;height:100%;
+                      background:#f5a623;border-radius:5px;"></div>
+        </div>
+        <div style="font-size:10px;color:#888;margin-top:3px;">
+          Behavior: {start_s} – {end_s} (highlighted above)
+        </div>"""
+        extra_h = 36
     else:
-        st.video(bytes_data)
+        timeline = ""
+        extra_h = 4
 
-    if slice_start is not None and slice_end is not None and total_frames is not None:
-        fps_hint = f" · {slice_start / 10:.1f}s – {slice_end / 10:.1f}s" if total_frames else ""
-        st.caption(f"Relevant segment: frames {slice_start}–{slice_end} of {total_frames}{fps_hint}")
+    html = f"""
+<video id="{uid}" controls preload="metadata"
+  style="width:100%;max-height:{vid_h}px;border-radius:4px;background:#000;display:block;">
+  <source src="data:video/mp4;base64,{b64}" type="video/mp4">
+</video>
+{timeline}
+<script>
+(function(){{
+  var v=document.getElementById('{uid}');
+  if(!v) return;
+  function seek(){{ if({start_sec:.2f}>0) v.currentTime={start_sec:.2f}; }}
+  v.readyState>=1 ? seek() : v.addEventListener('loadedmetadata',seek,{{once:true}});
+}})();
+</script>"""
+
+    components.html(html, height=vid_h + extra_h, scrolling=False)

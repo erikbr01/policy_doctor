@@ -122,12 +122,16 @@ def _render_node_panel(
                     available += 1
                     success = ep_entry.get("success")
                     status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
+                    ts_range = ep_slices_by_idx.get(ep_idx)
                     with col:
                         st.caption(f"Episode {ep_idx} — {status}")
                         mp4_player(
                             mp4_dir / ep_entry["path"],
                             key=f"{key_prefix}_panel_vid_{node_id}_{ep_idx}",
                             max_height_px=220,
+                            slice_start=ts_range[0] if ts_range else None,
+                            slice_end=ts_range[1] if ts_range else None,
+                            total_frames=ep_entry.get("frame_count"),
                         )
                 if available == 0:
                     st.info("No videos found in index for this node.")

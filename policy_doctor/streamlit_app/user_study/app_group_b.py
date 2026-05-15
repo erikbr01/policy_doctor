@@ -268,49 +268,58 @@ with fa_right:
         )
         st.plotly_chart(fig_pie, use_container_width=True, key="gb_fa_pie")
 
-coords = st.session_state.get("gb_coords")
-if coords is not None:
-    ep_first = _initial_slice_per_episode(labels, metadata, coords)
-    ep_success_map = _success_per_episode(metadata)
-    all_ep_ids = sorted(ep_first.keys())
-    xs = [ep_first[e][3] for e in all_ep_ids]
-    ys = [ep_first[e][4] for e in all_ep_ids]
-    successes = [ep_success_map.get(e) for e in all_ep_ids]
+st.markdown("**Explore failure behavior at high-risk nodes**")
+st.caption(
+    "Each panel below shows a node where the policy frequently transitions to failure. "
+    "Watch the clips to understand what the robot is doing in these states."
+)
 
-    fig_ic = go.Figure()
-    for outcome, color, name in [
-        (True, "#2ca02c", "Success"),
-        (False, "#d62728", "Failure"),
-        (None, "#aaaaaa", "Unknown"),
-    ]:
-        mask = [i for i, s in enumerate(successes) if s is outcome]
-        if not mask:
+ep_key_meta = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
+
+# Build per-node failure episode list: episodes that pass through this node AND fail
+def _failure_eps_for_node(node_id: int) -> list[tuple[int, int, int]]:
+    ep_slices: dict[int, list[int]] = {}
+    ep_success_map: dict[int, bool] = {}
+    for i, m in enumerate(metadata):
+        if int(labels[i]) != node_id:
             continue
-        fig_ic.add_trace(go.Scatter(
-            x=[xs[i] for i in mask],
-            y=[ys[i] for i in mask],
-            mode="markers",
-            marker=dict(color=color, size=7),
-            name=name,
-            text=[f"Episode {all_ep_ids[i]}" for i in mask],
-            hoverinfo="text",
-        ))
-    fig_ic.update_layout(
-        title="Initial conditions (2D embedding of first timestep)",
-        height=380,
-        margin=dict(l=0, r=0, t=40, b=0),
-        xaxis=dict(title="Embedding dim 1", showgrid=True, gridcolor="#f0f0f0"),
-        yaxis=dict(title="Embedding dim 2", showgrid=True, gridcolor="#f0f0f0"),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_ic, use_container_width=True, key="gb_fa_ic_scatter")
-    st.caption(
-        "Each point is one episode, plotted at its start embedding. "
-        "Clusters of red points indicate initial conditions where the policy consistently fails."
-    )
-else:
-    st.info("Run UMAP reduction to enable initial conditions view.")
+        ep_idx = m.get(ep_key_meta, -1)
+        ts = m.get("window_start", m.get("timestep", 0))
+        ep_slices.setdefault(ep_idx, []).append(ts)
+        if ep_idx not in ep_success_map and "success" in m:
+            ep_success_map[ep_idx] = bool(m["success"])
+    result = []
+    for ep_idx, tss in ep_slices.items():
+        if not ep_success_map.get(ep_idx, True):  # only failures
+            result.append((ep_idx, min(tss), max(tss)))
+    return sorted(result)[:3]  # up to 3 failure clips per node
+
+def _mp4_entry(ep_idx: int) -> Optional[dict]:
+    for ep in index.get("episodes", []):
+        if ep.get("index") == ep_idx:
+            return ep
+    return None
+
+for node_name, node_id, rate in top_failure_nodes[:3]:
+    fail_clips = _failure_eps_for_node(node_id)
+    if not fail_clips:
+        continue
+    with st.expander(f"**{node_name}** — {rate:.0%} failure rate  ({len(fail_clips)} failure clip{'s' if len(fail_clips)!=1 else ''} shown)", expanded=True):
+        cols = st.columns(min(3, len(fail_clips)))
+        for col, (ep_idx, ts_start, ts_end) in zip(cols, fail_clips):
+            entry = _mp4_entry(ep_idx)
+            if entry is None:
+                continue
+            with col:
+                st.caption(f"Episode {ep_idx} — robot in {node_name}")
+                mp4_player(
+                    mp4_dir / entry["path"],
+                    key=f"gb_fa_vid_{node_id}_{ep_idx}",
+                    max_height_px=200,
+                    slice_start=ts_start,
+                    slice_end=ts_end,
+                    total_frames=entry.get("frame_count"),
+                )
 
 # ── Section 5: Strategy design ────────────────────────────────────────────────
 st.divider()
