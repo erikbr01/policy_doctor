@@ -234,19 +234,84 @@ if _MP4_DIR is not None:
     st.sidebar.success(f"MP4s: {_MP4_DIR.name} ({len(_MP4_INDEX.get('episodes', []))} eps)")
 
 
+# ── Cluster names: per-clustering YAML persistence ───────────────────────────
+
+_NAMES_DIR = _REPO_ROOT / "data" / "cluster_names"
+_NAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _names_key() -> str:
+    """Stable identifier for the current clustering's name YAML file."""
+    # Use the clustering directory name (already encodes task + algo + k + seed)
+    return clustering_path.name
+
+
+def _load_names() -> Dict[int, str]:
+    p = _NAMES_DIR / f"{_names_key()}.yaml"
+    if not p.exists():
+        return {}
+    try:
+        import yaml as _y
+        data = _y.safe_load(p.read_text()) or {}
+        return {int(k): str(v) for k, v in data.items()}
+    except Exception:
+        return {}
+
+
+def _save_names(names: Dict[int, str]) -> Path:
+    import yaml as _y
+    p = _NAMES_DIR / f"{_names_key()}.yaml"
+    p.write_text(_y.safe_dump({int(k): str(v) for k, v in names.items()}, sort_keys=True))
+    return p
+
+
+# Load on session start
+_NAMES_STATE_KEY = f"cluster_names::{_names_key()}"
+if _NAMES_STATE_KEY not in st.session_state:
+    st.session_state[_NAMES_STATE_KEY] = _load_names()
+
+
+def _name_for(cluster_id: int) -> str:
+    """Resolve a display name for a cluster, falling back to 'Behavior <id>'."""
+    custom = st.session_state[_NAMES_STATE_KEY].get(int(cluster_id))
+    return custom if custom else f"Behavior {cluster_id}"
+
+
+def _apply_names_to_graph(graph: BehaviorGraph) -> BehaviorGraph:
+    """Return a shallow copy of the graph with cluster_node.name replaced by user names."""
+    names_map = st.session_state[_NAMES_STATE_KEY]
+    if not names_map:
+        return graph
+    new_nodes = {}
+    from dataclasses import replace
+    for nid, node in graph.nodes.items():
+        if node.is_special:
+            new_nodes[nid] = node
+        elif int(nid) in names_map and names_map[int(nid)]:
+            new_nodes[nid] = replace(node, name=names_map[int(nid)])
+        else:
+            new_nodes[nid] = node
+    return BehaviorGraph(
+        nodes=new_nodes,
+        transition_counts=graph.transition_counts,
+        transition_probs=graph.transition_probs,
+        num_episodes=graph.num_episodes,
+        level=graph.level,
+    )
+
+
 def _show_graph(
     graph: BehaviorGraph,
     labels: np.ndarray,
     title: str,
     key_prefix: str,
 ) -> None:
-    """Render the graph. Uses native SVG component when enabled."""
+    """Render the graph. Uses native SVG component when enabled. Applies user names."""
+    graph = _apply_names_to_graph(graph)
     if not use_native_renderer:
         st.plotly_chart(_plot(graph, labels, title), use_container_width=True, key=f"plotly_{key_prefix}_{title}")
         return
     pos = _layout_for(graph, labels)
-    # Native renderer expects a labels array that aligns with metadata.
-    # Use the empty-mp4 fallback when no MP4s are configured.
     render_graph_full_width(
         graph=graph,
         labels=labels,
@@ -351,7 +416,8 @@ baseline_graph = _build_graph(labels0, id(meta))
 n_nodes0, n_edges0 = _graph_stats(baseline_graph)
 st.markdown(f"**Baseline:** {n_nodes0} cluster nodes, {n_edges0} transitions")
 
-tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_combo, tab_reps = st.tabs([
+tab_inspect, tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_combo, tab_reps = st.tabs([
+    "🔍 Cluster inspector",
     "1. Temporal smoothing",
     "2. Edge pruning",
     "3. Node merging",
@@ -360,6 +426,157 @@ tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_combo, tab_reps
     "6. Combined pipeline",
     "7. Compare representations",
 ])
+
+
+# ── Tab 0: Cluster inspector ─────────────────────────────────────────────────
+
+with tab_inspect:
+    st.markdown(
+        "**Is this cluster actually one behavior?** Pick a cluster, sample N random windows "
+        "from it, watch each clip. Rename clusters as you go — names persist to "
+        f"`{_NAMES_DIR}` and propagate to every other tab in the app."
+    )
+
+    if _MP4_DIR is None:
+        st.warning(f"No MP4 index at `{mp4_root}`. Cluster inspector needs videos.")
+    else:
+        cluster_ids = sorted(set(int(c) for c in labels0) - {-1})
+
+        col_pick, col_n = st.columns([3, 1])
+        with col_pick:
+            chosen = st.multiselect(
+                "Clusters to inspect (showing all by default)",
+                options=cluster_ids,
+                default=cluster_ids[:6] if len(cluster_ids) > 6 else cluster_ids,
+                format_func=lambda c: f"{c}: {_name_for(c)}",
+                key="inspect_clusters",
+            )
+        with col_n:
+            n_clips = st.number_input(
+                "Clips per cluster", min_value=2, max_value=12, value=6, step=2,
+                key="inspect_n_clips",
+            )
+
+        # ── Bulk rename panel ────────────────────────────────────────────────
+        with st.expander("✏️ Edit names (saves to YAML)", expanded=False):
+            names_state = st.session_state[_NAMES_STATE_KEY]
+            cols_per_row = 3
+            edited = {}
+            for row_i in range(0, len(cluster_ids), cols_per_row):
+                row_cols = st.columns(cols_per_row)
+                for col, cid in zip(row_cols, cluster_ids[row_i:row_i + cols_per_row]):
+                    with col:
+                        edited[cid] = st.text_input(
+                            f"Cluster {cid}",
+                            value=names_state.get(cid, ""),
+                            placeholder=f"Behavior {cid}",
+                            key=f"name_input_{cid}",
+                        )
+            save_col, clear_col, info_col = st.columns([1, 1, 4])
+            with save_col:
+                if st.button("💾 Save", key="save_names"):
+                    # Drop empty entries
+                    new_names = {cid: name.strip() for cid, name in edited.items() if name.strip()}
+                    st.session_state[_NAMES_STATE_KEY] = new_names
+                    path = _save_names(new_names)
+                    st.success(f"Saved {len(new_names)} names → {path.name}")
+            with clear_col:
+                if st.button("🗑 Clear all", key="clear_names"):
+                    st.session_state[_NAMES_STATE_KEY] = {}
+                    _save_names({})
+                    st.rerun()
+            with info_col:
+                st.caption(f"YAML: `{_NAMES_DIR / (_names_key() + '.yaml')}`")
+
+        # ── Cluster card grid ────────────────────────────────────────────────
+        if not chosen:
+            st.info("Pick at least one cluster above.")
+        else:
+            # Pre-compute window indices and episode-success per cluster
+            ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+            ep_success = {ep["index"]: ep.get("success") for ep in _MP4_INDEX.get("episodes", [])}
+            mp4_by_ep = {ep["index"]: ep for ep in _MP4_INDEX.get("episodes", [])}
+            fps = int(_MP4_INDEX.get("fps") or 10)
+            rng = np.random.default_rng(42)
+
+            # Map cluster_id -> list of (sample_idx, ep_idx, window_start, window_end, success)
+            cluster_windows: Dict[int, List[Tuple[int, int, int, int, Optional[bool]]]] = {}
+            for cid in chosen:
+                mask = (labels0 == cid)
+                idxs = np.where(mask)[0]
+                tmp = []
+                for i in idxs:
+                    m = meta[i]
+                    ep_idx = m[ep_key]
+                    ws = int(m.get("window_start", m.get("timestep", 0)))
+                    we = int(m.get("window_end", ws + 1))
+                    tmp.append((int(i), int(ep_idx), ws, we, ep_success.get(int(ep_idx))))
+                cluster_windows[cid] = tmp
+
+            for cid in chosen:
+                wins = cluster_windows[cid]
+                n_total = len(wins)
+                if n_total == 0:
+                    st.warning(f"Cluster {cid} has 0 windows.")
+                    continue
+                # Stats
+                eps_in = {w[1] for w in wins}
+                eps_success_in = sum(1 for e in eps_in if ep_success.get(e) is True)
+                success_rate = eps_success_in / len(eps_in) if eps_in else 0.0
+                # Window position fractions
+                pos_fracs = []
+                for _, ep_idx, ws, we, _ in wins:
+                    total_f = mp4_by_ep.get(ep_idx, {}).get("frame_count") or 1
+                    pos_fracs.append(((ws + we) / 2) / total_f)
+                mean_pos = float(np.mean(pos_fracs)) if pos_fracs else 0.0
+
+                # Header
+                st.markdown(
+                    f"### {cid}: **{_name_for(cid)}**  ·  "
+                    f"{n_total} windows · {len(eps_in)} episodes · "
+                    f"{success_rate:.0%} success · mean position {mean_pos:.0%} through episode"
+                )
+
+                # Sample windows (one per episode if possible — much more diverse than raw random)
+                wins_by_ep: Dict[int, List[Tuple[int, int, int, int, Optional[bool]]]] = {}
+                for w in wins:
+                    wins_by_ep.setdefault(w[1], []).append(w)
+                ep_order = list(wins_by_ep.keys())
+                rng.shuffle(ep_order)
+                samples = []
+                for ep in ep_order:
+                    samples.append(rng.choice(wins_by_ep[ep]))
+                    if len(samples) >= n_clips:
+                        break
+                # Fill from remaining if we don't have enough distinct episodes
+                if len(samples) < n_clips:
+                    remaining = [w for w in wins if w not in samples]
+                    rng.shuffle(remaining)
+                    samples.extend(remaining[: n_clips - len(samples)])
+
+                # 3-column grid
+                cpr = 3
+                for row_i in range(0, len(samples), cpr):
+                    row = samples[row_i:row_i + cpr]
+                    row_cols = st.columns(cpr)
+                    for col, (_, ep_idx, ws, we, succ) in zip(row_cols, row):
+                        ep_entry = mp4_by_ep.get(ep_idx)
+                        if ep_entry is None:
+                            continue
+                        total_f = ep_entry.get("frame_count") or 0
+                        status = "✓" if succ is True else "✗" if succ is False else ""
+                        with col:
+                            st.caption(f"Ep {ep_idx} {status} · frames {ws}–{we}")
+                            mp4_player(
+                                _MP4_DIR / ep_entry["path"],
+                                key=f"inspect_{cid}_{ep_idx}_{ws}",
+                                max_height_px=180,
+                                total_frames=total_f,
+                                fps=fps,
+                                slice_start=ws,
+                                slice_end=we,
+                            )
+                st.markdown("---")
 
 
 # ── Tab 1: Temporal smoothing ────────────────────────────────────────────────
