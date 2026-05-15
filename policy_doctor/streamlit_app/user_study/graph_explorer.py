@@ -123,9 +123,9 @@ def _render_node_panel(
                 show_eps = all_eps[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
 
                 if _vp_total > 1:
-                    _vc1, _vc2, _vc3 = st.columns([2, 7, 2])
+                    _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
                     with _vc1:
-                        if st.button("← Prev", disabled=(_vp == 0), key=f"{key_prefix}_vp_prev_{node_id}"):
+                        if st.button("←", disabled=(_vp == 0), key=f"{key_prefix}_vp_prev_{node_id}"):
                             st.session_state[_vp_key] = max(0, _vp - 1)
                             st.rerun()
                     _vc2.markdown(
@@ -133,7 +133,7 @@ def _render_node_panel(
                         f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
                         f"</div>", unsafe_allow_html=True)
                     with _vc3:
-                        if st.button("Next →", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
+                        if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
                             st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
                             st.rerun()
 
@@ -147,6 +147,14 @@ def _render_node_panel(
                     success = ep_entry.get("success")
                     status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
                     ts_range = ep_slices_by_idx.get(ep_idx)
+                    total_frames = ep_entry.get("frame_count")
+                    # For failure episodes, extend orange bar to end of video:
+                    # the node is the last behaviour before failure, so the bar
+                    # should run from the behaviour's start to the episode's end.
+                    if ts_range and success is False and total_frames:
+                        effective_end = total_frames
+                    else:
+                        effective_end = ts_range[1] if ts_range else None
                     with col:
                         st.caption(f"Episode {ep_idx} — {status}")
                         mp4_player(
@@ -154,8 +162,8 @@ def _render_node_panel(
                             key=f"{key_prefix}_panel_vid_{node_id}_{ep_idx}",
                             max_height_px=220,
                             slice_start=ts_range[0] if ts_range else None,
-                            slice_end=ts_range[1] if ts_range else None,
-                            total_frames=ep_entry.get("frame_count"),
+                            slice_end=effective_end,
+                            total_frames=total_frames,
                         )
                 if available == 0:
                     st.info("No videos found in index for this node.")
