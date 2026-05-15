@@ -182,19 +182,30 @@ st.markdown(
 
 highlighted_path = st.session_state.get("gb_pex_highlighted_path")
 
-_prune_pct = st.slider(
+_col_np, _col_ep = st.columns(2)
+_prune_pct = _col_np.slider(
     "Hide nodes visited in fewer than X% of episodes",
-    min_value=0, max_value=30, value=0, step=1,
+    min_value=0, max_value=80, value=0, step=1,
     format="%d%%",
     key="gb_graph_prune_pct",
-    help=(
-        "Removes infrequent behavior nodes and any node that becomes "
-        "unreachable from START after pruning."
-    ),
+    help="Removes infrequent nodes and any node that becomes unreachable from START.",
 )
-_excluded_nodes = compute_pruned_graph_nodes(graph, _prune_pct / 100.0, n_total)
+_edge_pct = _col_ep.slider(
+    "Hide edges with transition probability below X%",
+    min_value=0, max_value=80, value=0, step=1,
+    format="%d%%",
+    key="gb_graph_edge_pct",
+    help="Hides weak transitions. Nodes that become unreachable from START are also removed.",
+)
+_min_edge_prob = _edge_pct / 100.0
+_excluded_nodes = compute_pruned_graph_nodes(graph, _prune_pct / 100.0, n_total, _min_edge_prob)
+_summary = []
 if _excluded_nodes:
-    st.caption(f"Hiding {len(_excluded_nodes)} node(s) with visit rate < {_prune_pct}%.")
+    _summary.append(f"{len(_excluded_nodes)} node(s) hidden")
+if _edge_pct > 0:
+    _summary.append(f"edges < {_edge_pct}% hidden")
+if _summary:
+    st.caption(" · ".join(_summary))
 
 render_graph_full_width(
     graph=graph,
@@ -205,6 +216,7 @@ render_graph_full_width(
     key_prefix="gb_gex",
     highlighted_path=highlighted_path,
     excluded_node_ids=_excluded_nodes,
+    min_edge_prob=_min_edge_prob,
 )
 
 # ── Section 3: Path explorer ──────────────────────────────────────────────────

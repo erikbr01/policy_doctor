@@ -40,21 +40,21 @@ def compute_pruned_graph_nodes(
     graph: BehaviorGraph,
     min_visit_prob: float,
     n_total: int,
+    min_edge_prob: float = 0.0,
 ) -> frozenset[int]:
     """Return the set of node IDs to EXCLUDE from the graph.
 
     Algorithm:
-    1. Remove regular (non-special) nodes whose visit frequency < min_visit_prob.
-    2. BFS from START through surviving nodes; remove anything unreachable.
+    1. Remove regular nodes whose visit frequency < min_visit_prob.
+    2. BFS from START following only edges with prob >= min_edge_prob through
+       surviving nodes; remove anything unreachable.
     Special nodes (START/SUCCESS/FAILURE) are never excluded by the threshold but
-    may disappear if all paths to them are pruned.
+    may disappear if all paths to them are cut by node or edge pruning.
     """
-    if min_visit_prob <= 0 or n_total == 0:
-        return frozenset()
-
     surviving = {
         nid for nid, node in graph.nodes.items()
-        if nid in _SPECIAL_IDS or node.num_episodes / n_total >= min_visit_prob
+        if nid in _SPECIAL_IDS or n_total == 0 or
+        node.num_episodes / n_total >= min_visit_prob
     }
 
     reachable: set[int] = set()
@@ -64,8 +64,8 @@ def compute_pruned_graph_nodes(
         if nid in reachable:
             continue
         reachable.add(nid)
-        for tgt in graph.transition_probs.get(nid, {}):
-            if tgt in surviving and tgt not in reachable:
+        for tgt, prob in graph.transition_probs.get(nid, {}).items():
+            if tgt in surviving and tgt not in reachable and prob >= min_edge_prob:
                 queue.append(tgt)
 
     return frozenset(nid for nid in graph.nodes if nid not in reachable)
@@ -212,6 +212,7 @@ def _build_graph_json(
     graph: BehaviorGraph,
     pos: dict[int, tuple[float, float]],
     thumbnails: dict[int, list[str]] | None = None,
+    min_edge_prob: float = 0.0,
 ) -> str:
     """Serialize graph data for the SVG component."""
     nodes = []
@@ -263,7 +264,7 @@ def _build_graph_json(
     edges = []
     for src, targets in graph.transition_probs.items():
         for tgt, prob in targets.items():
-            if prob >= 0.01 and src in pos and tgt in pos:
+            if prob >= max(0.01, min_edge_prob) and src in pos and tgt in pos:
                 edges.append({"src": src, "tgt": tgt, "prob": round(prob, 4)})
 
     positions = {str(nid): list(xy) for nid, xy in pos.items()}
@@ -278,6 +279,7 @@ def render_graph_component(
     highlighted_path: Optional[list[int]] = None,
     mp4_dir: Optional[Path] = None,
     excluded_node_ids: frozenset[int] = frozenset(),
+    min_edge_prob: float = 0.0,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
@@ -293,7 +295,7 @@ def render_graph_component(
     thumbnails: dict[int, list[str]] | None = None
     if mp4_dir is not None:
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)
-    graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails)
+    graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob)
     selected = st.session_state.get(f"{key}_selected")
     # Track the last click value we processed so we ignore the component's
     # cached return value on reruns triggered by other widgets (e.g. close button).
