@@ -182,6 +182,29 @@ st.markdown(
 
 highlighted_path = st.session_state.get("gb_pex_highlighted_path")
 
+# ── Graph simplification + filters ───────────────────────────────────────────
+from policy_doctor.behaviors.behavior_graph import degree_one_prune_to_fixed_point
+
+_simplify = st.checkbox(
+    "Merge pass-through nodes (single in/out connection)",
+    value=False,
+    key="gb_graph_simplify",
+    help=(
+        "Iteratively collapses nodes that always come from the same place "
+        "or always go to the same place, until the graph reaches a fixed point. "
+        "Merged node panels show episodes from all collapsed nodes."
+    ),
+)
+if _simplify:
+    _active_graph, _active_labels, _n_rounds, _n_merged = degree_one_prune_to_fixed_point(
+        graph, labels, metadata
+    )
+    _n_orig = sum(1 for nid in graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
+    _n_simp = sum(1 for nid in _active_graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
+    st.caption(f"Simplified: {_n_orig} → {_n_simp} behavior nodes ({_n_merged} merged over {_n_rounds} pass(es)).")
+else:
+    _active_graph, _active_labels = graph, labels
+
 _col_np, _col_ep = st.columns(2)
 _prune_pct = _col_np.slider(
     "Hide nodes visited in fewer than X% of episodes",
@@ -198,7 +221,7 @@ _edge_pct = _col_ep.slider(
     help="Hides weak transitions. Nodes that become unreachable from START are also removed.",
 )
 _min_edge_prob = _edge_pct / 100.0
-_excluded_nodes = compute_pruned_graph_nodes(graph, _prune_pct / 100.0, n_total, _min_edge_prob)
+_excluded_nodes = compute_pruned_graph_nodes(_active_graph, _prune_pct / 100.0, n_total, _min_edge_prob)
 _summary = []
 if _excluded_nodes:
     _summary.append(f"{len(_excluded_nodes)} node(s) hidden")
@@ -208,8 +231,8 @@ if _summary:
     st.caption(" · ".join(_summary))
 
 render_graph_full_width(
-    graph=graph,
-    labels=labels,
+    graph=_active_graph,
+    labels=_active_labels,
     metadata=metadata,
     mp4_dir=mp4_dir,
     mp4_index=index,
@@ -229,8 +252,8 @@ st.markdown(
 )
 
 render_path_explorer(
-    graph=graph,
-    labels=labels,
+    graph=_active_graph,
+    labels=_active_labels,
     metadata=metadata,
     mp4_dir=mp4_dir,
     mp4_index=index,
@@ -250,10 +273,10 @@ fa_left, fa_right = st.columns(2)
 with fa_left:
     _SPECIAL = frozenset({SUCCESS_NODE_ID, FAILURE_NODE_ID})
     node_failure_rates: list[tuple[int, str, float]] = []
-    for nid, node in graph.nodes.items():
+    for nid, node in _active_graph.nodes.items():
         if nid in _SPECIAL:
             continue
-        outgoing = graph.transition_probs.get(nid, {})
+        outgoing = _active_graph.transition_probs.get(nid, {})
         total_weight = sum(outgoing.values())
         if total_weight == 0:
             continue
@@ -309,7 +332,7 @@ def _failure_eps_for_node(node_id: int) -> list[tuple[int, int, int]]:
     ep_slices: dict[int, list[int]] = {}
     ep_success_map: dict[int, bool] = {}
     for i, m in enumerate(metadata):
-        if int(labels[i]) != node_id:
+        if int(_active_labels[i]) != node_id:
             continue
         ep_idx = m.get(ep_key_meta, -1)
         ts = m.get("window_start", m.get("timestep", 0))
@@ -333,7 +356,7 @@ def _ep_behavior_range(ep_idx: int, node_id: int) -> Optional[tuple[int, int]]:
     tss = [
         m.get("window_start", m.get("timestep", 0))
         for i, m in enumerate(metadata)
-        if m.get(ep_key_meta) == ep_idx and int(labels[i]) == node_id
+        if m.get(ep_key_meta) == ep_idx and int(_active_labels[i]) == node_id
     ]
     return (min(tss), max(tss)) if tss else None
 
@@ -425,7 +448,7 @@ _fail_ep_ids: set[int] = {
     ep.get("index") for ep in index.get("episodes", []) if ep.get("success") is False
 }
 
-_all_graph_paths = graph.enumerate_paths(max_paths=100)
+_all_graph_paths = _active_graph.enumerate_paths(max_paths=100)
 _failure_graph_paths = [
     (path, prob) for path, prob, _ in _all_graph_paths
     if path and path[-1] == FAILURE_NODE_ID
@@ -436,7 +459,7 @@ for _path, _prob in _failure_graph_paths:
     _first_b = next((n for n in _path if n not in _IC_SPECIAL), None)
     if _first_b is None:
         continue
-    _matching = _ic_episodes_for_path(_path, labels, metadata)
+    _matching = _ic_episodes_for_path(_path, _active_labels, metadata)
     _fail_matching = [ep for ep in _matching if ep in _fail_ep_ids]
     if not _fail_matching:
         continue
@@ -451,7 +474,7 @@ if not _sorted_ic:
     st.info("No failure paths with initial behavior grouping found.")
 else:
     for _fnid, _grp in _sorted_ic:
-        _fnode = graph.nodes.get(_fnid)
+        _fnode = _active_graph.nodes.get(_fnid)
         _fnode_name = _fnode.name if _fnode else str(_fnid)
         _grp_eps = sorted(_grp["episodes"])
         _top_fps = sorted(_grp["paths"], key=lambda x: -x[2])
@@ -465,7 +488,7 @@ else:
                 _fp_str = " → ".join(
                     ("START" if n == START_NODE_ID
                      else "✗ FAILURE" if n == FAILURE_NODE_ID
-                     else graph.nodes[n].name if n in graph.nodes else str(n))
+                     else _active_graph.nodes[n].name if n in _active_graph.nodes else str(n))
                     for n in _fp if n != END_NODE_ID
                 )
                 st.caption(f"  {_fp_str}  ({_fn_ep} ep)")
