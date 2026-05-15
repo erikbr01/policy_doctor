@@ -1,0 +1,10 @@
+algorithm: kmeans
+created: '2026-05-14T21:39:56.737050'
+influence_source: infembed
+level: rollout
+n_clusters: 10
+n_samples: 3836
+notes: k=10 refit with tail-gap fix
+representation: sliding_window
+scaling: none
+task_config: transport_mh_jan28
