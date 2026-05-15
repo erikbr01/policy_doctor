@@ -213,8 +213,11 @@ def render_path_explorer(
     selected_path_idx = select_options.index(selected_label) - 1  # offset for NO_SELECTION
     selected_path, selected_prob, _ = terminal_paths[selected_path_idx]
 
-    # Store for graph highlighting
+    # Store for graph highlighting; rerun once if path changed so the graph above updates
+    current = st.session_state.get(f"{key_prefix}_highlighted_path")
     st.session_state[f"{key_prefix}_highlighted_path"] = selected_path
+    if current != selected_path:
+        st.rerun()
 
     terminal_id = selected_path[-1]
     outcome_str = "SUCCESS" if terminal_id == SUCCESS_NODE_ID else "FAILURE"

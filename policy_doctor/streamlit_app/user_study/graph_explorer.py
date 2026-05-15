@@ -101,6 +101,37 @@ def _render_node_panel(
                 st.session_state.pop(f"{key_prefix}_clicked_node", None)
                 st.rerun()
 
+        # ── Videos first — they are the primary content ──────────────────────
+        if node.is_special:
+            st.info("No video clips for START / terminal nodes.")
+        else:
+            ep_slices = _episodes_for_node(node_id, labels, metadata)
+            ep_slices_by_idx = {e[0]: (e[1], e[2]) for e in ep_slices}
+            show_eps = node.episode_indices[:3]
+
+            if not show_eps:
+                st.info("No videos available for this node.")
+            else:
+                vid_cols = st.columns(min(3, len(show_eps)))
+                available = 0
+                for col, ep_idx in zip(vid_cols, show_eps):
+                    ep_entry = _find_mp4_episode(ep_idx, mp4_index)
+                    if ep_entry is None:
+                        continue
+                    available += 1
+                    success = ep_entry.get("success")
+                    status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
+                    with col:
+                        st.caption(f"Episode {ep_idx} — {status}")
+                        mp4_player(
+                            mp4_dir / ep_entry["path"],
+                            key=f"{key_prefix}_panel_vid_{node_id}_{ep_idx}",
+                            max_height_px=220,
+                        )
+                if available == 0:
+                    st.info("No videos found in index for this node.")
+
+        # ── Stats + outgoing transitions below ────────────────────────────────
         ep_key = "rollout_idx" if graph.level == "rollout" else "demo_idx"
         ep_success: dict[int, Optional[bool]] = {}
         for meta in metadata:
@@ -129,43 +160,9 @@ def _render_node_panel(
                 fig_trans = go.Figure(go.Bar(x=tgt_probs, y=tgt_labels, orientation="h", marker_color=bar_colors))
                 fig_trans.update_layout(
                     title="Where does this node lead?",
-                    height=max(120, 36 * len(tgt_labels) + 60),
-                    margin=dict(l=0, r=0, t=40, b=0),
+                    height=max(100, 32 * len(tgt_labels) + 50),
+                    margin=dict(l=0, r=0, t=36, b=0),
                     xaxis=dict(range=[0, 1], title="Probability"),
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                 )
                 st.plotly_chart(fig_trans, use_container_width=True, key=f"{key_prefix}_panel_trans")
-
-        if node.is_special:
-            st.info("No video clips for START / terminal nodes.")
-            return
-
-        ep_slices = _episodes_for_node(node_id, labels, metadata)
-        ep_slices_by_idx = {e[0]: (e[1], e[2]) for e in ep_slices}
-        show_eps = node.episode_indices[:3]
-
-        if not show_eps:
-            st.info("No videos available for this node.")
-            return
-
-        st.markdown(f"**Example videos** — episodes passing through *{node.name}*")
-        vid_cols = st.columns(min(3, len(show_eps)))
-        available = 0
-        for col, ep_idx in zip(vid_cols, show_eps):
-            ep_entry = _find_mp4_episode(ep_idx, mp4_index)
-            if ep_entry is None:
-                continue
-            available += 1
-            success = ep_entry.get("success")
-            status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
-            ts_range = ep_slices_by_idx.get(ep_idx)
-            with col:
-                st.caption(f"Episode {ep_idx} — {status}")
-                mp4_player(
-                    mp4_dir / ep_entry["path"],
-                    slice_start=ts_range[0] if ts_range else None,
-                    slice_end=ts_range[1] if ts_range else None,
-                    total_frames=ep_entry.get("frame_count"),
-                    key=f"{key_prefix}_panel_vid_{node_id}_{ep_idx}",
-                )
-        if available == 0:
-            st.info("No videos found in index for this node.")

@@ -85,4 +85,5 @@ def mp4_player(
         st.video(bytes_data)
 
     if slice_start is not None and slice_end is not None and total_frames is not None:
-        slice_indicator(slice_start, slice_end, total_frames, key=f"{key}_slice_ind")
+        fps_hint = f" · {slice_start / 10:.1f}s – {slice_end / 10:.1f}s" if total_frames else ""
+        st.caption(f"Relevant segment: frames {slice_start}–{slice_end} of {total_frames}{fps_hint}")
