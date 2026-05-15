@@ -317,9 +317,13 @@ function render(data, svgW, svgH) {
     g.addEventListener("mousemove", positionTooltip);
     g.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
     g.addEventListener("click", () => {
-      selectedNodeId = node.id;
-      sendValue(node.id);
-      // Re-render to update selection highlight
+      if (selectedNodeId === node.id) {
+        selectedNodeId = null;
+        sendValue(-1); // -1 = deselect sentinel
+      } else {
+        selectedNodeId = node.id;
+        sendValue(node.id);
+      }
       render(graphData, svgW, svgH);
     });
 

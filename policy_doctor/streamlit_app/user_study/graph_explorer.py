@@ -99,7 +99,7 @@ def _render_node_panel(
             st.subheader(f"🔍 {node.name}")
         with close_col:
             if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
-                st.session_state.pop(f"{key_prefix}_clicked_node", None)
+                st.session_state.pop(f"{key_prefix}_graph_selected", None)
                 st.rerun()
 
         # ── Videos first — they are the primary content ──────────────────────

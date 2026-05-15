@@ -261,6 +261,9 @@ def render_graph_component(
     if clicked is not None:
         try:
             node_id = int(clicked)
+            if node_id == -1:
+                st.session_state.pop(f"{key}_selected", None)
+                return None
             if node_id in graph.nodes:
                 st.session_state[f"{key}_selected"] = node_id
                 return node_id
