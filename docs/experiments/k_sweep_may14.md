@@ -22,7 +22,7 @@ UMAP fit once (seed=1, 12978 windows × 100d); K-means re-fit per K.
 
 | K | Phase A (rep-1) | Phase B (rep-2) | Phase B (rep-3) |
 |---|-----------------|-----------------|-----------------|
-| 5  | 🏋 training (BG+manual), gen active (rand/div) | 🔄 generating | ⏳ pending |
+| 5  | 🏋 training all 3 arms (BG ep100, rand ep200, div ep350) | ⏳ pending | ⏳ pending |
 | 10 | ⏳ pending | ⏳ pending | ⏳ pending |
 | 15 | ⏳ pending | ⏳ pending | ⏳ pending |
 | 20 | ⏳ pending | ⏳ pending | ⏳ pending |
@@ -71,6 +71,8 @@ Legend: ⏳ pending · 🔄 generating · 🏋 training · 📊 eval · ✅ done
 - **2026-05-15 05:10**: **Phase A OOM** — diversity training killed by OOM killer (exit code 137) during epoch-350 rollout eval; random also crashed (exit code 1) shortly after; behavior_graph already FAILED. All 3 Phase A arms FAILED. Composite `mimicgen_budget_sweep/done` written at 05:16 with `{}` (all failed).
 - **2026-05-15 05:16**: **Phase B started** — pipeline moved to `mimicgen_budget_rep_sweep`. All 6 rep arms created (rep1+rep2 for random/BG/diversity). First Phase B arm training (epoch ~38-50 at 28 it/s). 21 GB RAM free.
 - **NOTE**: Phase A needs full retry after Phase B completes (diversity has good checkpoints up to epoch 350/score=0.360; random up to epoch 50/0.080; BG up to epoch 50/0.060). Will restart once Phase B frees memory.
+- **2026-05-15 05:26**: Reduced `num_workers` to 2, `persistent_workers=False`, `n_envs=10` to reduce memory pressure. Restarted pipeline (PID 70663). Diversity failed again at startup — root cause: compiled checkpoints saved with `model._orig_mod.*` keys; `base_workspace.py` only stripped top-level `_orig_mod.X`, not nested `model._orig_mod.X`. Fix: added `{k.replace("._orig_mod.", "."): v}` pass before the top-level strip in `load_payload()`.
+- **2026-05-15 06:03**: Applied `base_workspace.py` fix. Restarted pipeline at 06:22 (PID 76846). All 3 Phase A arms now resuming from compiled checkpoints: diversity from epoch 350 (score 0.360), random from epoch 200 (0.180), BG from epoch 100 (0.160). All 3 training confirmed running with no checkpoint errors. 13 GB RAM free. Check-in schedule updated to every 30 minutes.
 
 ## Bugs fixed during launch
 
@@ -87,6 +89,7 @@ All found and fixed 2026-05-14 during initial launch attempts:
 | `mimicgen_lowdim_runner.py:332` | Empty `if self.save_episodes:` block (no body) after merge resolution → `IndentationError` on import in `mimicgen_torch2`, crashes all training | → deleted the empty `if` block |
 | `square_mh_mimicgen.yaml` | `compile: true` → `torch.compile(policy.model)` makes `OptimizedModule` appear as extra module in `modules()`, misaligning EMA zip → shape mismatch crash on first EMA update | → `compile: false` (workaround); **properly fixed** by pulling `ema_safe_model()` from main and applying to lowdim workspace |
 | `mimicgen_lowdim_runner.py:307` | `dummy_env_fn=self.dummy_env_fn` passed to `AsyncVectorEnv` but attribute never set in `__init__` (merge artifact from HEAD branch) → `AttributeError` on env creation | → removed `dummy_env_fn` arg |
+| `base_workspace.py:load_payload` | Compiled checkpoints save `model._orig_mod.*` keys; old code only stripped top-level `_orig_mod.X → X`, not nested `model._orig_mod.X → model.X`. Caused `Missing key(s): model.mid_modules...` + `Unexpected key(s): model._orig_mod.mid_modules...` on any resume after `compile=true` run. | → added `k.replace("._orig_mod.", ".")` pass before the existing top-level strip |
 
 ## Notes
 
