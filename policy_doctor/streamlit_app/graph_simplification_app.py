@@ -839,6 +839,63 @@ with tab_reps:
         if not cands:
             st.info(f"No clusterings under task {task_pick}.")
         else:
+            # ── Raw-quality table (no smoothing, no pruning) ─────────────────
+            @st.cache_data(show_spinner=False)
+            def _raw_stats_for(path_str: str) -> Dict:
+                from collections import defaultdict
+                pth = Path(path_str)
+                L = np.load(pth / "cluster_labels.npy").astype(np.int64)
+                with open(pth / "metadata.json") as f:
+                    M = json.load(f)
+                g = BehaviorGraph.from_cluster_assignments(L, M, level="rollout")
+                n_nodes = len([n for n in g.nodes if n >= 0])
+                n_edges = sum(len(t) for t in g.transition_counts.values())
+                eps = defaultdict(list)
+                for i, mm in enumerate(M):
+                    eps[mm.get("rollout_idx", mm.get("demo_idx", 0))].append(
+                        (mm.get("window_start", mm.get("timestep", 0)), int(L[i]))
+                    )
+                runs: List[int] = []; swaps = 0; total = 0
+                for _, seq in eps.items():
+                    seq.sort()
+                    labs = [v for _, v in seq]
+                    i = 0
+                    while i < len(labs):
+                        j = i + 1
+                        while j < len(labs) and labs[j] == labs[i]:
+                            j += 1
+                        runs.append(j - i); i = j
+                    for k in range(1, len(labs)):
+                        total += 1
+                        if labs[k] != labs[k-1]:
+                            swaps += 1
+                return {
+                    "nodes": n_nodes, "edges": n_edges,
+                    "avg_run": float(np.mean(runs)) if runs else 0.0,
+                    "swap_rate": swaps / max(1, total),
+                }
+
+            st.markdown(
+                "**Raw graph quality across feature spaces** "
+                "(no smoothing, no pruning). Lower swap rate / longer run length → "
+                "cleaner *intrinsic* structure → feature space tracks behaviour, not noise."
+            )
+            import pandas as pd
+            rows = []
+            for e in cands:
+                stats = _raw_stats_for(str(e["path"]))
+                rows.append({
+                    "representation": e["rep"],
+                    "K": e["k"],
+                    "nodes": stats["nodes"],
+                    "edges": stats["edges"],
+                    "avg run length": round(stats["avg_run"], 2),
+                    "swap rate": f"{stats['swap_rate']:.1%}",
+                    "name": e["path"].name,
+                })
+            df = pd.DataFrame(rows).sort_values(["swap rate", "edges"])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.markdown("---")
             # Unique label per clustering
             for e in cands:
                 e["label"] = f"{e['rep']}/k={e['k']} — {e['path'].name}"

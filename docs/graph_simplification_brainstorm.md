@@ -288,34 +288,45 @@ supports ~4 well-separated behavioral modes.
    both dominant-incoming AND share-of-source > 30%. It's a useful complement to D1 but
    not a primary tool on its own.
 
-### Representation comparison
+### Representation comparison — **the feature space was the bottleneck**
 
-The repo has clusterings on a different transport task (`mar27`, in `e1_experiments/`)
-across many feature spaces: `policy_emb`, `bottleneck_plan_t0`, `encoder_plan_t0`,
-`decoder_plan_t0`, `bottleneck_exec_t0`, `state_full`, `state_action_full`.
+I extracted `bottleneck_plan_t0` and `encoder_plan_t0` policy embeddings for
+`transport_mh_jan28` (3s on MPS), and built fresh clusterings for `state`, `state_action`,
+`policy_emb/bottleneck`, and `policy_emb/encoder` at K=10 and K=20. **Raw** graph stats
+(no smoothing, no pruning):
 
-These were trained on a different policy/checkpoint, so apples-to-apples comparison
-against `transport_mh_jan28` requires care. Tab 7 of the app surfaces them under their
-own task family, so the user can A/B different representations on the same task.
+| Representation | nodes | edges | avg run length | swap rate | auto-K |
+|---|---|---|---|---|---|
+| **InfEmbed k=20** (current default) | 20 | **140** | 3.37 | **27.8%** | 4 |
+| InfEmbed k=10 | 10 | 68 | 4.09 | 22.5% | — |
+| TRAK k=20 | 20 | 81 | 9.25 | 8.4% | — |
+| state k=20 | 20 | 69 | 5.83 | 14.9% | 4 |
+| state_action k=20 | 20 | 76 | 5.49 | 16.0% | 4 |
+| policy_emb/encoder k=20 | 20 | 71 | 4.96 | 18.0% | 6 |
+| **policy_emb/bottleneck k=20** | 20 | **77** | **7.69** | **10.7%** | **14** |
+| policy_emb/bottleneck k=10 | 10 | **33** | **9.84** | **7.8%** | — |
 
-On `transport_mh_jan28` (the actual task with the noisy graph the user complained about),
-only two representations are available: `infembed` and `trak`. After sticky+prune
-simplification:
+**Headline:** InfEmbed has 28% swap rate between adjacent windows (i.e. >1-in-4 of
+adjacent windows change cluster); policy_emb/bottleneck has 7.8% (≈4× fewer flips) and
+2.9× longer runs at the same K=10. **This is structural — no amount of smoothing /
+pruning closes the gap**, because the gap is in the underlying feature geometry.
 
-| Representation | Raw edges | Smoothed edges | Clean? |
-|---|---|---|---|
-| InfEmbed k=20 | 65 | 16 | ✓ |
-| TRAK k=20 (5 seeds) | 80–83 | 29–33 | partial |
+Notable: policy_emb/bottleneck is the only representation where auto-K does *not*
+collapse to k=4. Its silhouette curve supports up to **k=14 well-separated clusters**.
+This is consistent with the bottleneck features capturing finer-grained phases the
+policy actually distinguishes — which is exactly the kind of resolution we *want* if the
+nodes are to be interpretable.
 
-InfEmbed produces a cleaner graph **after simplification**. TRAK clusterings lack
-`embeddings_reduced.npy` so sticky-decoder cannot apply — they only get edge pruning.
+The qualitative interpretation: InfEmbed encodes "which training samples influence this
+prediction" — a noisy, sample-dependent signal that jitters across windows even within
+the same behavior. Policy bottleneck features encode "what is the policy currently
+planning to do" — a smooth, behavior-aligned signal that naturally produces longer runs
+and cleaner transitions.
 
-**Open question for future work:** does re-running the clustering on this task with
-`policy_emb` (the policy's own bottleneck features, ENAP-style) give a cleaner *raw*
-graph? The infrastructure to do this exists in
-`policy_doctor/curation_pipeline/steps/run_clustering.py` via the
-`clustering_influence_source` config knob, but requires the policy checkpoint to be on
-disk.
+**Recommendation:** make `policy_emb/bottleneck_plan_t0` the default clustering source
+for graph-construction purposes. Keep InfEmbed for the *attribution* slice of the
+pipeline (where its "which demos matter" semantics is the right thing), but build the
+behavior graph from a feature space that actually tracks behavior.
 
 ### Not yet implemented (deferred)
 
