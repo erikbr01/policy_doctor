@@ -833,7 +833,13 @@ with tab_tree:
     with cc1:
         view_mode = st.radio(
             "View",
-            ["Node-edge tree", "Sunburst (radial)", "Icicle (horizontal)", "Treemap"],
+            [
+                "Node-edge tree (native SVG)",
+                "Node-edge tree (Plotly)",
+                "Sunburst (radial)",
+                "Icicle (horizontal)",
+                "Treemap",
+            ],
             horizontal=False, key="tree_view",
         )
     with cc2:
@@ -938,7 +944,198 @@ with tab_tree:
             fig = _go.Figure(_go.Icicle(**common_kwargs, tiling=dict(orientation="h")))
         elif view_mode.startswith("Treemap"):
             fig = _go.Figure(_go.Treemap(**common_kwargs))
-        else:  # Node-edge tree
+        elif view_mode.startswith("Node-edge tree (native"):
+            # ── Native SVG tree via the existing graph component. ─────────
+            # Each tree node gets a unique synthetic ID. Terminal leaves keep
+            # SUCCESS / FAILURE / END node IDs so they render with the
+            # special star / x / square symbols (multiple leaves with the
+            # same outcome merge into one terminal node — the *paths* to it
+            # are still drawn).
+            by_path_all: Dict[Tuple, Dict] = {tuple(nd["path"]): nd for nd in nodes_f}
+            # Assign synthetic IDs
+            path_to_id: Dict[Tuple, int] = {}
+            next_id = 100_000
+            for nd in nodes_f:
+                p = tuple(nd["path"])
+                cid = nd["cluster_id"]
+                if cid == START_NODE_ID:
+                    path_to_id[p] = START_NODE_ID
+                elif cid in (SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID):
+                    path_to_id[p] = cid
+                else:
+                    path_to_id[p] = next_id
+                    next_id += 1
+
+            # Build BehaviorNode list. Aggregate stats for terminal nodes
+            # (since SUCCESS / FAILURE collapse across leaf paths).
+            from policy_doctor.behaviors.behavior_graph import BehaviorNode
+            agg: Dict[int, Dict] = {}
+            for nd in nodes_f:
+                p = tuple(nd["path"])
+                nid = path_to_id[p]
+                if nid not in agg:
+                    cid = nd["cluster_id"]
+                    if cid == SUCCESS_NODE_ID: name = "SUCCESS"
+                    elif cid == FAILURE_NODE_ID: name = "FAILURE"
+                    elif cid == END_NODE_ID: name = "END"
+                    elif cid == START_NODE_ID: name = "START"
+                    else:
+                        nm = st.session_state[_NAMES_STATE_KEY].get(int(cid))
+                        name = nm if nm else f"Behavior {cid}"
+                    agg[nid] = {"name": name, "n_episodes": 0, "n_success": 0, "n_failure": 0}
+                agg[nid]["n_episodes"] += nd["n_episodes"]
+                agg[nid]["n_success"] += nd["n_success"]
+                agg[nid]["n_failure"] += nd["n_failure"]
+
+            synth_nodes: Dict[int, BehaviorNode] = {}
+            for nid, info in agg.items():
+                synth_nodes[nid] = BehaviorNode(
+                    cluster_id=nid,
+                    name=info["name"],
+                    num_timesteps=info["n_episodes"],
+                    num_episodes=info["n_episodes"],
+                    episode_indices=[],
+                )
+
+            # Build transition counts: tree-parent → tree-child gets count
+            # equal to the child's n_episodes (i.e., how many episodes
+            # followed this edge of the tree).
+            synth_counts: Dict[int, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+            for nd in nodes_f:
+                p = tuple(nd["path"])
+                if nd["parent_path"] is None:
+                    continue
+                parent = tuple(nd["parent_path"])
+                if parent not in path_to_id or p not in path_to_id:
+                    continue
+                src = path_to_id[parent]
+                tgt = path_to_id[p]
+                if src == tgt:
+                    continue
+                synth_counts[src][tgt] += nd["n_episodes"]
+            synth_probs: Dict[int, Dict[int, float]] = {}
+            for src, tgts in synth_counts.items():
+                total = sum(tgts.values()) or 1
+                synth_probs[src] = {t: c / total for t, c in tgts.items()}
+
+            synth_graph = BehaviorGraph(
+                nodes=synth_nodes,
+                transition_counts={k: dict(v) for k, v in synth_counts.items()},
+                transition_probs=synth_probs,
+                num_episodes=agg.get(START_NODE_ID, {}).get("n_episodes", 0),
+                level=level,
+            )
+
+            # Recursive layout: split [0,1] among children weighted by
+            # subtree size; y = -depth.
+            children_of2: Dict[Tuple, List[Tuple]] = defaultdict(list)
+            for nd in nodes_f:
+                if nd["parent_path"] is not None and tuple(nd["parent_path"]) in by_path_all:
+                    children_of2[tuple(nd["parent_path"])].append(tuple(nd["path"]))
+            for k in children_of2:
+                children_of2[k].sort(key=lambda p: by_path_all[p]["cluster_id"])
+
+            pos_paths: Dict[Tuple, Tuple[float, float]] = {}
+            def _assign2(path: Tuple, x_lo: float, x_hi: float, depth: int) -> None:
+                pos_paths[path] = ((x_lo + x_hi) / 2, -depth)
+                ch = children_of2.get(path, [])
+                if not ch:
+                    return
+                weights = [by_path_all[c]["n_episodes"] for c in ch]
+                total = sum(weights) or 1
+                cur = x_lo
+                for c, w in zip(ch, weights):
+                    span = (x_hi - x_lo) * w / total
+                    _assign2(c, cur, cur + span, depth + 1)
+                    cur += span
+            _assign2((), 0.0, 1.0, 0)
+
+            # Map path → synth_id positions. Terminal leaves collapse into
+            # one node: take the mean x across their paths.
+            collapsed: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+            for path, (x, y) in pos_paths.items():
+                collapsed[path_to_id[path]].append((x, y))
+            pos_synth: Dict[int, Tuple[float, float]] = {}
+            for nid, pts in collapsed.items():
+                xs_ = [p[0] for p in pts]
+                ys_ = [p[1] for p in pts]
+                pos_synth[nid] = (float(np.mean(xs_)), float(min(ys_)))  # lowest y
+
+            # Scale to graph plot coordinates. In the SVG renderer, smaller y
+            # is rendered at the top; larger y at the bottom. So root (depth 0)
+            # should have the smallest y, and leaves the largest y.
+            max_d = max(abs(y) for _, y in pos_synth.values()) or 1
+            pos_final: Dict[int, Tuple[float, float]] = {}
+            for nid, (x, y) in pos_synth.items():
+                # x ∈ [0, 1] → [-2.5, 2.5]
+                x_mapped = -2.5 + 5.0 * x
+                # y is 0 for root, -max_depth for leaves. Map to:
+                # root → -2.5 (top of canvas), leaves → 2.5 (bottom of canvas)
+                # i.e. depth_normalised = (-y)/max_d ∈ [0, 1] → [-2.5, 2.5]
+                y_mapped = -2.5 + 5.0 * ((-y) / max_d)
+                pos_final[nid] = (x_mapped, y_mapped)
+
+            # Build synthetic per-window labels: each window in episode E is
+            # assigned the synth_id of the tree-node at the corresponding
+            # depth of E's run-length-collapsed sequence.
+            synth_labels = np.full(len(tree_labels), -1, dtype=np.int64)
+            ep_groups: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+            for i, m in enumerate(meta):
+                c = int(tree_labels[i])
+                if c == -1:
+                    continue
+                ep = m.get("rollout_idx", m.get("demo_idx", 0))
+                ts = m.get("window_start", m.get("timestep", 0))
+                ep_groups[ep].append((ts, c, i))
+            for ep, lst in ep_groups.items():
+                lst.sort()
+                # Build run-length-collapsed sequence and track which indices
+                # belong to each phase.
+                phases: List[Tuple[int, List[int]]] = []  # (cluster, [indices])
+                for _, c, i in lst:
+                    if phases and phases[-1][0] == c:
+                        phases[-1][1].append(i)
+                    else:
+                        phases.append((c, [i]))
+                # For phase k, the tree-node's path is (c1, c2, ..., ck).
+                running_path: List[int] = []
+                for c, idxs in phases:
+                    running_path.append(c)
+                    p = tuple(running_path)
+                    if p in path_to_id:
+                        nid = path_to_id[p]
+                        for i in idxs:
+                            synth_labels[i] = nid
+
+            with st.expander("debug: synth graph stats", expanded=False):
+                st.write({
+                    "n_synth_nodes": len(synth_graph.nodes),
+                    "n_synth_edges": sum(len(t) for t in synth_graph.transition_counts.values()),
+                    "pos_final_count": len(pos_final),
+                    "x_range": (
+                        min(p[0] for p in pos_final.values()),
+                        max(p[0] for p in pos_final.values()),
+                    ),
+                    "y_range": (
+                        min(p[1] for p in pos_final.values()),
+                        max(p[1] for p in pos_final.values()),
+                    ),
+                    "sample_positions": dict(list(pos_final.items())[:6]),
+                    "synth_label_unique": int(len(np.unique(synth_labels))),
+                })
+            render_graph_full_width(
+                graph=synth_graph,
+                labels=synth_labels,
+                metadata=meta,
+                mp4_dir=_MP4_DIR if _MP4_DIR is not None else Path("/tmp/_nonexistent"),
+                mp4_index=_MP4_INDEX,
+                key_prefix="tree_native",
+                min_edge_prob=0.0,
+                pos=pos_final,
+            )
+            fig = None  # signal that we already rendered
+
+        else:  # Node-edge tree (Plotly)
             # ── Tree layout: recursively split [x_lo, x_hi] among children
             # in proportion to subtree weight; y = depth (top-down).
             by_path: Dict[Tuple, Dict] = {tuple(nd["path"]): nd for nd in nodes_f}
@@ -1053,12 +1250,13 @@ with tab_tree:
                 hovermode="closest",
             )
 
-        if not view_mode.startswith("Node-edge"):
-            fig.update_layout(
-                height=int(height) + 200,
-                margin=dict(l=10, r=10, t=20, b=10),
-            )
-        st.plotly_chart(fig, use_container_width=True, key="tree_main")
+        if fig is not None:
+            if not view_mode.startswith("Node-edge"):
+                fig.update_layout(
+                    height=int(height) + 200,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                )
+            st.plotly_chart(fig, use_container_width=True, key="tree_main")
 
         # ── Stats ────────────────────────────────────────────────────────────
         root = nodes[0]
