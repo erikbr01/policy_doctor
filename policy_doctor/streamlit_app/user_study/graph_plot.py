@@ -280,6 +280,7 @@ def render_graph_component(
     mp4_dir: Optional[Path] = None,
     excluded_node_ids: frozenset[int] = frozenset(),
     min_edge_prob: float = 0.0,
+    pos: Optional[dict[int, tuple[float, float]]] = None,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
@@ -291,7 +292,14 @@ def render_graph_component(
     Returns:
         The node_id that was clicked, or the previously selected node.
     """
-    pos = _compute_layout(graph, excluded=excluded_node_ids)
+    if pos is None:
+        pos = _compute_layout(graph, excluded=excluded_node_ids)
+    else:
+        # Caller-supplied layout: ensure every node has a position.
+        pos = dict(pos)
+        for nid in graph.nodes:
+            if nid not in pos:
+                pos[nid] = (0.0, 0.0)
     thumbnails: dict[int, list[str]] | None = None
     if mp4_dir is not None:
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)

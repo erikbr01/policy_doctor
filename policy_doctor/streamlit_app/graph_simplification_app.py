@@ -33,7 +33,14 @@ import streamlit as st
 
 from policy_doctor.behaviors.behavior_graph import BehaviorGraph
 from policy_doctor.behaviors import graph_simplification as gs
+from policy_doctor.behaviors.clustering_temporal import (
+    build_episode_cluster_map,
+    build_cluster_timeline,
+)
 from policy_doctor.plotting.plotly.behavior_graph import create_behavior_graph_plot
+from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
+from policy_doctor.streamlit_app.components.mp4_player import mp4_player
+from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
 
 st.set_page_config(page_title="Graph Simplification Comparison", layout="wide")
 
@@ -147,6 +154,20 @@ use_temporal_layout = st.sidebar.checkbox(
     "Use temporal (mean-timestep) layout instead of BFS-layered",
     value=True,
 )
+use_native_renderer = st.sidebar.checkbox(
+    "Use native SVG renderer (clickable nodes/edges, video clips)",
+    value=True,
+    help="Native interactive graph component. Click any node or edge to see its details.",
+)
+
+# MP4 dir auto-discovery (so the native renderer can show video clips)
+_DEFAULT_MP4_DIR = Path("/tmp/study_mp4s")
+mp4_root_str = st.sidebar.text_input(
+    "MP4 root (optional)",
+    value=str(_DEFAULT_MP4_DIR),
+    help="Directory containing <task>/index.json + ep*.mp4 files. Used by the native renderer.",
+)
+mp4_root = Path(mp4_root_str)
 
 
 # ── Cached graph builders ────────────────────────────────────────────────────
@@ -177,6 +198,143 @@ def _plot(graph: BehaviorGraph, labels: np.ndarray, title: str) -> go.Figure:
         title=title,
         pos=pos,
     )
+
+
+# Auto-discover MP4s for the source clustering's task. The path looks like
+# .../configs/<task>/clustering/<name>; we use the <task> as the subdir name.
+def _resolve_mp4_dir_and_index() -> Tuple[Optional[Path], Dict]:
+    if not mp4_root.exists():
+        return None, {"episodes": []}
+    parts = clustering_path.parts
+    task_tag = None
+    for i, p in enumerate(parts):
+        if p == "configs" and i + 1 < len(parts):
+            task_tag = parts[i + 1]
+            break
+    candidates = []
+    if task_tag:
+        candidates.append(mp4_root / task_tag)
+    # Try discovering ANY subdir of mp4_root with index.json
+    for c in mp4_root.iterdir() if mp4_root.is_dir() else []:
+        idx = c / "index.json"
+        if idx.exists():
+            candidates.append(c)
+    for c in candidates:
+        idx = c / "index.json"
+        if idx.exists():
+            try:
+                return c, json.load(open(idx))
+            except Exception:
+                pass
+    return None, {"episodes": []}
+
+
+_MP4_DIR, _MP4_INDEX = _resolve_mp4_dir_and_index()
+if _MP4_DIR is not None:
+    st.sidebar.success(f"MP4s: {_MP4_DIR.name} ({len(_MP4_INDEX.get('episodes', []))} eps)")
+
+
+def _show_graph(
+    graph: BehaviorGraph,
+    labels: np.ndarray,
+    title: str,
+    key_prefix: str,
+) -> None:
+    """Render the graph. Uses native SVG component when enabled."""
+    if not use_native_renderer:
+        st.plotly_chart(_plot(graph, labels, title), use_container_width=True, key=f"plotly_{key_prefix}_{title}")
+        return
+    pos = _layout_for(graph, labels)
+    # Native renderer expects a labels array that aligns with metadata.
+    # Use the empty-mp4 fallback when no MP4s are configured.
+    render_graph_full_width(
+        graph=graph,
+        labels=labels,
+        metadata=meta,
+        mp4_dir=_MP4_DIR if _MP4_DIR is not None else Path("/tmp/_nonexistent_mp4_root"),
+        mp4_index=_MP4_INDEX,
+        key_prefix=f"native_{key_prefix}_{abs(hash(title))}",
+        min_edge_prob=min_prob_display,
+        pos=pos,
+    )
+
+
+def _render_episode_browser(
+    labels: np.ndarray,
+    title: str,
+    key_prefix: str,
+    episodes_per_page: int = 5,
+) -> None:
+    """Paginated episodes with MP4 player + per-frame cluster-assignment timeline.
+
+    Reflects the *current* labels — re-renders cleanly when a method changes them.
+    """
+    if _MP4_DIR is None:
+        st.info(f"No MP4 index at `{mp4_root}`; episode browser disabled.")
+        return
+    with st.expander(f"📼 Episode browser — cluster timeline under each video ({title})", expanded=False):
+        rep = "sliding_window"
+        ep_map = build_episode_cluster_map(labels, meta, rep, level)
+
+        idx_eps = [ep["index"] for ep in _MP4_INDEX.get("episodes", [])]
+        avail = sorted(set(ep_map.keys()) & set(idx_eps))
+        if not avail:
+            st.warning("No episodes available in both clustering and MP4 index.")
+            return
+
+        col_f, col_p = st.columns([2, 1])
+        with col_f:
+            filt = st.radio(
+                "Filter", ["All", "Success only", "Failure only"],
+                horizontal=True, key=f"{key_prefix}_filt",
+            )
+        success_by_ep = {ep["index"]: ep.get("success") for ep in _MP4_INDEX["episodes"]}
+        if filt == "Success only":
+            avail = [e for e in avail if success_by_ep.get(e) is True]
+        elif filt == "Failure only":
+            avail = [e for e in avail if success_by_ep.get(e) is False]
+        if not avail:
+            st.info(f"No episodes match filter '{filt}'.")
+            return
+
+        total_pages = max(1, (len(avail) + episodes_per_page - 1) // episodes_per_page)
+        page = st.number_input(
+            f"Page (1–{total_pages})", min_value=1, max_value=total_pages,
+            value=1, key=f"{key_prefix}_pg",
+        )
+        with col_p:
+            st.caption(f"{len(avail)} episodes · {episodes_per_page} per page · page {page}/{total_pages}")
+        lo = (int(page) - 1) * episodes_per_page
+        hi = min(lo + episodes_per_page, len(avail))
+        fps = int(_MP4_INDEX.get("fps") or 10)
+        cluster_names = {nid: f"Cluster {nid}" for nid in sorted(set(int(c) for c in labels) - {-1})}
+
+        # Lay out as a 2-column grid for compactness.
+        cols_per_row = 2
+        page_eps = avail[lo:hi]
+        for row_i in range(0, len(page_eps), cols_per_row):
+            row_eps = page_eps[row_i:row_i + cols_per_row]
+            row_cols = st.columns(len(row_eps))
+            for col, ep_id in zip(row_cols, row_eps):
+                ep_entry = next((e for e in _MP4_INDEX["episodes"] if e["index"] == ep_id), None)
+                if ep_entry is None:
+                    continue
+                num_frames = int(ep_entry.get("frame_count") or 0)
+                timeline = build_cluster_timeline(num_frames, ep_id, ep_map, rep)
+                status = "✓" if ep_entry.get("success") is True else \
+                         "✗" if ep_entry.get("success") is False else ""
+                with col:
+                    st.caption(f"Episode {ep_id} — {status} · {num_frames} frames")
+                    mp4_player(
+                        _MP4_DIR / ep_entry["path"],
+                        key=f"{key_prefix}_vid_{ep_id}",
+                        max_height_px=240,
+                        total_frames=num_frames,
+                        fps=fps,
+                        per_frame_labels=np.asarray(timeline, dtype=np.int64),
+                        cluster_colors=list(CLUSTER_COLORS),
+                        cluster_names=cluster_names,
+                    )
 
 
 # ── Tabs: one per method family ──────────────────────────────────────────────
@@ -239,9 +397,10 @@ with tab_smooth:
     g_new = _build_graph(new_labels, id(meta) + hash(title))
     nn, ne = _graph_stats(g_new)
     st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
-    st.plotly_chart(_plot(g_new, new_labels, title), use_container_width=True, key=f"smooth_main_{title}")
+    _show_graph(g_new, new_labels, title, key_prefix=f"smooth_main_{title}")
+    _render_episode_browser(new_labels, title, key_prefix=f"smooth_eps_{abs(hash(title))}")
     with st.expander("Baseline (for comparison)"):
-        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"smooth_baseline_{title}")
+        _show_graph(baseline_graph, labels0, "Baseline", key_prefix=f"smooth_base_{title}")
 
 
 # ── Tab 2: Edge pruning ──────────────────────────────────────────────────────
@@ -263,9 +422,10 @@ with tab_prune:
         title = f"Prune by prob (min={min_p:.2f})"
     nn, ne = _graph_stats(g_new)
     st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
-    st.plotly_chart(_plot(g_new, labels0, title), use_container_width=True, key=f"prune_main_{title}")
+    _show_graph(g_new, labels0, title, key_prefix=f"prune_main_{title}")
+    _render_episode_browser(labels0, title, key_prefix=f"prune_eps_{abs(hash(title))}")
     with st.expander("Baseline (for comparison)"):
-        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"prune_baseline_{title}")
+        _show_graph(baseline_graph, labels0, "Baseline", key_prefix=f"prune_base_{title}")
 
 
 # ── Tab 3: Node merging ──────────────────────────────────────────────────────
@@ -289,9 +449,10 @@ with tab_merge:
         title = "Stable-phase prune (D8)"
     nn, ne = _graph_stats(g_new)
     st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
-    st.plotly_chart(_plot(g_new, new_labels, title), use_container_width=True, key=f"merge_main_{title}")
+    _show_graph(g_new, new_labels, title, key_prefix=f"merge_main_{title}")
+    _render_episode_browser(new_labels, title, key_prefix=f"merge_eps_{abs(hash(title))}")
     with st.expander("Baseline (for comparison)"):
-        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"merge_baseline_{title}")
+        _show_graph(baseline_graph, labels0, "Baseline", key_prefix=f"merge_base_{title}")
 
 
 # ── Tab 4: Re-clustering ─────────────────────────────────────────────────────
@@ -332,9 +493,10 @@ with tab_recluster:
     g_new = _build_graph(new_labels, id(meta) + hash(title))
     nn, ne = _graph_stats(g_new)
     st.markdown(f"**{title}** → {nn} nodes, {ne} edges (vs baseline {n_nodes0}/{n_edges0})")
-    st.plotly_chart(_plot(g_new, new_labels, title), use_container_width=True, key=f"recluster_main_{title}")
+    _show_graph(g_new, new_labels, title, key_prefix=f"recluster_main_{title}")
+    _render_episode_browser(new_labels, title, key_prefix=f"recluster_eps_{abs(hash(title))}")
     with st.expander("Baseline (for comparison)"):
-        st.plotly_chart(_plot(baseline_graph, labels0, "Baseline"), use_container_width=True, key=f"recluster_baseline_{title}")
+        _show_graph(baseline_graph, labels0, "Baseline", key_prefix=f"recluster_base_{title}")
 
 
 # ── Tab 5: Layout only ───────────────────────────────────────────────────────
@@ -402,11 +564,8 @@ with tab_combo:
             f"**Combined pipeline** → {nn} nodes, {ne} edges  "
             f"(baseline: {n_nodes0}/{n_edges0})"
         )
-        st.plotly_chart(
-            _plot(g, new_labels, f"Combined: {nn} nodes / {ne} edges"),
-            use_container_width=True,
-            key="combined_main",
-        )
+        _show_graph(g, new_labels, f"Combined: {nn} nodes / {ne} edges", key_prefix="combined_main")
+    _render_episode_browser(new_labels, "combined", key_prefix="combined_eps")
 
 
 # ── Tab 7: Compare representations ───────────────────────────────────────────
