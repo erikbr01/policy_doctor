@@ -297,14 +297,14 @@ def render_graph_component(
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)
     graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob)
     selected = st.session_state.get(f"{key}_selected")
-    # Track the last click value we processed so we ignore the component's
-    # cached return value on reruns triggered by other widgets (e.g. close button).
+    selected_edge = st.session_state.get(f"{key}_selected_edge")
     last_click = st.session_state.get(f"{key}_last_click", _SENTINEL)
 
     clicked = _graph_component(
         graph_json=graph_json,
         height=height,
         selected_node_id=selected,
+        selected_edge=list(selected_edge) if selected_edge else None,
         highlighted_path=highlighted_path,
         key=key,
         default=None,
@@ -312,13 +312,20 @@ def render_graph_component(
 
     if clicked is not None and clicked != last_click:
         st.session_state[f"{key}_last_click"] = clicked
+        # Edge click: component sends [src_id, tgt_id]
+        if isinstance(clicked, list) and len(clicked) == 2:
+            st.session_state[f"{key}_selected_edge"] = tuple(clicked)
+            st.session_state.pop(f"{key}_selected", None)
+            return None
         try:
             node_id = int(clicked)
             if node_id == -1:
                 st.session_state.pop(f"{key}_selected", None)
+                st.session_state.pop(f"{key}_selected_edge", None)
                 return None
             if node_id in graph.nodes:
                 st.session_state[f"{key}_selected"] = node_id
+                st.session_state.pop(f"{key}_selected_edge", None)
                 return node_id
         except (TypeError, ValueError):
             pass
