@@ -142,11 +142,22 @@ available_sorted = sorted(
     key=lambda p: (_rep_key(p), int(_short_manifest(str(p)).get("n_clusters", 0) or 0), str(p)),
 )
 
-# Default: prefer the InfEmbed k=20 (the noisy one the user originally complained about)
+# Default: prefer the cleanest known policy_emb clustering for jan28
+# (policy_emb/bottleneck_plan_t0 at k=5 — swap rate 5.1%, run length 13.3).
+# Falls back to InfEmbed k=20 (the original noisy baseline) if unavailable.
 default_idx = 0
-for i, p in enumerate(available_sorted):
-    if "auto_pipeline_test_mar13" in str(p) and "k20" in str(p):
-        default_idx = i
+_preferred_patterns = [
+    "policy_emb_bottleneck_plan_t0_seed0_kmeans_k5",
+    "auto_pipeline_test_mar13_seed0_kmeans_k20",
+]
+for pat in _preferred_patterns:
+    found = False
+    for i, p in enumerate(available_sorted):
+        if pat in str(p):
+            default_idx = i
+            found = True
+            break
+    if found:
         break
 
 st.sidebar.markdown("**Filter clusterings:**")
