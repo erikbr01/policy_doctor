@@ -21,5 +21,5 @@ project: influence-clustering
 # Multi-GPU / acceleration flags
 num_gpus: 1
 tf32: true
-compile: false
+compile: true
 num_steps: null

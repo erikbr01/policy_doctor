@@ -17,7 +17,7 @@ baseline:
   checkpoint_topk: 3
   val_ratio: 0.1
   tf32: true
-  compile: false
+  compile: true
   diffusion_dataset_path: /mnt/ssdB/erik/droid_data/kendama_may13.hdf5
 
 device: "cuda:0"

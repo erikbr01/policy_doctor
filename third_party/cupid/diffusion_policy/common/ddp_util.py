@@ -13,6 +13,7 @@ config.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 from typing import Any, Callable, Dict
@@ -55,6 +56,29 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     m = getattr(model, "module", model)      # unwrap DistributedDataParallel
     m = getattr(m, "_orig_mod", m)           # unwrap torch.compile OptimizedModule
     return m
+
+
+@contextlib.contextmanager
+def ema_safe_model(policy):
+    """Temporarily swap compiled sub-modules back to their originals for EMA.
+
+    torch.compile wraps sub-modules in OptimizedModule, which changes the
+    module tree structure.  EMAModel.step iterates zip(model.modules(),
+    ema.modules()) and breaks when the two trees don't align.  This context
+    manager restores the original sub-modules for the duration of the EMA
+    update, then puts the compiled wrappers back.
+    """
+    swapped = {}
+    for attr in ("obs_encoder", "model"):
+        sub = getattr(policy, attr, None)
+        if sub is not None and hasattr(sub, "_orig_mod"):
+            swapped[attr] = sub
+            setattr(policy, attr, sub._orig_mod)
+    try:
+        yield policy
+    finally:
+        for attr, compiled in swapped.items():
+            setattr(policy, attr, compiled)
 
 
 def cleanup_ddp() -> None:
@@ -163,14 +187,14 @@ def compile_policy(policy) -> None:
     if not hasattr(torch, "compile"):
         return  # silently skip on older torch
 
-    # obs_encoder: robomimic's base_nets view operations trigger a TensorAlias
-    # bug in AOT autograd backward (torch 2.4.x).  Forward-only compilation
-    # also requires fullgraph=False due to set.issubset() in ObservationEncoder.
-    # The encoder is cheaper than the UNet, so skipping compile here is low-cost.
-    # Re-enable once robomimic / torch is updated:
-    #   policy.obs_encoder = torch.compile(
-    #       policy.obs_encoder, fullgraph=False, dynamic=False
-    #   )
+    # obs_encoder: fullgraph=False required due to set.issubset() in
+    # ObservationEncoder and Tensor.item() calls in crop_randomizer (removed).
+    # Requires torch 2.5+ — torch 2.4.x had a TensorAlias bug in AOT autograd
+    # backward that caused a crash here (fixed upstream in 2.5.0).
+    if hasattr(policy, "obs_encoder"):
+        policy.obs_encoder = torch.compile(
+            policy.obs_encoder, fullgraph=False, dynamic=False
+        )
 
     if hasattr(policy, "model"):
         policy.model = torch.compile(

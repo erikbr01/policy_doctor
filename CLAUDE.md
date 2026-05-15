@@ -80,8 +80,9 @@ The codebase uses two torch-2 conda environments. The legacy `cupid` / `cupid_to
 |-----|---------|
 | `policy_doctor` | Analysis, clustering, pipeline orchestration, Streamlit, InfEmbed attribution, runtime monitoring, TRAK featurization. The default analysis env — anything that doesn't touch the simulator. |
 | `mimicgen_torch2` | **Primary training/eval/sim env**: clone of `policy_doctor` + robosuite 1.4.1 + robomimic 0.3.0 + mimicgen 1.0.0. Use for `train.py`, `eval_save_episodes.py`, and all MimicGen generation. |
+| `cupid_torch25` | **torch 2.5.1+cu124** upgrade; fixes the torch 2.4.x TensorAlias AOT-autograd bug so `obs_encoder` can be compiled — full `torch.compile` gives **1.19× fwd+bwd** vs eager. See `scripts/create_cupid_torch25.sh`. |
 
-Bootstrap both with `./scripts/setup_torch2_envs.sh` (creates `policy_doctor` from `environment_policy_doctor.yaml`, clones to `mimicgen_torch2`, adds sim deps).
+Bootstrap with `./scripts/setup_torch2_envs.sh` (creates `policy_doctor` from `environment_policy_doctor.yaml`, clones to `mimicgen_torch2`, adds sim deps).
 
 ### Three-package layout
 
