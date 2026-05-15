@@ -327,7 +327,6 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         episode_lengths = []  # always tracked; written to log_data
         episode_successes = []
         ep_abs_idx = 0  # absolute episode index across all chunks
-        if self.save_episodes:
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
