@@ -772,3 +772,89 @@ def force_directed_x_pinned_layout(
     if START_NODE_ID in out:
         out[START_NODE_ID] = (x_min, 0.0)
     return out
+
+
+def build_trajectory_tree(
+    labels: np.ndarray,
+    metadata: List[Dict],
+    level: str = "rollout",
+) -> List[Dict]:
+    """Build a prefix-tree (trie) of run-length-collapsed cluster sequences.
+
+    Each tree node is identified by its full path from the root (a tuple of
+    cluster IDs). Stats:
+      - n_episodes: how many episodes pass through this prefix
+      - n_success / n_failure: outcome breakdown
+      - parent_path: the prefix-1 path (so we can render it as a tree)
+
+    Returns a flat list of nodes; the root has parent_path=None.
+
+    The path "(c1, c2, c3, SUCCESS)" means "an episode that visited clusters
+    c1 → c2 → c3 and succeeded."
+    """
+    ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+    eps: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+    success: Dict[int, Optional[bool]] = {}
+    for i, m in enumerate(metadata):
+        sort_key = m.get("timestep", m.get("window_start", 0))
+        eps[m[ep_key]].append((sort_key, int(labels[i])))
+        if "success" in m and m[ep_key] not in success:
+            success[m[ep_key]] = m["success"]
+
+    # Per-episode run-length-collapsed sequence, then append terminal token
+    sequences: List[Tuple[Tuple[int, ...], Optional[bool]]] = []
+    for ep, pairs in eps.items():
+        pairs.sort()
+        seq: List[int] = []
+        for _, c in pairs:
+            if c == -1:
+                continue
+            if not seq or seq[-1] != c:
+                seq.append(c)
+        # Terminal token
+        if success.get(ep) is True:
+            seq.append(SUCCESS_NODE_ID)
+        elif success.get(ep) is False:
+            seq.append(FAILURE_NODE_ID)
+        else:
+            seq.append(END_NODE_ID)
+        sequences.append((tuple(seq), success.get(ep)))
+
+    # Build trie. node_counts[path] = (n_episodes, n_success, n_failure)
+    counts: Dict[Tuple[int, ...], List[int]] = defaultdict(lambda: [0, 0, 0])
+    for seq, succ in sequences:
+        for depth in range(1, len(seq) + 1):
+            prefix = seq[:depth]
+            counts[prefix][0] += 1
+            if succ is True:
+                counts[prefix][1] += 1
+            elif succ is False:
+                counts[prefix][2] += 1
+
+    # Root node (empty path)
+    nodes: List[Dict] = [{
+        "path": (),
+        "label": "START",
+        "cluster_id": START_NODE_ID,
+        "depth": 0,
+        "n_episodes": len(sequences),
+        "n_success": sum(1 for _, s in sequences if s is True),
+        "n_failure": sum(1 for _, s in sequences if s is False),
+        "parent_path": None,
+    }]
+    for path, (n_ep, n_succ, n_fail) in counts.items():
+        cid = path[-1]
+        nodes.append({
+            "path": path,
+            "label": f"Behavior {cid}" if cid >= 0 else (
+                "SUCCESS" if cid == SUCCESS_NODE_ID else
+                "FAILURE" if cid == FAILURE_NODE_ID else "END"
+            ),
+            "cluster_id": cid,
+            "depth": len(path),
+            "n_episodes": n_ep,
+            "n_success": n_succ,
+            "n_failure": n_fail,
+            "parent_path": path[:-1],
+        })
+    return nodes

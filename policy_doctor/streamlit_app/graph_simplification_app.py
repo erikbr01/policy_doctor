@@ -31,7 +31,13 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from policy_doctor.behaviors.behavior_graph import BehaviorGraph
+from policy_doctor.behaviors.behavior_graph import (
+    BehaviorGraph,
+    END_NODE_ID,
+    FAILURE_NODE_ID,
+    START_NODE_ID,
+    SUCCESS_NODE_ID,
+)
 from policy_doctor.behaviors import graph_simplification as gs
 from policy_doctor.behaviors.clustering_temporal import (
     build_episode_cluster_map,
@@ -579,8 +585,9 @@ baseline_graph = _build_graph(labels0, id(meta))
 n_nodes0, n_edges0 = _graph_stats(baseline_graph)
 st.markdown(f"**Baseline:** {n_nodes0} cluster nodes, {n_edges0} transitions")
 
-tab_inspect, tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_combo, tab_reps = st.tabs([
+tab_inspect, tab_tree, tab_smooth, tab_prune, tab_merge, tab_recluster, tab_layout, tab_combo, tab_reps = st.tabs([
     "🔍 Cluster inspector",
+    "🌳 Trajectory tree",
     "1. Temporal smoothing",
     "2. Edge pruning",
     "3. Node merging",
@@ -808,6 +815,174 @@ with tab_inspect:
                                 slice_end=we,
                             )
                 st.markdown("---")
+
+
+# ── Trajectory tree tab ──────────────────────────────────────────────────────
+
+with tab_tree:
+    st.markdown(
+        "**Trajectory tree.** Each episode's run-length-collapsed cluster sequence "
+        "becomes a path from START to SUCCESS/FAILURE. Episodes sharing the same "
+        "prefix are merged into a single branch — so you can read off, e.g., "
+        "*\"of the 80 episodes that start with Behavior 1, 60 continue into "
+        "Behavior 4, of which 50 reach SUCCESS.\"*  No cycles, no edge mess."
+    )
+    # Apply optional smoothing on top of the source clustering
+    cc1, cc2, cc3 = st.columns([2, 2, 3])
+    with cc1:
+        view_mode = st.radio(
+            "View", ["Sunburst (radial)", "Icicle (horizontal)", "Treemap"],
+            horizontal=False, key="tree_view",
+        )
+    with cc2:
+        color_by = st.radio(
+            "Color", ["Outcome (success rate)", "Cluster id"],
+            horizontal=False, key="tree_color",
+        )
+    with cc3:
+        smooth_for_tree = st.checkbox(
+            "Smooth labels first (sticky λ=5)", value=False, key="tree_smooth",
+            help="Apply sticky decoder before building the tree — collapses flicker.",
+        )
+        min_branch = st.slider(
+            "Hide branches reaching fewer than N episodes", 1, 50, 2, key="tree_min_branch",
+        )
+        max_depth_cap = st.slider(
+            "Max depth (cap tree depth)", 2, 30, 10, key="tree_max_depth",
+        )
+
+    tree_labels = labels0.copy()
+    if smooth_for_tree and emb is not None:
+        try:
+            tree_labels = gs.sticky_decoder(tree_labels, emb, meta, lambda_stick=5.0, level=level)
+        except Exception as e:
+            st.warning(f"Sticky decoder failed: {e}; using raw labels.")
+
+    nodes = gs.build_trajectory_tree(tree_labels, meta, level=level)
+
+    # Resolve display name (cluster_names → "Behavior X" fallback)
+    for nd in nodes:
+        cid = nd["cluster_id"]
+        if cid >= 0 and st.session_state[_NAMES_STATE_KEY].get(int(cid)):
+            nd["label"] = st.session_state[_NAMES_STATE_KEY][int(cid)]
+
+    # Apply filters
+    nodes_f = [
+        nd for nd in nodes
+        if nd["n_episodes"] >= int(min_branch) and nd["depth"] <= int(max_depth_cap)
+    ]
+    if not nodes_f:
+        st.warning("No nodes match the filter; lower 'min branch'.")
+    else:
+        # Build labels, parents, values, colors for Plotly
+        # id = string path, parent = string path-1
+        def _id(nd): return "/".join(str(x) for x in nd["path"]) or "ROOT"
+        def _parent(nd):
+            if nd["parent_path"] is None:
+                return ""  # root
+            return "/".join(str(x) for x in nd["parent_path"]) or "ROOT"
+
+        ids = [_id(nd) for nd in nodes_f]
+        parents = [_parent(nd) for nd in nodes_f]
+        labels_disp = [nd["label"] for nd in nodes_f]
+        values = [nd["n_episodes"] for nd in nodes_f]
+        # Outcome rate
+        succ_rate = [
+            (nd["n_success"] / nd["n_episodes"]) if nd["n_episodes"] else 0.0
+            for nd in nodes_f
+        ]
+        # Hover text
+        hovertext = [
+            f"<b>{nd['label']}</b><br>"
+            f"Path depth: {nd['depth']}<br>"
+            f"Episodes through here: {nd['n_episodes']}<br>"
+            f"Success: {nd['n_success']} ({nd['n_success']/max(1,nd['n_episodes']):.0%})<br>"
+            f"Failure: {nd['n_failure']} ({nd['n_failure']/max(1,nd['n_episodes']):.0%})"
+            for nd in nodes_f
+        ]
+        if color_by.startswith("Outcome"):
+            # Use a green→red diverging scale; terminals get fixed colors
+            marker_colors = succ_rate
+            colorscale = [[0.0, "#d62728"], [0.5, "#ddd"], [1.0, "#2ca02c"]]
+            colorbar_title = "Success rate"
+            colors_kwargs = dict(
+                marker=dict(
+                    colors=marker_colors,
+                    colorscale=colorscale,
+                    cmid=0.5, cmin=0.0, cmax=1.0,
+                    colorbar=dict(title=colorbar_title) if view_mode != "Treemap" else None,
+                ),
+            )
+        else:
+            from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
+            def _color_for(nd):
+                cid = nd["cluster_id"]
+                if cid == SUCCESS_NODE_ID: return "#2ca02c"
+                if cid == FAILURE_NODE_ID: return "#d62728"
+                if cid == END_NODE_ID: return "#888"
+                if cid == START_NODE_ID: return "#1a1a1a"
+                return CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
+            colors_kwargs = dict(marker=dict(colors=[_color_for(nd) for nd in nodes_f]))
+
+        import plotly.graph_objects as _go
+        common_kwargs = dict(
+            ids=ids, labels=labels_disp, parents=parents, values=values,
+            branchvalues="total", hovertext=hovertext, hoverinfo="text",
+            **colors_kwargs,
+        )
+        if view_mode.startswith("Sunburst"):
+            fig = _go.Figure(_go.Sunburst(**common_kwargs, insidetextorientation="radial"))
+        elif view_mode.startswith("Icicle"):
+            fig = _go.Figure(_go.Icicle(**common_kwargs, tiling=dict(orientation="h")))
+        else:  # Treemap
+            fig = _go.Figure(_go.Treemap(**common_kwargs))
+        fig.update_layout(
+            height=int(height) + 200,
+            margin=dict(l=10, r=10, t=20, b=10),
+        )
+        st.plotly_chart(fig, use_container_width=True, key="tree_main")
+
+        # ── Stats ────────────────────────────────────────────────────────────
+        root = nodes[0]
+        st.caption(
+            f"{root['n_episodes']} episodes  ·  "
+            f"{root['n_success']} success ({root['n_success']/max(1,root['n_episodes']):.0%})  ·  "
+            f"{root['n_failure']} failure ({root['n_failure']/max(1,root['n_episodes']):.0%})  ·  "
+            f"{len(nodes_f)}/{len(nodes)} tree nodes shown after filtering"
+        )
+
+        # ── Top paths to SUCCESS / FAILURE ───────────────────────────────────
+        leaves = [
+            nd for nd in nodes
+            if nd["cluster_id"] in (SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID)
+        ]
+        succ_paths = sorted(
+            [nd for nd in leaves if nd["cluster_id"] == SUCCESS_NODE_ID],
+            key=lambda nd: -nd["n_episodes"],
+        )[:5]
+        fail_paths = sorted(
+            [nd for nd in leaves if nd["cluster_id"] == FAILURE_NODE_ID],
+            key=lambda nd: -nd["n_episodes"],
+        )[:5]
+        c_succ, c_fail = st.columns(2)
+        def _format_path(nd):
+            disp = []
+            for cid in nd["path"]:
+                if cid == SUCCESS_NODE_ID: disp.append("✓")
+                elif cid == FAILURE_NODE_ID: disp.append("✗")
+                elif cid == END_NODE_ID: disp.append("END")
+                else:
+                    nm = st.session_state[_NAMES_STATE_KEY].get(int(cid))
+                    disp.append(nm if nm else f"B{cid}")
+            return " → ".join(disp)
+        with c_succ:
+            st.markdown("**Top success paths**")
+            for nd in succ_paths:
+                st.markdown(f"- ({nd['n_episodes']:>3} eps) {_format_path(nd)}")
+        with c_fail:
+            st.markdown("**Top failure paths**")
+            for nd in fail_paths:
+                st.markdown(f"- ({nd['n_episodes']:>3} eps) {_format_path(nd)}")
 
 
 # ── Tab 1: Temporal smoothing ────────────────────────────────────────────────
