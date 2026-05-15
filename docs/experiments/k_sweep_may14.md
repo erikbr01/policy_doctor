@@ -15,7 +15,8 @@ UMAP fit once (seed=1, 12978 windows × 100d); K-means re-fit per K.
 | Heuristics | random, behavior_graph, diversity |
 | Reps | Phase A (rep-1, random_seed=null) + Phase B (rep-2/3, random_seed=1/2) |
 | Eval envs | 5 per run (n_envs=5) |
-| GPU slots | 5 × cuda:0 |
+| GPU slots | 3 × cuda:0 |
+| Dataloader | num_workers=4, persistent_workers=True |
 
 ## Status
 
@@ -61,6 +62,9 @@ Legend: ⏳ pending · 🔄 generating · 🏋 training · 📊 eval · ✅ done
 - **2026-05-15 01:17**: **GPU training started** — K=5 behavior_graph Phase A epoch 0 running on cuda:0. 236 MiB GPU memory. ~2.5h expected to completion (1751 epochs).
 - **2026-05-15 01:18**: **CRASH 2** — EMA shape mismatch: `RuntimeError: tensor a (128) must match tensor b (5) at non-singleton dimension 2` in `ema_model.py`. Root cause: `torch.compile(policy.model)` replaces the UNet sub-module with `OptimizedModule`, which adds an extra level to `modules()` traversal. `EMAModel.step()` uses `zip(model.modules(), ema_model.modules())` which then misaligns module pairs → shape mismatch on the very first EMA update. Fix: `compile: true → false` in `square_mh_mimicgen.yaml`. Also fixed `dummy_env_fn=self.dummy_env_fn` (attribute never set in `__init__`) in runner.
 - **2026-05-15 01:18**: All live pipeline orchestration processes already loaded `compile: true` from config at startup. Strategy: let them fail gracefully at training → write composite `done` → restart with new config (skips gen, runs training with compile=false). behavior_graph training relaunched manually (compile=false, PID 45716).
+- **2026-05-15 03:06**: Pulled `ema_safe_model()` from main, applied to lowdim workspace. Re-enabled `compile: true`. Tested OK.
+- **2026-05-15 03:13**: Relaunched 5 training jobs (k5_a/rep1/rep2, k10_a/rep2). Machine OOMed shortly after — k5_rep2 and k10_rep2 died with `BrokenPipeError`, k5_a was at epoch 53 with checkpoint saved. Cause: 5 training jobs × MuJoCo eval subprocesses spiked RAM/CPU simultaneously.
+- **2026-05-15 03:26**: Restarted with `run_k_sweep_tight.sh` (sequential K values, 3 device slots). Set `num_workers=4, persistent_workers=True`. Pipeline running: clustering skipped, K=5 Phase A in progress with 3 concurrent training arms. GPU 97%, eval at 3.4 it/s (fast with compile=true).
 
 ## Bugs fixed during launch
 
