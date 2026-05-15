@@ -185,26 +185,6 @@ highlighted_path = st.session_state.get("gb_pex_highlighted_path")
 # ── Graph simplification + filters ───────────────────────────────────────────
 from policy_doctor.behaviors.behavior_graph import degree_one_prune_to_fixed_point
 
-_simplify = st.checkbox(
-    "Merge pass-through nodes (single in/out connection)",
-    value=False,
-    key="gb_graph_simplify",
-    help=(
-        "Iteratively collapses nodes that always come from the same place "
-        "or always go to the same place, until the graph reaches a fixed point. "
-        "Merged node panels show episodes from all collapsed nodes."
-    ),
-)
-if _simplify:
-    _active_graph, _active_labels, _n_rounds, _n_merged = degree_one_prune_to_fixed_point(
-        graph, labels, metadata
-    )
-    _n_orig = sum(1 for nid in graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
-    _n_simp = sum(1 for nid in _active_graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
-    st.caption(f"Simplified: {_n_orig} → {_n_simp} behavior nodes ({_n_merged} merged over {_n_rounds} pass(es)).")
-else:
-    _active_graph, _active_labels = graph, labels
-
 _col_np, _col_ep = st.columns(2)
 _prune_pct = _col_np.slider(
     "Hide nodes visited in fewer than X% of episodes",
@@ -221,7 +201,39 @@ _edge_pct = _col_ep.slider(
     help="Hides weak transitions. Nodes that become unreachable from START are also removed.",
 )
 _min_edge_prob = _edge_pct / 100.0
-_excluded_nodes = compute_pruned_graph_nodes(_active_graph, _prune_pct / 100.0, n_total, _min_edge_prob)
+
+_simplify = st.checkbox(
+    "Merge pass-through nodes (single in/out connection)",
+    value=False,
+    key="gb_graph_simplify",
+    help=(
+        "Iteratively collapses nodes that always come from the same place "
+        "or always go to the same place. Applied after the filters above, "
+        "so only surviving nodes are considered for merging."
+    ),
+)
+
+# Apply slider filters first, then simplify the resulting subgraph so that
+# merging operates only on the nodes that are actually visible.
+_slider_excluded = compute_pruned_graph_nodes(graph, _prune_pct / 100.0, n_total, _min_edge_prob)
+
+if _simplify:
+    # Mask out filtered nodes in the labels so the rebuilt graph doesn't see them.
+    _masked_labels = _active_labels = labels.copy()
+    for _excl in _slider_excluded:
+        _masked_labels[_masked_labels == _excl] = -1
+    _active_graph, _active_labels, _n_rounds, _n_merged = degree_one_prune_to_fixed_point(
+        graph, _masked_labels, metadata
+    )
+    # After merging, re-check reachability under the edge-prob filter.
+    _excluded_nodes = compute_pruned_graph_nodes(_active_graph, 0.0, n_total, _min_edge_prob)
+    _n_orig = sum(1 for nid in graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
+    _n_simp = sum(1 for nid in _active_graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID} and nid not in _excluded_nodes)
+    st.caption(f"Simplified: {_n_orig} → {_n_simp} behavior nodes ({_n_merged} merged over {_n_rounds} pass(es)).")
+else:
+    _active_graph, _active_labels = graph, labels
+    _excluded_nodes = _slider_excluded
+
 _summary = []
 if _excluded_nodes:
     _summary.append(f"{len(_excluded_nodes)} node(s) hidden")
