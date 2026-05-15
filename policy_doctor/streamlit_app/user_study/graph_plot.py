@@ -21,6 +21,10 @@ from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
 
 _SPECIAL_IDS = frozenset({START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
 
+# Unique object used as a sentinel so `last_click` in session state is never
+# equal to None or any real component value on the very first render.
+_SENTINEL = object()
+
 _NODE_COLOR = {
     START_NODE_ID: "#2ca02c",
     SUCCESS_NODE_ID: "#2ca02c",
@@ -248,6 +252,9 @@ def render_graph_component(
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)
     graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails)
     selected = st.session_state.get(f"{key}_selected")
+    # Track the last click value we processed so we ignore the component's
+    # cached return value on reruns triggered by other widgets (e.g. close button).
+    last_click = st.session_state.get(f"{key}_last_click", _SENTINEL)
 
     clicked = _graph_component(
         graph_json=graph_json,
@@ -258,7 +265,8 @@ def render_graph_component(
         default=None,
     )
 
-    if clicked is not None:
+    if clicked is not None and clicked != last_click:
+        st.session_state[f"{key}_last_click"] = clicked
         try:
             node_id = int(clicked)
             if node_id == -1:
