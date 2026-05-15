@@ -121,7 +121,7 @@ def _render_node_panel(
                 show_eps = all_eps[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
 
                 if _vp_total > 1:
-                    _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
+                    _vc1, _vc2, _vc3 = st.columns([2, 7, 2])
                     with _vc1:
                         if st.button("← Prev", disabled=(_vp == 0), key=f"{key_prefix}_vp_prev_{node_id}"):
                             st.session_state[_vp_key] = max(0, _vp - 1)
@@ -131,7 +131,7 @@ def _render_node_panel(
                         f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
                         f"</div>", unsafe_allow_html=True)
                     with _vc3:
-                        if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
+                        if st.button("Next →", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
                             st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
                             st.rerun()
 
