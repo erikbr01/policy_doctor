@@ -65,6 +65,8 @@ Legend: ⏳ pending · 🔄 generating · 🏋 training · 📊 eval · ✅ done
 - **2026-05-15 03:06**: Pulled `ema_safe_model()` from main, applied to lowdim workspace. Re-enabled `compile: true`. Tested OK.
 - **2026-05-15 03:13**: Relaunched 5 training jobs (k5_a/rep1/rep2, k10_a/rep2). Machine OOMed shortly after — k5_rep2 and k10_rep2 died with `BrokenPipeError`, k5_a was at epoch 53 with checkpoint saved. Cause: 5 training jobs × MuJoCo eval subprocesses spiked RAM/CPU simultaneously.
 - **2026-05-15 03:26**: Restarted with `run_k_sweep_tight.sh` (sequential K values, 3 device slots). Set `num_workers=4, persistent_workers=True`. Pipeline running: clustering skipped, K=5 Phase A in progress with 3 concurrent training arms. GPU 97%, eval at 3.4 it/s (fast with compile=true).
+- **2026-05-15 03:27**: **K=5 Phase A behavior_graph FAILED** — training crashed at startup (exit code 1, no wandb run created). Root cause: training output dir contaminated by k10 training run from 03:13 parallel launch; `latest.ckpt` pointed to k10's epoch-50 checkpoint (score 0.040), and simultaneous 3-arm startup OOMed before training began. Fixed: deleted k10 checkpoint, `latest.ckpt` now → k5 epoch-50 (score 0.060). Needs manual retry after Phase A composite step completes.
+- **2026-05-15 04:18**: K=5 Phase A random and diversity training healthy — epochs 200-206 at ~25 it/s with compile=true. Three arms training concurrently. Random generation proceeding (25/50 trial successes at 50% rate). Pipeline sequential, behavior_graph Phase A FAILED but random/diversity will complete Phase A and pipeline will proceed to Phase B.
 
 ## Bugs fixed during launch
 
