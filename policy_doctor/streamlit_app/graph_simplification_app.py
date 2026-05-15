@@ -952,18 +952,30 @@ with tab_tree:
             # same outcome merge into one terminal node — the *paths* to it
             # are still drawn).
             by_path_all: Dict[Tuple, Dict] = {tuple(nd["path"]): nd for nd in nodes_f}
-            # Assign synthetic IDs
+            # Assign synthetic IDs. Each tree node — including each terminal
+            # leaf — gets a unique ID so the tree stays a true tree (no
+            # multiple paths converging on a single SUCCESS/FAILURE marker).
+            # Symbol/color overrides keep the special shapes for terminals.
             path_to_id: Dict[Tuple, int] = {}
+            symbol_override: Dict[int, str] = {}
+            color_override: Dict[int, str] = {}
             next_id = 100_000
             for nd in nodes_f:
                 p = tuple(nd["path"])
                 cid = nd["cluster_id"]
                 if cid == START_NODE_ID:
                     path_to_id[p] = START_NODE_ID
-                elif cid in (SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID):
-                    path_to_id[p] = cid
                 else:
                     path_to_id[p] = next_id
+                    if cid == SUCCESS_NODE_ID:
+                        symbol_override[next_id] = "star"
+                        color_override[next_id] = "#2ca02c"
+                    elif cid == FAILURE_NODE_ID:
+                        symbol_override[next_id] = "x"
+                        color_override[next_id] = "#d62728"
+                    elif cid == END_NODE_ID:
+                        symbol_override[next_id] = "square"
+                        color_override[next_id] = "#888888"
                     next_id += 1
 
             # Build BehaviorNode list. Aggregate stats for terminal nodes
@@ -1107,22 +1119,6 @@ with tab_tree:
                         for i in idxs:
                             synth_labels[i] = nid
 
-            with st.expander("debug: synth graph stats", expanded=False):
-                st.write({
-                    "n_synth_nodes": len(synth_graph.nodes),
-                    "n_synth_edges": sum(len(t) for t in synth_graph.transition_counts.values()),
-                    "pos_final_count": len(pos_final),
-                    "x_range": (
-                        min(p[0] for p in pos_final.values()),
-                        max(p[0] for p in pos_final.values()),
-                    ),
-                    "y_range": (
-                        min(p[1] for p in pos_final.values()),
-                        max(p[1] for p in pos_final.values()),
-                    ),
-                    "sample_positions": dict(list(pos_final.items())[:6]),
-                    "synth_label_unique": int(len(np.unique(synth_labels))),
-                })
             render_graph_full_width(
                 graph=synth_graph,
                 labels=synth_labels,
@@ -1132,6 +1128,8 @@ with tab_tree:
                 key_prefix="tree_native",
                 min_edge_prob=0.0,
                 pos=pos_final,
+                symbol_override=symbol_override,
+                color_override=color_override,
             )
             fig = None  # signal that we already rendered
 

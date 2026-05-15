@@ -191,6 +191,8 @@ def render_graph_full_width(
     excluded_node_ids: frozenset[int] = frozenset(),
     min_edge_prob: float = 0.0,
     pos: dict[int, tuple[float, float]] | None = None,
+    symbol_override: dict[int, str] | None = None,
+    color_override: dict[int, str] | None = None,
 ) -> None:
     """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
@@ -207,6 +209,8 @@ def render_graph_full_width(
         excluded_node_ids=excluded_node_ids,
         min_edge_prob=min_edge_prob,
         pos=pos,
+        symbol_override=symbol_override,
+        color_override=color_override,
     )
 
     selected_edge = st.session_state.get(f"{key_prefix}_graph_selected_edge")

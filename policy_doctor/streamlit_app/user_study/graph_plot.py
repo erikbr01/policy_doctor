@@ -213,14 +213,24 @@ def _build_graph_json(
     pos: dict[int, tuple[float, float]],
     thumbnails: dict[int, list[str]] | None = None,
     min_edge_prob: float = 0.0,
+    symbol_override: Optional[dict[int, str]] = None,
+    color_override: Optional[dict[int, str]] = None,
 ) -> str:
     """Serialize graph data for the SVG component."""
+    symbol_override = symbol_override or {}
+    color_override = color_override or {}
     nodes = []
     for nid, node in graph.nodes.items():
         if nid not in pos:
             continue
-        if nid in _SPECIAL_IDS:
-            color = _NODE_COLOR.get(nid, "#888")
+        if nid in symbol_override:
+            symbol = symbol_override[nid]
+            color = color_override.get(nid, CLUSTER_COLORS[nid % len(CLUSTER_COLORS)])
+            tooltip = node.name
+            label = node.name
+            is_special = True
+        elif nid in _SPECIAL_IDS:
+            color = color_override.get(nid, _NODE_COLOR.get(nid, "#888"))
             symbol = (
                 "star" if nid == SUCCESS_NODE_ID else
                 "x" if nid == FAILURE_NODE_ID else
@@ -229,8 +239,9 @@ def _build_graph_json(
             )
             tooltip = node.name
             label = node.name
+            is_special = True
         else:
-            color = CLUSTER_COLORS[nid % len(CLUSTER_COLORS)]
+            color = color_override.get(nid, CLUSTER_COLORS[nid % len(CLUSTER_COLORS)])
             symbol = "circle"
             label = node.name
             outgoing = graph.transition_probs.get(nid, {})
@@ -245,6 +256,7 @@ def _build_graph_json(
                 f"Episodes: {node.num_episodes}  •  Timesteps: {node.num_timesteps}\n"
                 f"Top transitions:\n{out_lines}"
             )
+            is_special = False
         node_dict: dict = {
             "id": nid,
             "label": label,
@@ -252,7 +264,7 @@ def _build_graph_json(
             "symbol": symbol,
             "num_episodes": node.num_episodes,
             "num_timesteps": node.num_timesteps,
-            "is_special": nid in _SPECIAL_IDS,
+            "is_special": is_special,
             "tooltip": tooltip,
         }
         if thumbnails and nid in thumbnails:
@@ -281,6 +293,8 @@ def render_graph_component(
     excluded_node_ids: frozenset[int] = frozenset(),
     min_edge_prob: float = 0.0,
     pos: Optional[dict[int, tuple[float, float]]] = None,
+    symbol_override: Optional[dict[int, str]] = None,
+    color_override: Optional[dict[int, str]] = None,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
@@ -303,7 +317,10 @@ def render_graph_component(
     thumbnails: dict[int, list[str]] | None = None
     if mp4_dir is not None:
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)
-    graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob)
+    graph_json = _build_graph_json(
+        graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob,
+        symbol_override=symbol_override, color_override=color_override,
+    )
     selected = st.session_state.get(f"{key}_selected")
     selected_edge = st.session_state.get(f"{key}_selected_edge")
     last_click = st.session_state.get(f"{key}_last_click", _SENTINEL)
