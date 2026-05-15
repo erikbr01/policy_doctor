@@ -79,22 +79,54 @@ def build_windows_from_rollout_timestep_embeddings(
     for ep_idx, ep_len in enumerate(episode_lengths):
         ep_emb = rollout_emb[offset : offset + ep_len]
         offset += ep_len
+
         if ep_len < window_width:
+            # Repeating pad: tile last frame to fill one window so the episode
+            # isn't silently dropped from the cluster assignment entirely.
+            pad = np.repeat(ep_emb[-1:], window_width - ep_len, axis=0)
+            window = np.concatenate([ep_emb, pad], axis=0)
+            emb = aggregate_window(window, aggregation, axis=0)
+            all_embeddings.append(emb)
+            all_metadata.append({
+                "rollout_idx": ep_idx,
+                "window_start": 0,
+                "window_end": ep_len,
+                "window_width": window_width,
+                "success": episode_successes[ep_idx],
+            })
             continue
+
         for start in range(0, ep_len - window_width + 1, stride):
             end = start + window_width
             window = ep_emb[start:end]
             emb = aggregate_window(window, aggregation, axis=0)
             all_embeddings.append(emb)
-            all_metadata.append(
-                {
-                    "rollout_idx": ep_idx,
-                    "window_start": start,
-                    "window_end": end,
-                    "window_width": window_width,
-                    "success": episode_successes[ep_idx],
-                }
-            )
+            all_metadata.append({
+                "rollout_idx": ep_idx,
+                "window_start": start,
+                "window_end": end,
+                "window_width": window_width,
+                "success": episode_successes[ep_idx],
+            })
+
+        # Tail gap: if the last stride-aligned window doesn't reach the final
+        # frame, add one more window anchored at ep_len - window_width.  This
+        # window uses only real frames (no padding) and may overlap the previous
+        # window by at most stride-1 frames.
+        last_covered = ((ep_len - window_width) // stride) * stride + window_width
+        if last_covered < ep_len:
+            final_start = ep_len - window_width
+            window = ep_emb[final_start:ep_len]
+            emb = aggregate_window(window, aggregation, axis=0)
+            all_embeddings.append(emb)
+            all_metadata.append({
+                "rollout_idx": ep_idx,
+                "window_start": final_start,
+                "window_end": ep_len,
+                "window_width": window_width,
+                "success": episode_successes[ep_idx],
+            })
+
     embeddings_arr = np.array(all_embeddings, dtype=np.float32)
     return embeddings_arr, all_metadata
 
@@ -230,23 +262,43 @@ def extract_trak_slice_windows_from_container(
             rollout_data = influence_matrix[rollout_indices, :]
             ep_len = rollout_data.shape[0]
             if ep_len < window_width:
+                pad = np.repeat(rollout_data[-1:, :], window_width - ep_len, axis=0)
+                window = np.concatenate([rollout_data, pad], axis=0)
+                emb = aggregate_window(window, aggregation, axis=0)
+                all_embeddings.append(emb.astype(np.float32))
+                all_metadata.append({
+                    "rollout_idx": rollout_ep.index,
+                    "start": 0, "end": ep_len,
+                    "window_start": 0, "window_end": ep_len,
+                    "window_width": window_width,
+                    "success": getattr(rollout_ep, "success", None),
+                })
                 continue
             for start in range(0, ep_len - window_width + 1, stride):
                 end = start + window_width
                 window = rollout_data[start:end, :]
                 emb = aggregate_window(window, aggregation, axis=0)
                 all_embeddings.append(emb.astype(np.float32))
-                all_metadata.append(
-                    {
-                        "rollout_idx": rollout_ep.index,
-                        "start": start,
-                        "end": end,
-                        "window_start": start,
-                        "window_end": end,
-                        "window_width": window_width,
-                        "success": getattr(rollout_ep, "success", None),
-                    }
-                )
+                all_metadata.append({
+                    "rollout_idx": rollout_ep.index,
+                    "start": start, "end": end,
+                    "window_start": start, "window_end": end,
+                    "window_width": window_width,
+                    "success": getattr(rollout_ep, "success", None),
+                })
+            last_covered = ((ep_len - window_width) // stride) * stride + window_width
+            if last_covered < ep_len:
+                final_start = ep_len - window_width
+                window = rollout_data[final_start:ep_len, :]
+                emb = aggregate_window(window, aggregation, axis=0)
+                all_embeddings.append(emb.astype(np.float32))
+                all_metadata.append({
+                    "rollout_idx": rollout_ep.index,
+                    "start": final_start, "end": ep_len,
+                    "window_start": final_start, "window_end": ep_len,
+                    "window_width": window_width,
+                    "success": getattr(rollout_ep, "success", None),
+                })
 
     elif level == "demo":
         for demo_ep_idx, demo_ep in enumerate(demo_episodes):

@@ -1,9 +1,10 @@
 algorithm: kmeans
-scaling: none
+created: '2026-05-14T21:12:31.278154'
 influence_source: infembed
-representation: sliding_window
 level: rollout
 n_clusters: 20
-n_samples: 3755
-created: '2026-03-13T14:28:51.184532'
+n_samples: 3836
+notes: Refit with tail-gap repeating-pad fix (window_end coverage extended to ep_len)
+representation: sliding_window
+scaling: none
 task_config: transport_mh_jan28
