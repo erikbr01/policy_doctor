@@ -1,0 +1,50 @@
+task: robomimic_square
+name: "Square MH (Apr 26 sweep, demos=60)"
+
+# Data paths — relative to REPO_ROOT (third_party/cupid/)
+eval_dir: "data/outputs/eval_save_episodes/apr26_sweep_demos60/apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0/latest"
+train_dir: "data/outputs/train/apr26_sweep_demos60/apr26_sweep_demos60_train_diffusion_unet_lowdim_square_mh_mimicgen_0"
+train_ckpt: "latest"
+exp_date: "default"
+seeds: ["0", "1", "2"]
+wandb_project: "mimicgen_square"
+
+# State labels (26D MimicGen Square D1 observation)
+# Order: object(14) + eef_pos(3) + eef_quat(4) + gripper_qpos(2) + eef_vel(3)
+state_labels:
+  - "nut_pos_x"
+  - "nut_pos_y"
+  - "nut_pos_z"
+  - "nut_quat_x"
+  - "nut_quat_y"
+  - "nut_quat_z"
+  - "nut_quat_w"
+  - "peg_pos_x"
+  - "peg_pos_y"
+  - "peg_pos_z"
+  - "peg_quat_x"
+  - "peg_quat_y"
+  - "peg_quat_z"
+  - "peg_quat_w"
+  - "eef_pos_x"
+  - "eef_pos_y"
+  - "eef_pos_z"
+  - "eef_quat_x"
+  - "eef_quat_y"
+  - "eef_quat_z"
+  - "eef_quat_w"
+  - "gripper_0"
+  - "gripper_1"
+  - "eef_vel_x"
+  - "eef_vel_y"
+  - "eef_vel_z"
+
+# Action labels (7D OSC delta)
+action_labels:
+  - "pos_x"
+  - "pos_y"
+  - "pos_z"
+  - "rot_x"
+  - "rot_y"
+  - "rot_z"
+  - "gripper"

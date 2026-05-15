@@ -690,7 +690,20 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
                     "`_check_observation_space`}.".format(command)
                 )
     except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+        import traceback as _tb
+        _tb_str = _tb.format_exc()
+        try:
+            sys.__stdout__.write(f"[Worker-{index}] Exception:\n{_tb_str}")
+            sys.__stdout__.flush()
+        except Exception:
+            pass
+        try:
+            with open(f"/tmp/worker_{index}_traceback.txt", "w") as _f:
+                _f.write(_tb_str)
+        except Exception:
+            pass
+        exc_type, exc_val = sys.exc_info()[:2]
+        error_queue.put((index, exc_type, _tb_str))
         pipe.send((None, False))
     finally:
         env.close()

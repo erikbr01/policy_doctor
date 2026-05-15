@@ -170,6 +170,10 @@ def save_clustering_result(
     Returns:
         Path to the result directory.
     """
+    if output_dir is None and task_config is None:
+        raise ValueError(
+            "Either output_dir or task_config must be provided to save_clustering_result."
+        )
     slug = _slugify(name)
     if output_dir is not None:
         result_dir = Path(output_dir) / slug

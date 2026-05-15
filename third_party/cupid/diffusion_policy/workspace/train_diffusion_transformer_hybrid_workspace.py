@@ -180,8 +180,8 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
 
         # compile before DDP wrap (torch 2.x recommendation)
         if use_compile:
-            from diffusion_policy.common.ddp_util import compile_model
-            self.model = compile_model(self.model)
+            from diffusion_policy.common.ddp_util import compile_policy
+            compile_policy(self.model)
 
         # DDP wrap
         if world_size > 1:

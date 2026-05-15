@@ -6,7 +6,7 @@ only varying K isolates the effect of K on E1 accuracy — an apples-to-apples
 comparison the original pipeline doesn't naturally produce (each K=N run
 re-fits UMAP from scratch).
 
-Outputs to ``/tmp/transport_mh_seed0_r512_clustering_k{K}/`` for each K:
+Outputs to ``/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering_k{K}/`` for each K:
   manifest.yaml, cluster_labels.npy, metadata.json,
   embeddings_reduced.npy (same as source), clustering_models.pkl
 """
@@ -30,7 +30,7 @@ if str(_REPO_ROOT) not in sys.path:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default="/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering")
-    ap.add_argument("--out_template", default="/tmp/transport_mh_seed0_r512_clustering_k{K}")
+    ap.add_argument("--out_template", default="/mnt/ssdB/erik/cupid_data/clusterings/transport_mh_seed0_r512_clustering_k{K}")
     ap.add_argument("--ks", type=int, nargs="+", default=[10, 15])
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()

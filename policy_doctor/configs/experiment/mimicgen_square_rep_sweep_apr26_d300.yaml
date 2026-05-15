@@ -1,0 +1,93 @@
+# @package _global_
+# MimicGen budget × replicate sweep — Square D1, Apr 26 2026, 300-demo baseline.
+#
+# Mirrors the d60 rep sweep design but with a stronger baseline policy trained
+# on 300 demonstrations.  Fixes the upstream pipeline (baseline policy,
+# clustering, behavior graph) from the completed seed=1 d300 apr26 run, and
+# varies only the seed-draw random_seed across replicates.
+#
+# Rep-1 (random_seed=null): run via mimicgen_budget_sweep step (new).
+# Rep-2 (random_seed=1) and Rep-3 (random_seed=2): run via mimicgen_budget_rep_sweep.
+#
+# Budget restricted to [100, 500] — the mid-range where heuristic signal is
+# clearest and compute is reasonable for a 300-demo baseline.
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     +experiment=mimicgen_square_rep_sweep_apr26_d300 \
+#     steps=[mimicgen_budget_sweep]
+#
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     +experiment=mimicgen_square_rep_sweep_apr26_d300 \
+#     steps=[mimicgen_budget_rep_sweep]
+#
+# Or via the launch script:
+#   ./scripts/run_budget_rep_sweep_d300.sh
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_rep_sweep_apr26_d300
+
+# Reuse the fully-completed seed=1 d300 pipeline run dir.
+# All upstream steps (train_baseline → run_clustering) are already done here.
+run_dir: data/pipeline_runs/mimicgen_square_apr26_sweep_seed1_demos300
+
+seeds: [1]
+reference_seed: 0
+
+train_date: apr26_sweep_demos300
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, apr26, budget_sweep, rep_sweep, d300]
+
+baseline:
+  max_train_episodes: 300
+  checkpoint_topk: 5
+
+evaluation:
+  train_date: apr26_sweep_demos300
+  eval_date: apr26_sweep_demos300
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: apr26_sweep_demos300
+  eval_date: apr26_sweep_demos300
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+mimicgen_datagen:
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+
+# ---------------------------------------------------------------------------
+# Rep-1: budget sweep (random_seed=null — deterministic draw)
+# ---------------------------------------------------------------------------
+mimicgen_budget_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 500]
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]
+
+# ---------------------------------------------------------------------------
+# Rep-2/3: replicate sweep (fixed upstream, varying draw seed)
+# ---------------------------------------------------------------------------
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 500]
+  rep_seeds: [1, 2]
+  devices: [cuda:0, cuda:0, cuda:1, cuda:1]
+
+steps: [mimicgen_budget_sweep, mimicgen_budget_rep_sweep]

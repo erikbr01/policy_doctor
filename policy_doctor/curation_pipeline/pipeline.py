@@ -58,6 +58,10 @@ ALL_STEPS: List[str] = [
     "mimicgen_diversity_rep3",
     # Baseline evaluation (60 demos only):
     "eval_baseline",
+    # Config-driven budget sweep (heuristics × budgets from mimicgen_budget_sweep config):
+    "mimicgen_budget_sweep",
+    # Rep-2/3 arms for budget sweep (fixed upstream, varying draw — controlled heuristic comparison):
+    "mimicgen_budget_rep_sweep",
     # Flat steps (standalone / legacy runs):
     "select_mimicgen_seed_from_graph",
     "select_mimicgen_seed",
@@ -117,8 +121,12 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         MimicgenDiversity20Rep3ArmStep,
     )
     from policy_doctor.curation_pipeline.steps.eval_baseline import EvalBaselineStep
+    from policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep import (
+        MimicgenBudgetSweepStep,
+        MimicgenBudgetRepSweepStep,
+    )
 
-    return {
+    registry: Dict[str, Type[PipelineStep]] = {
         "train_baseline": TrainBaselineStep,
         "eval_policies": EvalPoliciesStep,
         "train_attribution": TrainAttributionStep,
@@ -156,11 +164,14 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "mimicgen_diversity_20_rep2": MimicgenDiversity20Rep2ArmStep,
         "mimicgen_diversity_20_rep3": MimicgenDiversity20Rep3ArmStep,
         "eval_baseline": EvalBaselineStep,
+        "mimicgen_budget_sweep": MimicgenBudgetSweepStep,
+        "mimicgen_budget_rep_sweep": MimicgenBudgetRepSweepStep,
         "select_mimicgen_seed_from_graph": SelectMimicgenSeedFromGraphStep,
         "select_mimicgen_seed": SelectMimicgenSeedStep,
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,
         "train_on_combined_data": TrainOnCombinedDataStep,
     }
+    return registry
 
 
 class CurationPipeline:

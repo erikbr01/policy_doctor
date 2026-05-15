@@ -403,6 +403,29 @@ def main(
     # is an nn.ParameterDict and dynamo can't prove the membership of 'scale'
     # under fullgraph=True; the U-Net itself traces cleanly.
     if use_compile:
+        # Patch inductor's value_ranges.coordinatewise_monotone_map to handle NaN produced by
+        # 0 * oo in symbolic range propagation.  Present in torch <= 2.4.1; min()/max() over
+        # a list containing sympy.nan raises TypeError("Invalid NaN comparison").  The fix is
+        # to filter NaN entries before taking min/max.  Safe to remove once torch >= 2.5.
+        import itertools as _itertools
+        import torch.utils._sympy.value_ranges as _vr
+
+        @classmethod  # type: ignore[misc]
+        def _coord_mono_nan_safe(cls, x, y, fn):
+            x, y = cls.wrap(x), cls.wrap(y)
+            products = [
+                fn(a, b)
+                for a, b in _itertools.product([x.lower, x.upper], [y.lower, y.upper])
+            ]
+            try:
+                return cls(min(products), max(products))
+            except TypeError:
+                # NaN in products (e.g. 0 * oo) — filter and retry with finite bounds only
+                valid = [p for p in products if getattr(p, "is_nan", None) is not True]
+                return cls(min(valid), max(valid))
+
+        _vr.ValueRanges.coordinatewise_monotone_map = _coord_mono_nan_safe
+
         from diffusion_policy.common.ddp_util import compile_model
         if compile_target == "wrapper":
             # Wrapper-level compile must use dynamic=True to absorb the

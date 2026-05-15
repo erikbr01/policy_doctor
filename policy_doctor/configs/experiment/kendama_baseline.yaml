@@ -1,0 +1,25 @@
+# @package _global_
+# Baseline training for kendama real-robot task (may13 dataset, DROID).
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=droid_hdf5 \
+#     +experiment=kendama_baseline \
+#     steps=[train_baseline]
+
+experiment_name: kendama_baseline
+seeds: [0]
+
+baseline:
+  train_date: may13
+  num_epochs: 3000
+  checkpoint_every: 50
+  checkpoint_topk: 3
+  val_ratio: 0.1
+  tf32: true
+  compile: true
+  diffusion_dataset_path: /mnt/ssdB/erik/droid_data/kendama_may13.hdf5
+
+device: "cuda:0"
+project: kendama-droid
+wandb_tags: [droid, kendama, baseline, may13]

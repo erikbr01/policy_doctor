@@ -42,7 +42,7 @@ env_runner:
   crf: 22
   past_action: ${past_action_visible}
   abs_action: false
-  n_envs: 28
+  n_envs: 10
 
 dataset:
   _target_: diffusion_policy.dataset.mimicgen_replay_lowdim_dataset.MimicgenReplayLowdimDataset

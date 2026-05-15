@@ -24,3 +24,29 @@ data_source:
   conda_env_datagen: mimicgen_torch2
   robocasa_submodule: false
   mimicgen_submodule: true
+
+# ---------------------------------------------------------------------------
+# MimicGen generation — task-specific parameters for Square D1
+# These are merged into mimicgen_datagen at load time; experiment YAMLs
+# override only the task-agnostic knobs (success_budget, num_seeds, etc.)
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  original_dataset_path: data/mimicgen/square_d1_60.hdf5  # relative to PROJECT_ROOT
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+
+  # Square D1 generation parameters — full D1 randomization
+  action_noise: 0.05
+  subtask_term_offset_range: [10, 20]
+  nn_k: 3
+  interpolate_from_last_target_pose: true
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+  fix_initial_object_poses: false
+  object_pose_ranges: null
+
+# Attribution source dataset (used by train_attribution and finalize_attribution steps)
+attribution:
+  dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
