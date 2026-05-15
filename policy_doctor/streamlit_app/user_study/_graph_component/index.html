@@ -65,13 +65,30 @@
     pointer-events: none;
     white-space: nowrap;
   }
+  #reset-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    background: rgba(40, 40, 40, 0.85);
+    color: #ddd;
+    border: 1px solid #555;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    display: none;  /* shown only after a manual drag */
+  }
+  #reset-btn:hover { background: rgba(70, 70, 70, 0.95); }
 </style>
 </head>
 <body>
 
 <div id="tooltip"></div>
+<button id="reset-btn" title="Restore the computed layout">↺ Reset positions</button>
 <svg id="graph"></svg>
-<div id="instructions">Click any node to explore it</div>
+<div id="instructions">Drag any node to move it · Click to explore</div>
 
 <script>
 // ── Streamlit messaging ───────────────────────────────────────────────────
@@ -99,6 +116,11 @@ let graphData = null;
 let selectedNodeId = null;
 let selectedEdge = null;   // {src, tgt} when an edge is selected
 let highlightedPath = null; // array of node IDs forming the highlighted path
+let pixPosMut = {};         // mutable pixel positions (live, including user drags)
+let initialPixPos = {};     // snapshot from the most recent layout (for reset)
+let userOverrides = {};     // nodes the user has manually moved; cleared on reset
+let dragging = null;        // {nodeId, startMouse, startNode, moved}
+let lastRenderArgs = null;  // svgW, svgH for re-render on reset
 
 // ── Layout helpers ────────────────────────────────────────────────────────
 function toSvgCoords(pos, svgW, svgH, padding) {
@@ -120,14 +142,63 @@ function toSvgCoords(pos, svgW, svgH, padding) {
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────
+// Compute the SVG path `d` attribute and arrowhead-direction vector for an
+// edge between two pixel positions. Curvature scales with chord length so
+// short hops are nearly straight, long hops arc clearly.
+function edgePathD(x0, y0, x1, y1, side) {
+  const chord = Math.sqrt((x1 - x0)**2 + (y1 - y0)**2) || 1;
+  const pcx = -(y1 - y0) / chord;
+  const pcy =  (x1 - x0) / chord;
+  const curve = Math.min(60, Math.max(0, (chord - 80) * 0.18));
+  const arc = (side !== undefined) ? side : ((x1 >= x0) ? -1 : 1);
+  const cx = (x0 + x1) / 2 + pcx * curve * arc;
+  const cy = (y0 + y1) / 2 + pcy * curve * arc;
+  return `M ${x0} ${y0} Q ${cx} ${cy} ${x1} ${y1}`;
+}
+
+// Recompute the path for every edge touching nodeId and update DOM.
+function redrawEdgesFor(nodeId) {
+  if (!graphData) return;
+  const svg = document.getElementById("graph");
+  const maxEpisodes = Math.max(...graphData.nodes.map(n => n.num_episodes), 1);
+  for (const edge of graphData.edges) {
+    if (edge.src !== nodeId && edge.tgt !== nodeId) continue;
+    const [x0, y0] = pixPosMut[edge.src] || [0, 0];
+    const [x1, y1] = pixPosMut[edge.tgt] || [0, 0];
+    const rSrc = nodeRadius(graphData.nodes.find(n => n.id === edge.src), maxEpisodes);
+    const rTgt = nodeRadius(graphData.nodes.find(n => n.id === edge.tgt), maxEpisodes);
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
+    const ex = x1 - ux * (rTgt + 6), ey = y1 - uy * (rTgt + 6);
+    let ox = 0, oy = 0;
+    if (graphData.edges.some(e => e.src === edge.tgt && e.tgt === edge.src)) {
+      ox = -uy * 5; oy = ux * 5;
+    }
+    const d = edgePathD(sx + ox, sy + oy, ex + ox, ey + oy);
+    // Update both visible and hit-area paths
+    const sel = `[data-src="${edge.src}"][data-tgt="${edge.tgt}"]`;
+    svg.querySelectorAll(`path${sel}`).forEach(p => p.setAttribute("d", d));
+  }
+}
+
 function render(data, svgW, svgH) {
   graphData = data;
+  lastRenderArgs = { svgW, svgH };
   const svg = document.getElementById("graph");
   svg.setAttribute("viewBox", `0 0 ${svgW} ${svgH}`);
   svg.innerHTML = "";
 
   const padding = 60;
-  const pixPos = toSvgCoords(data.positions, svgW, svgH, padding);
+  // Compute fresh positions from data, then overlay any user drags.
+  const freshPos = toSvgCoords(data.positions, svgW, svgH, padding);
+  initialPixPos = JSON.parse(JSON.stringify(freshPos));
+  pixPosMut = {};
+  for (const id of Object.keys(freshPos)) {
+    pixPosMut[id] = userOverrides[id] ? [...userOverrides[id]] : [...freshPos[id]];
+  }
+  const pixPos = pixPosMut;  // alias for the rest of this function
 
   const maxEpisodes = Math.max(...data.nodes.map(n => n.num_episodes), 1);
 
@@ -223,24 +294,9 @@ function render(data, svgW, svgH) {
     }
 
     // Build a path. Short edges → straight line. Long edges → quadratic
-    // Bezier whose control point sits perpendicular to the chord, with
-    // curvature scaled by length so 1-column hops stay near-straight and
-    // multi-column hops arc clearly above/below the row of nodes.
+    // Bezier whose control point sits perpendicular to the chord.
     const x0p = sx + ox, y0p = sy + oy, x1p = ex + ox, y1p = ey + oy;
-    const chord = Math.sqrt((x1p - x0p)**2 + (y1p - y0p)**2);
-    // direction perpendicular to the chord
-    const pcx = -(y1p - y0p) / (chord || 1);
-    const pcy =  (x1p - x0p) / (chord || 1);
-    // curvature: 0 for short edges, ramps up to ~0.18 × chord for long ones,
-    // capped so very long edges don't arc absurdly far
-    const curve = Math.min(60, Math.max(0, (chord - 80) * 0.18));
-    // Side: edges going "forward" (left→right) arc upward; "backward" downward.
-    // Combined with the small `ox/oy` offset for bidirectional pairs, this
-    // keeps reverse edges from overlapping their forward partners.
-    const side = (x1p >= x0p) ? -1 : 1;
-    const cx = (x0p + x1p) / 2 + pcx * curve * side;
-    const cy = (y0p + y1p) / 2 + pcy * curve * side;
-    const d = `M ${x0p} ${y0p} Q ${cx} ${cy} ${x1p} ${y1p}`;
+    const d = edgePathD(x0p, y0p, x1p, y1p);
 
     const line = svgEl("path", {
       class: "edge",
@@ -248,6 +304,8 @@ function render(data, svgW, svgH) {
       fill: "none",
       stroke, "stroke-width": strokeW,
       "marker-end": markerEnd,
+      "data-src": String(edge.src),
+      "data-tgt": String(edge.tgt),
     });
     edgeGroup.appendChild(line);
 
@@ -257,6 +315,8 @@ function render(data, svgW, svgH) {
       fill: "none",
       stroke: "transparent", "stroke-width": "12",
       "pointer-events": "stroke", cursor: "pointer",
+      "data-src": String(edge.src),
+      "data-tgt": String(edge.tgt),
     });
     (function(e) {
       hit.addEventListener("click", function(evt) {
@@ -281,7 +341,11 @@ function render(data, svgW, svgH) {
   for (const node of data.nodes) {
     const [cx, cy] = pixPos[node.id] || [0, 0];
     const r = nodeRadius(node, maxEpisodes);
-    const g = svgEl("g", { class: "node-group", transform: `translate(${cx},${cy})` });
+    const g = svgEl("g", {
+      class: "node-group",
+      transform: `translate(${cx},${cy})`,
+      "data-node-id": String(node.id),
+    });
 
     // Main circle/shape
     let shape;
@@ -378,7 +442,30 @@ function render(data, svgW, svgH) {
     });
     g.addEventListener("mousemove", positionTooltip);
     g.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
-    g.addEventListener("click", () => {
+
+    // ── Drag: mousedown captures the node; mousemove updates pos; mouseup
+    // either fires the click (if no movement) or just ends the drag.
+    g.style.cursor = "grab";
+    g.addEventListener("mousedown", (evt) => {
+      evt.preventDefault();
+      const pt = svgPoint(evt);
+      dragging = {
+        nodeId: node.id,
+        startMouse: { x: pt.x, y: pt.y },
+        startNode: [...pixPosMut[node.id]],
+        moved: false,
+      };
+      g.style.cursor = "grabbing";
+      // Hide tooltip while dragging
+      document.getElementById("tooltip").style.display = "none";
+    });
+    g.addEventListener("click", (evt) => {
+      // The mouseup handler clears `dragging` and sets dragMovedRecently
+      // if the drag actually moved. If so, suppress this click.
+      if (dragMovedRecently) {
+        dragMovedRecently = false;
+        return;
+      }
       if (selectedNodeId === node.id) {
         selectedNodeId = null;
         sendValue(-1);
@@ -413,6 +500,54 @@ function positionTooltip(e) {
   tt.style.left = (right ? e.clientX - tt.offsetWidth - 10 : x) + "px";
   tt.style.top = Math.max(0, y) + "px";
 }
+
+// ── Drag plumbing ─────────────────────────────────────────────────────────
+let dragMovedRecently = false;
+function svgPoint(evt) {
+  const svg = document.getElementById("graph");
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX;
+  pt.y = evt.clientY;
+  const ctm = svg.getScreenCTM();
+  return ctm ? pt.matrixTransform(ctm.inverse()) : { x: evt.clientX, y: evt.clientY };
+}
+
+window.addEventListener("mousemove", (evt) => {
+  if (!dragging) return;
+  const pt = svgPoint(evt);
+  const dx = pt.x - dragging.startMouse.x;
+  const dy = pt.y - dragging.startMouse.y;
+  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragging.moved = true;
+  const nx = dragging.startNode[0] + dx;
+  const ny = dragging.startNode[1] + dy;
+  pixPosMut[dragging.nodeId] = [nx, ny];
+  const svg = document.getElementById("graph");
+  const ng = svg.querySelector(`.node-group[data-node-id="${dragging.nodeId}"]`);
+  if (ng) ng.setAttribute("transform", `translate(${nx},${ny})`);
+  redrawEdgesFor(dragging.nodeId);
+});
+
+window.addEventListener("mouseup", (evt) => {
+  if (!dragging) return;
+  if (dragging.moved) {
+    userOverrides[dragging.nodeId] = [...pixPosMut[dragging.nodeId]];
+    dragMovedRecently = true;
+    document.getElementById("reset-btn").style.display = "inline-block";
+  }
+  const svg = document.getElementById("graph");
+  const ng = svg.querySelector(`.node-group[data-node-id="${dragging.nodeId}"]`);
+  if (ng) ng.style.cursor = "grab";
+  dragging = null;
+});
+
+document.getElementById("reset-btn").addEventListener("click", (evt) => {
+  evt.stopPropagation();
+  userOverrides = {};
+  document.getElementById("reset-btn").style.display = "none";
+  if (graphData && lastRenderArgs) {
+    render(graphData, lastRenderArgs.svgW, lastRenderArgs.svgH);
+  }
+});
 
 // ── Message handling ───────────────────────────────────────────────────────
 window.addEventListener("message", (event) => {
