@@ -18,6 +18,7 @@ from policy_doctor.behaviors.behavior_graph import (
 )
 from policy_doctor.streamlit_app.components.mp4_player import mp4_player
 from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
+from policy_doctor.streamlit_app.user_study.graph_plot import compute_pruned_graph_nodes
 from policy_doctor.streamlit_app.user_study.initial_conditions import (
     _episodes_for_path as _ic_episodes_for_path,
     _initial_slice_per_episode,
@@ -181,6 +182,20 @@ st.markdown(
 
 highlighted_path = st.session_state.get("gb_pex_highlighted_path")
 
+_prune_pct = st.slider(
+    "Hide nodes visited in fewer than X% of episodes",
+    min_value=0, max_value=30, value=0, step=1,
+    format="%d%%",
+    key="gb_graph_prune_pct",
+    help=(
+        "Removes infrequent behavior nodes and any node that becomes "
+        "unreachable from START after pruning."
+    ),
+)
+_excluded_nodes = compute_pruned_graph_nodes(graph, _prune_pct / 100.0, n_total)
+if _excluded_nodes:
+    st.caption(f"Hiding {len(_excluded_nodes)} node(s) with visit rate < {_prune_pct}%.")
+
 render_graph_full_width(
     graph=graph,
     labels=labels,
@@ -189,6 +204,7 @@ render_graph_full_width(
     mp4_index=index,
     key_prefix="gb_gex",
     highlighted_path=highlighted_path,
+    excluded_node_ids=_excluded_nodes,
 )
 
 # ── Section 3: Path explorer ──────────────────────────────────────────────────

@@ -36,7 +36,45 @@ _COMPONENT_DIR = Path(__file__).parent / "_graph_component"
 _graph_component = components.declare_component("behavior_graph", path=str(_COMPONENT_DIR))
 
 
-def _compute_layout(graph: BehaviorGraph) -> dict[int, tuple[float, float]]:
+def compute_pruned_graph_nodes(
+    graph: BehaviorGraph,
+    min_visit_prob: float,
+    n_total: int,
+) -> frozenset[int]:
+    """Return the set of node IDs to EXCLUDE from the graph.
+
+    Algorithm:
+    1. Remove regular (non-special) nodes whose visit frequency < min_visit_prob.
+    2. BFS from START through surviving nodes; remove anything unreachable.
+    Special nodes (START/SUCCESS/FAILURE) are never excluded by the threshold but
+    may disappear if all paths to them are pruned.
+    """
+    if min_visit_prob <= 0 or n_total == 0:
+        return frozenset()
+
+    surviving = {
+        nid for nid, node in graph.nodes.items()
+        if nid in _SPECIAL_IDS or node.num_episodes / n_total >= min_visit_prob
+    }
+
+    reachable: set[int] = set()
+    queue = [START_NODE_ID] if START_NODE_ID in surviving else []
+    while queue:
+        nid = queue.pop()
+        if nid in reachable:
+            continue
+        reachable.add(nid)
+        for tgt in graph.transition_probs.get(nid, {}):
+            if tgt in surviving and tgt not in reachable:
+                queue.append(tgt)
+
+    return frozenset(nid for nid in graph.nodes if nid not in reachable)
+
+
+def _compute_layout(
+    graph: BehaviorGraph,
+    excluded: frozenset[int] = frozenset(),
+) -> dict[int, tuple[float, float]]:
     """BFS-layered layout with barycenter refinement (adapted from the main plotting module).
 
     Nodes are columns by BFS depth from START; terminals pinned to the far right.
@@ -47,9 +85,14 @@ def _compute_layout(graph: BehaviorGraph) -> dict[int, tuple[float, float]]:
 
     G = nx.DiGraph()
     for nid in graph.nodes:
-        G.add_node(nid)
+        if nid not in excluded:
+            G.add_node(nid)
     for src, targets in graph.transition_probs.items():
+        if src in excluded:
+            continue
         for tgt, prob in targets.items():
+            if tgt in excluded:
+                continue
             if src in graph.nodes and tgt in graph.nodes and prob > 0:
                 G.add_edge(src, tgt, weight=prob)
 
@@ -234,19 +277,19 @@ def render_graph_component(
     key: str = "behavior_graph",
     highlighted_path: Optional[list[int]] = None,
     mp4_dir: Optional[Path] = None,
+    excluded_node_ids: frozenset[int] = frozenset(),
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
     Args:
         highlighted_path: List of node IDs forming a path to highlight.
-            Edges on the path are drawn in orange; off-path elements are dimmed.
-        mp4_dir: Directory containing ``ep<idx>.mp4`` files. When provided,
-            representative frame thumbnails are embedded in node hover tooltips.
+        mp4_dir: Directory containing MP4 files for thumbnail extraction.
+        excluded_node_ids: Nodes to hide (computed by compute_pruned_graph_nodes).
 
     Returns:
         The node_id that was clicked, or the previously selected node.
     """
-    pos = _compute_layout(graph)
+    pos = _compute_layout(graph, excluded=excluded_node_ids)
     thumbnails: dict[int, list[str]] | None = None
     if mp4_dir is not None:
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)

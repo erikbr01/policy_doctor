@@ -51,6 +51,7 @@ def render_graph_full_width(
     mp4_index: dict,
     key_prefix: str = "gex",
     highlighted_path: list[int] | None = None,
+    excluded_node_ids: frozenset[int] = frozenset(),
 ) -> None:
     """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
@@ -64,6 +65,7 @@ def render_graph_full_width(
         key=f"{key_prefix}_graph",
         highlighted_path=highlighted_path,
         mp4_dir=mp4_dir,
+        excluded_node_ids=excluded_node_ids,
     )
 
     # Inline node detail panel
