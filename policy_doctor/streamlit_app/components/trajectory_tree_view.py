@@ -427,8 +427,10 @@ def _render_stats(
         f"{root['n_failure']} failure ({root['n_failure']/max(1,root['n_episodes']):.0%})  ·  "
         f"{len(nodes_filtered)}/{len(nodes_all)} tree nodes shown after filtering"
     )
+    # Source leaves from the FILTERED tree so the list reflects what's
+    # actually visible above. Paths pruned by min_branch don't show up.
     leaves = [
-        nd for nd in nodes_all
+        nd for nd in nodes_filtered
         if nd["cluster_id"] in (SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID)
     ]
     succ_paths = sorted(
@@ -471,20 +473,14 @@ def _render_stats(
             if nid is not None:
                 synth_path.append(nid)
         is_active = (_current is not None and list(_current) == synth_path)
-        display_label = ("✓  " + label) if is_active else label
-        if st.button(display_label, key=key, use_container_width=True):
+        if st.button(
+            label, key=key, use_container_width=True,
+            type=("primary" if is_active else "secondary"),
+        ):
             if is_active:
                 st.session_state.pop(f"{key_prefix}_highlighted_path", None)
             elif synth_path:
                 st.session_state[f"{key_prefix}_highlighted_path"] = synth_path
-            st.rerun()
-
-    # "Clear highlight" affordance, only useful when a path is currently set.
-    if interactive and st.session_state.get(f"{key_prefix}_highlighted_path"):
-        if st.button(
-            "Clear highlighted path", key=f"{key_prefix}_clear_highlight",
-        ):
-            st.session_state.pop(f"{key_prefix}_highlighted_path", None)
             st.rerun()
 
     c_s, c_f = st.columns(2)
