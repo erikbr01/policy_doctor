@@ -361,14 +361,13 @@ def render_graph_component(
     )
     selected = st.session_state.get(f"{key}_selected")
     selected_edge = st.session_state.get(f"{key}_selected_edge")
-    last_click = st.session_state.get(f"{key}_last_click", _SENTINEL)
+    last_seq = st.session_state.get(f"{key}_last_seq", -1)
 
-    # Streamlit's component bridge only pushes a render when args change.
-    # When selection is cleared (e.g. X-button popped session state) the
-    # iframe's persisted return value still equals `last_click` and args
-    # hash to the same value as the previous render, so the iframe never
-    # re-renders → halo stays on. The X-button handlers bump
-    # `{key}_render_token` to force args to change.
+    # X-button handlers bump `{key}_render_token` so iframe args differ and
+    # Streamlit pushes a fresh render (otherwise the iframe's local state
+    # would not update). Click-sequence numbers (see JS clickSeq) make
+    # repeat clicks on the same node distinct so the persisted sendValue
+    # replay doesn't get treated as a fresh click after dismiss.
     render_token = st.session_state.get(f"{key}_render_token", 0)
 
     clicked = _graph_component(
@@ -382,24 +381,36 @@ def render_graph_component(
         default=None,
     )
 
-    if clicked is not None and clicked != last_click:
-        st.session_state[f"{key}_last_click"] = clicked
-        # Edge click: component sends [src_id, tgt_id]
-        if isinstance(clicked, list) and len(clicked) == 2:
-            st.session_state[f"{key}_selected_edge"] = tuple(clicked)
-            st.session_state.pop(f"{key}_selected", None)
-            return None
+    # New protocol from JS:
+    #   [node_id, seq]        — node click  (node_id == -1 means deselect)
+    #   [src, tgt, seq]       — edge click
+    if isinstance(clicked, list) and len(clicked) >= 2:
         try:
-            node_id = int(clicked)
-            if node_id == -1:
-                st.session_state.pop(f"{key}_selected", None)
-                st.session_state.pop(f"{key}_selected_edge", None)
-                st.rerun()  # forces a second render so component receives selected_node_id=null
-            if node_id in graph.nodes:
-                st.session_state[f"{key}_selected"] = node_id
-                st.session_state.pop(f"{key}_selected_edge", None)
-                return node_id
+            seq = int(clicked[-1])
         except (TypeError, ValueError):
-            pass
+            seq = None
+        if seq is not None and seq != last_seq:
+            st.session_state[f"{key}_last_seq"] = seq
+            if len(clicked) == 2:
+                try:
+                    node_id = int(clicked[0])
+                except (TypeError, ValueError):
+                    return selected
+                if node_id == -1:
+                    st.session_state.pop(f"{key}_selected", None)
+                    st.session_state.pop(f"{key}_selected_edge", None)
+                    st.rerun()
+                if node_id in graph.nodes:
+                    st.session_state[f"{key}_selected"] = node_id
+                    st.session_state.pop(f"{key}_selected_edge", None)
+                    return node_id
+            elif len(clicked) == 3:
+                try:
+                    src_v, tgt_v = int(clicked[0]), int(clicked[1])
+                except (TypeError, ValueError):
+                    return selected
+                st.session_state[f"{key}_selected_edge"] = (src_v, tgt_v)
+                st.session_state.pop(f"{key}_selected", None)
+                return None
 
     return selected

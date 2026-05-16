@@ -115,6 +115,8 @@ function setHeight(h) {
 let graphData = null;
 let selectedNodeId = null;
 let selectedEdge = null;   // {src, tgt} when an edge is selected
+let clickSeq = 0;          // bumps per user click so repeats are distinct
+                           // even when the payload (node id) is the same
 let highlightedPath = null; // array of node IDs forming the highlighted path
 let pixPosMut = {};         // mutable pixel positions (live, including user drags)
 let initialPixPos = {};     // snapshot from the most recent layout (for reset)
@@ -323,11 +325,11 @@ function render(data, svgW, svgH) {
         evt.stopPropagation();
         if (selectedEdge && selectedEdge.src === e.src && selectedEdge.tgt === e.tgt) {
           selectedEdge = null;
-          sendValue(-1);
+          sendValue([-1, ++clickSeq]);
         } else {
           selectedEdge = {src: e.src, tgt: e.tgt};
           selectedNodeId = null;
-          sendValue([e.src, e.tgt]);
+          sendValue([e.src, e.tgt, ++clickSeq]);
         }
         render(graphData, svgW, svgH);
       });
@@ -484,11 +486,11 @@ function render(data, svgW, svgH) {
       }
       if (selectedNodeId === node.id) {
         selectedNodeId = null;
-        sendValue(-1);
+        sendValue([-1, ++clickSeq]);
       } else {
         selectedNodeId = node.id;
         selectedEdge = null; // clear edge selection
-        sendValue(node.id);
+        sendValue([node.id, ++clickSeq]);
       }
       render(graphData, svgW, svgH);
     });

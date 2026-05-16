@@ -294,11 +294,12 @@ with c_color:
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
 min_branch = st.slider(
     "Hide transitions where count(s, s′) < N",
-    0, 50, 2,
+    1, 50, 2,
     help=(
         "count(s, s′) is the number of rollouts in which the transition s → s′ "
-        "was observed. Edges with fewer than N observations are hidden, along "
-        "with any nodes that become unreachable as a consequence."
+        "was observed. Edges with fewer than N observations are hidden, and "
+        "any nodes that become unreachable from START are pruned as a "
+        "consequence."
     ),
 )
 max_depth = 500
@@ -321,24 +322,20 @@ if color_by == "value":
 # ── Filter summary: how many nodes / edges does the threshold drop ───────────
 _n_nodes_total = len(bg.nodes)
 _n_edges_total = sum(len(t) for t in bg.transition_counts.values())
-if min_branch == 0:
-    _n_nodes_hidden = 0
-    _n_edges_hidden = 0
-else:
-    _excluded = compute_pruned_graph_nodes(
-        bg, min_visit_prob=0.0, n_total=bg.num_episodes,
-        min_edge_count=int(min_branch),
-    )
-    _n_nodes_hidden = len(_excluded)
-    _n_edges_hidden = sum(
-        1
-        for src, targets in bg.transition_counts.items()
-        for tgt, cnt in targets.items()
-        if src in _excluded or tgt in _excluded or cnt < int(min_branch)
-    )
+_excluded = compute_pruned_graph_nodes(
+    bg, min_visit_prob=0.0, n_total=bg.num_episodes,
+    min_edge_count=int(min_branch),
+)
+_n_edges_hidden = sum(
+    1
+    for src, targets in bg.transition_counts.items()
+    for tgt, cnt in targets.items()
+    if src in _excluded or tgt in _excluded or cnt < int(min_branch)
+)
+_n_nodes_pruned = len(_excluded)
 st.caption(
-    f"Filtered {_n_nodes_hidden} / {_n_nodes_total} nodes  ·  "
-    f"{_n_edges_hidden} / {_n_edges_total} edges"
+    f"Hidden {_n_edges_hidden} / {_n_edges_total} edges  ·  "
+    f"{_n_nodes_pruned} / {_n_nodes_total} nodes pruned (unreachable from START)"
 )
 
 

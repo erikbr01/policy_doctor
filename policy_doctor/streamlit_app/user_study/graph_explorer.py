@@ -146,7 +146,6 @@ def _render_edge_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_graph_selected_edge", None)
-                st.session_state.pop(f"{key_prefix}_graph_last_click", None)
                 _rt_key = f"{key_prefix}_graph_render_token"
                 st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
@@ -291,7 +290,6 @@ def _render_node_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_graph_selected", None)
-                st.session_state.pop(f"{key_prefix}_graph_last_click", None)
                 _rt_key = f"{key_prefix}_graph_render_token"
                 st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
