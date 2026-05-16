@@ -202,26 +202,22 @@ def _pick(label, options, key, default=None):
 
 _REP_DESCRIPTIONS = {
     "infembed":
-        "**InfEmbed** — per-timestep embedding in the policy's loss-Hessian "
-        "eigenspace. Captures how a window influences the training loss; close "
-        "neighbours have similar attribution to the same training demos.",
+        "**InfEmbed** — influence-based representation computed via a "
+        "low-rank factorization of the policy's loss Hessian.",
     "trak":
-        "**TRAK** — per-timestep random-projected (Johnson–Lindenstrauss) "
-        "gradient features used for attribution. Close neighbours have "
-        "similar gradient directions w.r.t. the loss.",
+        "**TRAK** — per-timestep features from the TRAK influence-score "
+        "matrix (rollout × training demos), reduced to 200D with truncated "
+        "SVD before windowing.",
     "policy_emb_bottleneck_plan_t0":
-        "**Policy embedding (bottleneck, plan t=0)** — the diffusion policy's "
-        "bottleneck activation at the first plan timestep. An internal "
-        "representation of the policy itself, not a derived attribution.",
+        "**Policy embedding (bottleneck, plan t=0)** — activations of the "
+        "diffusion U-Net bottleneck (mid-block) at denoising timestep t=0, "
+        "i.e. the final denoising step that produces the clean action plan.",
     "state_full_history":
-        "**State (full history)** — concatenated raw observation across the "
-        "full observation horizon (n_obs_steps), flattened and UMAP-reduced. "
-        "Pure environment state, no policy info.",
+        "**State (full history)** — full observation history, flattened and "
+        "UMAP-reduced.",
     "state_action_full_history_full_plan":
-        "**State + action (full history + full plan)** — concatenation of the "
-        "full observation history *and* the full predicted action plan, "
-        "flattened and UMAP-reduced. Captures both what the robot sees and "
-        "what it intends to do.",
+        "**State_action** — concatenation of the full observation history "
+        "and the full action chunk, flattened and UMAP-reduced.",
 }
 
 reps = sorted({e["rep"] for e in _INDEX})
