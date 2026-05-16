@@ -140,13 +140,31 @@ if not _cands:
     st.error(f"No clusterings under {task}.")
     st.stop()
 
+# Only show representations from the official sweep. The directory name
+# already encodes the rep + obs/action strategy unambiguously, so derive
+# the dropdown label from the slug (strip the trailing _w{W}_s{S} and
+# _seed0_kmeans_k{K} suffixes).
+import re as _re
+_OFFICIAL_REPS = {
+    "infembed",
+    "trak",
+    "policy_emb_bottleneck_plan_t0",
+    "state_full_history",
+    "state_action_full_history_full_plan",
+}
+
+def _rep_from_slug(slug: str) -> str:
+    s = _re.sub(r"_seed\d+_kmeans_k\d+$", "", slug)
+    s = _re.sub(r"_w\d+_s\d+$", "", s)
+    return s
+
 # Index by (rep, k, w, s, agg)
 _INDEX = []
 for p in _cands:
+    rep_full = _rep_from_slug(p.name)
+    if rep_full not in _OFFICIAL_REPS:
+        continue
     m = _read_manifest(str(p))
-    rep = m.get("influence_source") or m.get("slice_representation") or "?"
-    layer = (m.get("rep_kwargs") or {}).get("layer", "") if isinstance(m.get("rep_kwargs"), dict) else ""
-    rep_full = f"{rep}/{layer}" if layer else rep
     _INDEX.append({
         "path": p,
         "rep": rep_full,
@@ -166,7 +184,7 @@ def _filter(rep=None, k=None, w=None, s=None, agg=None):
     return out
 
 
-_DEFAULT = {"rep": "policy_emb/bottleneck_plan_t0", "k": 5}
+_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 5}
 
 def _pick(label, options, key, default=None):
     if not options:
