@@ -138,13 +138,24 @@ def _render_edge_panel(
     tgt_name = tgt_node.name if tgt_node else str(tgt_id)
     prob = graph.transition_probs.get(src_id, {}).get(tgt_id, 0.0)
 
+    # If the tree dispatched this panel, it stored a synth_id → "START → … →
+    # tgt" string; show that as a fuller subtitle so users see the prefix
+    # they're inspecting.
+    _id_to_prefix = st.session_state.get(f"{key_prefix}_id_to_prefix", {})
+    _tgt_prefix = _id_to_prefix.get(tgt_id)
+
     with st.container(border=True):
-        header_col, close_col = st.columns([10, 1])
+        header_col, close_col = st.columns([20, 1])
         with header_col:
-            st.subheader(f"→ {src_name}  ›  {tgt_name}")
+            st.subheader(f"{src_name}  →  {tgt_name}")
+            if _tgt_prefix:
+                st.caption(_tgt_prefix)
             st.caption(f"Transition probability: {prob:.1%}")
         with close_col:
-            if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
+            if st.button(
+                "✕", key=f"{key_prefix}_edge_panel_close",
+                help="Dismiss", use_container_width=True,
+            ):
                 st.session_state.pop(f"{key_prefix}_graph_selected_edge", None)
                 _rt_key = f"{key_prefix}_graph_render_token"
                 st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
@@ -164,9 +175,13 @@ def _render_edge_panel(
         show_triples = all_ep_triples[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
 
         if _vp_total > 1:
-            _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
+            _vc1, _vc2, _vc3 = st.columns([1, 18, 1])
             with _vc1:
-                if st.button("←", disabled=(_vp == 0), key=f"{key_prefix}_ep_prev_{src_id}_{tgt_id}"):
+                if st.button(
+                    "←", disabled=(_vp == 0),
+                    key=f"{key_prefix}_ep_prev_{src_id}_{tgt_id}",
+                    use_container_width=True,
+                ):
                     st.session_state[_vp_key] = max(0, _vp - 1)
                     st.rerun()
             _vc2.markdown(
@@ -174,7 +189,11 @@ def _render_edge_panel(
                 f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
                 f"</div>", unsafe_allow_html=True)
             with _vc3:
-                if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_ep_next_{src_id}_{tgt_id}"):
+                if st.button(
+                    "→", disabled=(_vp >= _vp_total - 1),
+                    key=f"{key_prefix}_ep_next_{src_id}_{tgt_id}",
+                    use_container_width=True,
+                ):
                     st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
                     st.rerun()
 
@@ -189,6 +208,13 @@ def _render_edge_panel(
             # Terminal transitions (X→FAILURE/SUCCESS) have ts_tgt=None.
             # Extend the source bar to episode end and skip the target bar.
             effective_tgt = ts_tgt if ts_tgt is not None else total_frames
+            # If tgt is the LAST behavior in this episode, no follow-on
+            # behavior gives us a ts_tgt_end — extend bar2 to episode end
+            # so the target's full duration is still visible.
+            if ts_tgt is not None:
+                effective_tgt_end = ts_tgt_end if ts_tgt_end is not None else total_frames
+            else:
+                effective_tgt_end = None
             with col:
                 st.caption(f"Ep {ep_idx} {status}")
                 mp4_player(
@@ -198,10 +224,10 @@ def _render_edge_panel(
                     slice_start=ts_src,
                     slice_end=effective_tgt,
                     total_frames=total_frames,
-                    slice2_start=ts_tgt if (ts_tgt is not None and ts_tgt_end is not None) else None,
-                    slice2_end=ts_tgt_end,
+                    slice2_start=ts_tgt if effective_tgt_end is not None else None,
+                    slice2_end=effective_tgt_end,
                     bar1_label=src_name,
-                    bar2_label=tgt_name if (ts_tgt is not None and ts_tgt_end is not None) else "",
+                    bar2_label=tgt_name if effective_tgt_end is not None else "",
                 )
 
 
@@ -283,12 +309,20 @@ def _render_node_panel(
     """Inline bordered panel showing node details + video clips below the graph."""
     node = graph.nodes[node_id]
 
+    _id_to_prefix = st.session_state.get(f"{key_prefix}_id_to_prefix", {})
+    _node_prefix = _id_to_prefix.get(node_id)
+
     with st.container(border=True):
-        header_col, close_col = st.columns([10, 1])
+        header_col, close_col = st.columns([20, 1])
         with header_col:
             st.subheader(node.name)
+            if _node_prefix:
+                st.caption(_node_prefix)
         with close_col:
-            if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
+            if st.button(
+                "✕", key=f"{key_prefix}_panel_close",
+                help="Dismiss", use_container_width=True,
+            ):
                 st.session_state.pop(f"{key_prefix}_graph_selected", None)
                 _rt_key = f"{key_prefix}_graph_render_token"
                 st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
@@ -313,9 +347,13 @@ def _render_node_panel(
                 show_eps = all_eps[_vp * _VIDS_PER_PAGE:(_vp + 1) * _VIDS_PER_PAGE]
 
                 if _vp_total > 1:
-                    _vc1, _vc2, _vc3 = st.columns([2, 8, 1])
+                    _vc1, _vc2, _vc3 = st.columns([1, 18, 1])
                     with _vc1:
-                        if st.button("←", disabled=(_vp == 0), key=f"{key_prefix}_vp_prev_{node_id}"):
+                        if st.button(
+                            "←", disabled=(_vp == 0),
+                            key=f"{key_prefix}_vp_prev_{node_id}",
+                            use_container_width=True,
+                        ):
                             st.session_state[_vp_key] = max(0, _vp - 1)
                             st.rerun()
                     _vc2.markdown(
@@ -323,7 +361,11 @@ def _render_node_panel(
                         f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
                         f"</div>", unsafe_allow_html=True)
                     with _vc3:
-                        if st.button("→", disabled=(_vp >= _vp_total - 1), key=f"{key_prefix}_vp_next_{node_id}"):
+                        if st.button(
+                            "→", disabled=(_vp >= _vp_total - 1),
+                            key=f"{key_prefix}_vp_next_{node_id}",
+                            use_container_width=True,
+                        ):
                             st.session_state[_vp_key] = min(_vp_total - 1, _vp + 1)
                             st.rerun()
 

@@ -365,6 +365,17 @@ def _render_native_svg(
     st.session_state[f"{key_prefix}_path_to_id"] = {
         tuple(p): nid for p, nid in path_to_id.items()
     }
+    # Also save synth_id → "START → A → B → …" string so the click
+    # panels can show the full prefix in their header.
+    _id_to_prefix: Dict[int, str] = {}
+    for p, nid in path_to_id.items():
+        chain = ["START"]
+        for j in range(1, len(p) + 1):
+            sub = path_to_id.get(tuple(p[:j]))
+            if sub is not None and sub in agg:
+                chain.append(agg[sub]["name"])
+        _id_to_prefix[nid] = " → ".join(chain)
+    st.session_state[f"{key_prefix}_id_to_prefix"] = _id_to_prefix
     _highlighted_path = st.session_state.get(f"{key_prefix}_highlighted_path")
 
     render_graph_full_width(
