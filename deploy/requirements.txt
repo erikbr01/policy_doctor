@@ -9,6 +9,17 @@ networkx>=3
 scipy>=1.10
 pandas>=2
 
+# matplotlib is eagerly imported by policy_doctor.plotting.__init__
+# (via policy_comparison helpers used elsewhere in the package). We don't
+# actually render any matplotlib figures in the demo, but the import has
+# to resolve.
+matplotlib>=3.7
+
+# Pyvis: the legacy Markov-graph renderer for the main app's
+# behavior_graph tab. Optional for the demo's primary flow but the same
+# code paths import it.
+pyvis>=0.3
+
 # Video frames + thumbnails (used by the click-to-explore panel).
 imageio>=2.31
 imageio-ffmpeg>=0.4.9
