@@ -443,7 +443,10 @@ def _render_stats(
     )[:5]
 
     def _format_path(nd):
-        disp = []
+        # nd["path"] omits the root START node (it lives in a separate
+        # entry at path=()), but visually a path from START makes more
+        # sense, so prepend it.
+        disp = ["START"]
         for cid in nd["path"]:
             if cid == SUCCESS_NODE_ID: disp.append("✓")
             elif cid == FAILURE_NODE_ID: disp.append("✗")
@@ -467,7 +470,12 @@ def _render_stats(
             st.markdown(f"- {label}")
             return
         path_to_id = st.session_state.get(f"{key_prefix}_path_to_id", {})
+        # Begin with the START node so the highlight covers the full
+        # START → ... → terminal arc, then walk the leaf's path prefixes.
         synth_path: list[int] = []
+        start_nid = path_to_id.get(())
+        if start_nid is not None:
+            synth_path.append(start_nid)
         for i in range(1, len(leaf_path) + 1):
             nid = path_to_id.get(tuple(leaf_path[:i]))
             if nid is not None:
