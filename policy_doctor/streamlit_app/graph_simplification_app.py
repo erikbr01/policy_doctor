@@ -879,6 +879,76 @@ with tab_tree:
         nd for nd in nodes
         if nd["n_episodes"] >= int(min_branch) and nd["depth"] <= int(max_depth_cap)
     ]
+
+    # Iteratively prune dangling nodes:
+    #   (1) Unreachable from root — any ancestor was filtered out.
+    #   (2) "False terminal" — a non-terminal leaf that has no terminal in its
+    #       remaining subtree (e.g. min_branch knocked out the SUCCESS leaf,
+    #       leaving the parent cluster dangling).
+    # Iterate to a fixed point because removing one node can orphan another.
+    _TERM_CIDS = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID}
+    n_pruned_total = 0
+    while True:
+        keep_paths = {tuple(nd["path"]) for nd in nodes_f}
+        children_now: Dict[Tuple, List[Tuple]] = defaultdict(list)
+        for nd in nodes_f:
+            if nd["parent_path"] is not None and tuple(nd["parent_path"]) in keep_paths:
+                children_now[tuple(nd["parent_path"])].append(tuple(nd["path"]))
+        new_nodes_f = []
+        for nd in nodes_f:
+            p = tuple(nd["path"])
+            # (1) reachable from root: every ancestor (including parent) is in keep_paths
+            ancestor = nd["parent_path"]
+            reachable = True
+            while ancestor is not None:
+                if tuple(ancestor) not in keep_paths:
+                    reachable = False
+                    break
+                # ancestor's parent: trim one element off the tuple
+                ancestor = tuple(ancestor)[:-1] if len(ancestor) > 0 else None
+                if ancestor == ():
+                    # root is always in keep_paths if it's in nodes_f
+                    break
+            if not reachable:
+                continue
+            # (2) reaches a terminal: BFS over children_now until we hit a
+            # terminal cluster_id, or run out.
+            cid = nd["cluster_id"]
+            if cid in _TERM_CIDS:
+                new_nodes_f.append(nd)
+                continue
+            stack = [p]
+            found_terminal = False
+            seen = set()
+            by_path_local = {tuple(x["path"]): x for x in nodes_f}
+            while stack:
+                cur = stack.pop()
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                ch_paths = children_now.get(cur, [])
+                for cp in ch_paths:
+                    if cp not in by_path_local:
+                        continue
+                    if by_path_local[cp]["cluster_id"] in _TERM_CIDS:
+                        found_terminal = True
+                        break
+                    stack.append(cp)
+                if found_terminal:
+                    break
+            if found_terminal:
+                new_nodes_f.append(nd)
+        if len(new_nodes_f) == len(nodes_f):
+            break
+        n_pruned_total += len(nodes_f) - len(new_nodes_f)
+        nodes_f = new_nodes_f
+
+    if n_pruned_total > 0:
+        st.caption(
+            f"Auto-pruned {n_pruned_total} node{'s' if n_pruned_total != 1 else ''} "
+            f"that were either unreachable from START or had no path to a terminal."
+        )
+
     if not nodes_f:
         st.warning("No nodes match the filter; lower 'min branch'.")
     else:
