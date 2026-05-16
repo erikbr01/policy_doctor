@@ -407,9 +407,15 @@ def _render_graph_with_selector(
 
     # ── Pruning controls (unified across tree + Markov) ───────────────────
     min_branch = st.slider(
-        "Hide branches reaching fewer than N episodes",
+        "Hide branches occurring only in N episodes",
         1, 50, 2, key=f"{view_key}_minbranch",
     )
+    _n_total = getattr(graph, "num_episodes", 0) or 0
+    if _n_total > 0:
+        st.caption(
+            f"≈ {min_branch / _n_total:.0%} of {_n_total} rollouts "
+            "— branches at or below this likelihood are hidden."
+        )
     max_depth_cap = 500
 
     # ── Color-by selector (single source of truth, applies to every viz) ──

@@ -388,9 +388,7 @@ def render_graph_component(
         if isinstance(clicked, list) and len(clicked) == 2:
             st.session_state[f"{key}_selected_edge"] = tuple(clicked)
             st.session_state.pop(f"{key}_selected", None)
-            # Force a second pass so the iframe args carry the new
-            # selected_edge instead of the pre-click (None) value.
-            st.rerun()
+            return None
         try:
             node_id = int(clicked)
             if node_id == -1:
@@ -400,10 +398,7 @@ def render_graph_component(
             if node_id in graph.nodes:
                 st.session_state[f"{key}_selected"] = node_id
                 st.session_state.pop(f"{key}_selected_edge", None)
-                # Second pass so the iframe's next render args reflect the
-                # newly-selected node, keeping the halo in sync with the
-                # panel that this function's caller is about to draw.
-                st.rerun()
+                return node_id
         except (TypeError, ValueError):
             pass
 

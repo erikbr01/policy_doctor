@@ -194,8 +194,11 @@ filt = _filter(rep=rep_pick, k=k_pick, w=w_pick)
 ss_ = sorted({e["s"] for e in filt})
 s_pick = _pick("S (stride)", ss_, "demo_s")
 filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick)
+# Aggregation is always "mean" in the bundled clusterings; the dropdown
+# would be a single-option no-op. If you generate variants with other
+# aggregations, re-expose the picker here.
 aggs = sorted({e["agg"] for e in filt})
-agg_pick = _pick("Aggregation", aggs, "demo_agg")
+agg_pick = aggs[0] if aggs else None
 filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick, agg=agg_pick)
 if not filt:
     st.error("No clustering matches the chosen combination.")
@@ -203,35 +206,38 @@ if not filt:
 clu_path = filt[0]["path"]
 
 labels, meta, emb, manifest = _load_clustering(str(clu_path))
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    f"**source:** `{manifest.get('influence_source', '?')}`"
-    + (f"/`{manifest.get('rep_kwargs', {}).get('layer', '')}`"
-       if isinstance(manifest.get('rep_kwargs'), dict) and manifest['rep_kwargs'].get('layer')
-       else "")
-    + f"  \n**algo:** `{manifest.get('algorithm', '?')}`  k=`{manifest.get('n_clusters', '?')}`"
-    + f"  \n**W**=`{manifest.get('window_width', '?')}` "
-    + f"**S**=`{manifest.get('stride', '?')}` "
-    + f"**agg**=`{manifest.get('aggregation', '?')}`"
-    + f"  \n**n_samples:** {len(labels):,}"
-    + f"  \n**emb shape:** {emb.shape if emb is not None else 'N/A'}"
-)
-n_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
-st.sidebar.markdown(f"**episodes:** {n_eps}")
 level = manifest.get("level", "rollout")
 
-# MP4 resolution
-_MP4_ROOT = Path(st.sidebar.text_input(
-    "MP4 root", value="/tmp/study_mp4s",
-    help="Directory containing <task>/index.json + ep*.mp4.",
-))
+# MP4 resolution is hard-coded — the bundle puts videos in a known
+# location. The metadata / debug block below the dropdowns was dev
+# scaffolding, not useful for the demo.
+_MP4_ROOT = Path("/tmp/study_mp4s")
 _MP4_DIR = _MP4_ROOT / task if (_MP4_ROOT / task / "index.json").exists() else None
 _MP4_INDEX = json.load(open(_MP4_DIR / "index.json")) if _MP4_DIR else {"episodes": []}
-if _MP4_DIR:
-    st.sidebar.success(f"MP4s: {_MP4_DIR.name} ({len(_MP4_INDEX['episodes'])} eps)")
-else:
-    st.sidebar.info("No MP4s found — click-to-explore videos disabled.")
+
+
+# ── Header info row ──────────────────────────────────────────────────────────
+# Number of training demos per task. The robomimic multi-human (mh)
+# datasets all ship with 300 demos (100 each from Better/Okay/Worse
+# operators).
+_TASK_DEMOS = {
+    "transport_mh_jan28": 300,
+    "square_mh_feb5":     300,
+    "lift_mh_jan26":      300,
+}
+_task_pretty = task.split("_")
+_task_display = " ".join(w.capitalize() if w not in ("mh",) else w.upper() for w in _task_pretty[:-1])
+_n_rollouts_meta = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
+_n_rollouts = len(_MP4_INDEX.get("episodes", [])) or _n_rollouts_meta
+_n_success = sum(1 for ep in _MP4_INDEX.get("episodes", []) if ep.get("success") is True)
+_success_rate = (_n_success / _n_rollouts) if _n_rollouts else 0.0
+
+_m1, _m2, _m3, _m4 = st.columns(4)
+_m1.metric("Task", _task_display or task)
+_m2.metric("Demos used", _TASK_DEMOS.get(task, "—"))
+_m3.metric("Rollouts", _n_rollouts)
+_m4.metric("Success rate", f"{_success_rate:.0%}" if _n_rollouts else "—")
+st.divider()
 
 
 # ── Main column: viz controls + render ───────────────────────────────────────
@@ -282,7 +288,12 @@ with c_color:
         index=0,
     )
 
-min_branch = st.slider("Hide branches reaching fewer than N episodes", 1, 50, 2)
+n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
+min_branch = st.slider("Hide branches occurring only in N episodes", 1, 50, 2)
+st.caption(
+    f"≈ {min_branch / max(1, n_total_eps):.0%} of {n_total_eps} rollouts "
+    "— branches at or below this likelihood are hidden."
+)
 max_depth = 500
 
 # Build the underlying Markov graph (used for value computation + Markov views).

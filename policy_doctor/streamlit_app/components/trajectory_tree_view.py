@@ -432,12 +432,15 @@ def _render_stats(
                 disp.append(nm if nm else f"B{cid}")
         return " → ".join(disp)
 
+    total_eps = max(1, root["n_episodes"])
     c_s, c_f = st.columns(2)
     with c_s:
         st.markdown("**Top success paths**")
         for nd in succ_paths:
-            st.markdown(f"- ({nd['n_episodes']:>3} eps) {_format_path(nd)}")
+            pct = nd["n_episodes"] / total_eps * 100
+            st.markdown(f"- ({nd['n_episodes']:>3} eps · {pct:.0f}%) {_format_path(nd)}")
     with c_f:
         st.markdown("**Top failure paths**")
         for nd in fail_paths:
-            st.markdown(f"- ({nd['n_episodes']:>3} eps) {_format_path(nd)}")
+            pct = nd["n_episodes"] / total_eps * 100
+            st.markdown(f"- ({nd['n_episodes']:>3} eps · {pct:.0f}%) {_format_path(nd)}")
