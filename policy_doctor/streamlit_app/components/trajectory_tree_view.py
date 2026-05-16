@@ -331,6 +331,8 @@ def _render_native_svg(
 
 
 # ── Plotly branches (sunburst / icicle / treemap) ────────────────────────────
+# All Plotly figure construction is delegated to policy_doctor.plotting.plotly
+# per the repo's Streamlit/plotting separation convention.
 
 def _render_plotly(
     nodes_f: List[Dict],
@@ -339,59 +341,17 @@ def _render_plotly(
     height: int,
     key: str,
 ) -> None:
-    import plotly.graph_objects as go
-
-    def _id(nd):
-        return "/".join(str(x) for x in nd["path"]) or "ROOT"
-    def _parent(nd):
-        if nd["parent_path"] is None:
-            return ""
-        return "/".join(str(x) for x in nd["parent_path"]) or "ROOT"
-
-    ids = [_id(nd) for nd in nodes_f]
-    parents = [_parent(nd) for nd in nodes_f]
-    labels_disp = [nd["label"] for nd in nodes_f]
-    values = [nd["n_episodes"] for nd in nodes_f]
-    succ_rate = [
-        (nd["n_success"] / nd["n_episodes"]) if nd["n_episodes"] else 0.0
-        for nd in nodes_f
-    ]
-    hovertext = [
-        f"<b>{nd['label']}</b><br>"
-        f"Depth: {nd['depth']}<br>"
-        f"Episodes through here: {nd['n_episodes']}<br>"
-        f"Success: {nd['n_success']} ({nd['n_success']/max(1,nd['n_episodes']):.0%})<br>"
-        f"Failure: {nd['n_failure']} ({nd['n_failure']/max(1,nd['n_episodes']):.0%})"
-        for nd in nodes_f
-    ]
-    if color_by_outcome:
-        marker = dict(
-            colors=succ_rate,
-            colorscale=[[0.0, "#d62728"], [0.5, "#dddddd"], [1.0, "#2ca02c"]],
-            cmid=0.5, cmin=0.0, cmax=1.0,
-        )
-    else:
-        def _color_for(nd):
-            cid = nd["cluster_id"]
-            if cid == SUCCESS_NODE_ID: return "#2ca02c"
-            if cid == FAILURE_NODE_ID: return "#d62728"
-            if cid == END_NODE_ID: return "#888"
-            if cid == START_NODE_ID: return "#1a1a1a"
-            return CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
-        marker = dict(colors=[_color_for(nd) for nd in nodes_f])
-
-    common = dict(
-        ids=ids, labels=labels_disp, parents=parents, values=values,
-        branchvalues="total", hovertext=hovertext, hoverinfo="text",
-        marker=marker,
+    from policy_doctor.plotting.plotly.trajectory_tree import (
+        create_trajectory_sunburst,
+        create_trajectory_icicle,
+        create_trajectory_treemap,
     )
     if view_mode == "sunburst":
-        fig = go.Figure(go.Sunburst(**common, insidetextorientation="radial"))
+        fig = create_trajectory_sunburst(nodes_f, color_by_outcome=color_by_outcome, height=height)
     elif view_mode == "icicle":
-        fig = go.Figure(go.Icicle(**common, tiling=dict(orientation="h")))
+        fig = create_trajectory_icicle(nodes_f, color_by_outcome=color_by_outcome, height=height)
     else:  # treemap
-        fig = go.Figure(go.Treemap(**common))
-    fig.update_layout(height=height, margin=dict(l=10, r=10, t=20, b=10))
+        fig = create_trajectory_treemap(nodes_f, color_by_outcome=color_by_outcome, height=height)
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
