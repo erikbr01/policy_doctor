@@ -424,7 +424,7 @@ def _render_graph_with_selector(
         min_branch = 2
         max_depth_cap = 500
 
-    # ── Color-by selector (applies to every viz type) ─────────────────────
+    # ── Color-by selector (single source of truth, applies to every viz) ──
     if is_tree:
         color_options = ["outcome", "id", "value"]
         color_labels = {
@@ -433,10 +433,11 @@ def _render_graph_with_selector(
             "value": "Value V(s) (Bellman)",
         }
     else:
-        color_options = ["id", "value"]
+        color_options = ["id", "value", "timesteps"]
         color_labels = {
             "id": "Cluster ID (palette)",
             "value": "Value V(s) (Bellman)",
+            "timesteps": "Timestep count (viridis)",
         }
     color_by = st.selectbox(
         "Color nodes by",
@@ -447,29 +448,11 @@ def _render_graph_with_selector(
         help=(
             "ID = palette (same color for the same cluster across the view). "
             "Value = the cluster's Bellman value V(s) on a red→grey→green diverging "
-            "scale (red=worst, green=best). Outcome (trees only) = success rate of "
-            "the downstream subtree."
+            "scale. Outcome (trees only) = success rate of the downstream "
+            "subtree. Timesteps (Markov only) = viridis by total timesteps in "
+            "the cluster."
         ),
     )
-
-    # ── Markov-only controls (color mode + edge-prob threshold) ───────────
-    if not is_tree:
-        view_options = ["plain", "timesteps"]
-        view_labels = {
-            "plain": "Cluster palette",
-            "timesteps": "Timestep count (viridis)",
-        }
-        if show_value_option and values:
-            view_options = ["value"] + view_options
-            view_labels["value"] = "Value-colored (V(s))"
-        view_mode = st.selectbox(
-            "Color mode",
-            options=view_options,
-            format_func=lambda x: view_labels.get(x, x),
-            key=view_key,
-        )
-    else:
-        view_mode = "plain"
 
     min_prob = st.slider(
         "Min edge probability",
@@ -547,15 +530,16 @@ def _render_graph_with_selector(
             except Exception as e:
                 st.warning(f"Temporal layout failed ({e}); falling back to BFS-layered.")
                 pos = None
-        # Color-by override: cluster_id (palette) is the renderer's default,
-        # so we only set color_override when color_by == "value".
+        # Color-by override for Markov views: id → no override (palette is
+        # the SVG renderer's default), value → diverging by V(s),
+        # timesteps → viridis by num_timesteps.
         color_override_arg: Optional[Dict[int, str]] = None
+        from policy_doctor.behaviors.behavior_graph import (
+            END_NODE_ID as _END, FAILURE_NODE_ID as _FAIL,
+            START_NODE_ID as _START, SUCCESS_NODE_ID as _SUCC,
+        )
+        _SPECIAL = {_END, _FAIL, _START, _SUCC}
         if color_by == "value" and node_values:
-            from policy_doctor.behaviors.behavior_graph import (
-                END_NODE_ID as _END, FAILURE_NODE_ID as _FAIL,
-                START_NODE_ID as _START, SUCCESS_NODE_ID as _SUCC,
-            )
-            _SPECIAL = {_END, _FAIL, _START, _SUCC}
             def _diverging(t: float) -> str:
                 t = max(0.0, min(1.0, t))
                 r = int(214 + (44 - 214) * t)
@@ -570,6 +554,26 @@ def _render_graph_with_selector(
                     continue
                 v = node_values.get(nid, 0.0)
                 color_override_arg[nid] = _diverging(0.5 + v / (2 * v_range))
+        elif color_by == "timesteps":
+            # Viridis-like over log1p(num_timesteps), matching the legacy
+            # timestep-colored pyvis renderer.
+            ts_vals = [
+                graph.nodes[nid].num_timesteps for nid in graph.nodes
+                if nid not in _SPECIAL
+            ]
+            ts_max = max((np.log1p(v) for v in ts_vals), default=1.0) or 1.0
+            try:
+                import plotly.express as _px
+                viridis = _px.colors.sequential.Viridis
+            except Exception:
+                viridis = ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"]
+            color_override_arg = {}
+            for nid in graph.nodes:
+                if nid in _SPECIAL:
+                    continue
+                t = np.log1p(graph.nodes[nid].num_timesteps) / ts_max
+                idx = int(min(len(viridis) - 1, max(0, t * (len(viridis) - 1))))
+                color_override_arg[nid] = viridis[idx]
         clicked = render_graph_component(
             graph,
             height=height,
@@ -591,10 +595,14 @@ def _render_graph_with_selector(
         else:
             st.caption("Click a node or edge to explore it.")
     else:  # markov_pyvis
-        if show_value_option and view_mode == "value" and values:
+        if color_by == "value" and show_value_option and values:
             from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
             html = create_value_colored_interactive_graph(graph, values, gamma=gamma, min_probability=min_prob)
-        elif view_mode == "timesteps":
+        elif color_by == "value" and node_values:
+            # No precomputed values arg but we computed V(s) ourselves above.
+            from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
+            html = create_value_colored_interactive_graph(graph, node_values, gamma=gamma, min_probability=min_prob)
+        elif color_by == "timesteps":
             html = create_timestep_colored_interactive_graph(graph, min_probability=min_prob)
         else:
             html = create_interactive_behavior_graph(
