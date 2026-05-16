@@ -217,13 +217,14 @@ _MP4_INDEX = json.load(open(_MP4_DIR / "index.json")) if _MP4_DIR else {"episode
 
 
 # ── Header info row ──────────────────────────────────────────────────────────
-# Number of training demos per task. The robomimic multi-human (mh)
-# datasets all ship with 300 demos (100 each from Better/Okay/Worse
-# operators).
+# Demos actually used to train the policy. The robomimic mh datasets
+# ship with 300 demos each, but cupid's training config sets
+# dataset_mask_kwargs.train_ratio=0.64 (uniform_quality=True), so 192
+# demos go into training and 108 are held out for attribution / OOD.
 _TASK_DEMOS = {
-    "transport_mh_jan28": 300,
-    "square_mh_feb5":     300,
-    "lift_mh_jan26":      300,
+    "transport_mh_jan28": 192,
+    "square_mh_feb5":     192,
+    "lift_mh_jan26":      192,
 }
 _task_pretty = task.split("_")
 _task_display = " ".join(w.capitalize() if w not in ("mh",) else w.upper() for w in _task_pretty[:-1])
@@ -234,7 +235,9 @@ _success_rate = (_n_success / _n_rollouts) if _n_rollouts else 0.0
 
 _m1, _m2, _m3, _m4 = st.columns(4)
 _m1.metric("Task", _task_display or task)
-_m2.metric("Demos used", _TASK_DEMOS.get(task, "—"))
+_m2.metric("Demos used", _TASK_DEMOS.get(task, "—"),
+           help="Demos in the policy's training set (64% of the 300-demo "
+                "MH dataset; the remaining 36% is held out for attribution).")
 _m3.metric("Rollouts", _n_rollouts)
 _m4.metric("Success rate", f"{_success_rate:.0%}" if _n_rollouts else "—")
 st.divider()

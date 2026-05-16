@@ -27,11 +27,11 @@ _HERE = Path(__file__).parent
 pages = [
     st.Page(str(_HERE / "_home_content.py"), title="Home",
             url_path="home", default=True),
-    st.Page(str(_HERE / "pages" / "1_user_study_a.py"),
+    st.Page(str(_HERE / "_pages" / "1_user_study_a.py"),
             title="User Study A", url_path="user_study_a"),
-    st.Page(str(_HERE / "pages" / "2_user_study_b.py"),
+    st.Page(str(_HERE / "_pages" / "2_user_study_b.py"),
             title="User Study B", url_path="user_study_b"),
-    st.Page(str(_HERE / "pages" / "3_graph_demo.py"),
+    st.Page(str(_HERE / "_pages" / "3_graph_demo.py"),
             title="Graph Demo", url_path="graph_demo"),
 ]
 
