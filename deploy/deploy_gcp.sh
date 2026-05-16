@@ -34,7 +34,8 @@ CPU="${CPU:-1}"
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
 MAX_INSTANCES="${MAX_INSTANCES:-3}"
 AUTH_MODE="${AUTH_MODE:-public}"          # public | private
-ALLOWED_DOMAIN="${ALLOWED_DOMAIN:-}"      # e.g. stanford.edu (only used when AUTH_MODE=private)
+ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-stanford.edu,tri.global}"  # comma- or space-separated list,
+                                          # only used when AUTH_MODE=private
 PORT=8501
 
 # ── Sanity checks ────────────────────────────────────────────────────────────
@@ -59,7 +60,11 @@ echo "  region:      $REGION"
 echo "  service:     $SERVICE"
 echo "  image:       $IMAGE_NAME"
 echo "  git sha:     $GIT_SHA"
-echo "  auth mode:   $AUTH_MODE${ALLOWED_DOMAIN:+ (domain $ALLOWED_DOMAIN)}"
+if [ "$AUTH_MODE" = "private" ]; then
+    echo "  auth mode:   private (domains: ${ALLOWED_DOMAINS:-none})"
+else
+    echo "  auth mode:   public"
+fi
 echo "================================================================"
 
 gcloud config set project "$PROJECT" >/dev/null
@@ -106,14 +111,19 @@ fi
 echo "→ gcloud run deploy ${DEPLOY_ARGS[*]}"
 gcloud run deploy "${DEPLOY_ARGS[@]}"
 
-# ── 6. Optional: grant access to a domain (AUTH_MODE=private only) ──────────
-if [ "$AUTH_MODE" = "private" ] && [ -n "$ALLOWED_DOMAIN" ]; then
-    echo "→ Granting Cloud Run Invoker to domain:$ALLOWED_DOMAIN"
-    gcloud run services add-iam-policy-binding "$SERVICE" \
-        --region "$REGION" \
-        --member="domain:${ALLOWED_DOMAIN}" \
-        --role="roles/run.invoker" \
-        --quiet
+# ── 6. Optional: grant access to one or more Google Workspace domains
+#       (AUTH_MODE=private only) ─────────────────────────────────────────────
+if [ "$AUTH_MODE" = "private" ] && [ -n "$ALLOWED_DOMAINS" ]; then
+    # Split on commas and/or whitespace.
+    for dom in ${ALLOWED_DOMAINS//,/ }; do
+        [ -z "$dom" ] && continue
+        echo "→ Granting Cloud Run Invoker to domain:$dom"
+        gcloud run services add-iam-policy-binding "$SERVICE" \
+            --region "$REGION" \
+            --member="domain:${dom}" \
+            --role="roles/run.invoker" \
+            --quiet
+    done
 fi
 
 # ── 7. Show the deployed URL ────────────────────────────────────────────────

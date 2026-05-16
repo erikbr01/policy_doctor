@@ -80,13 +80,20 @@ PROJECT=my-proj REGION=us-west1 MEMORY=2Gi ./deploy/deploy_gcp.sh
 ### Restricting access to specific Google accounts
 
 ```bash
-AUTH_MODE=private ALLOWED_DOMAIN=stanford.edu PROJECT=YOUR_PROJECT \
-    ./deploy/deploy_gcp.sh
+AUTH_MODE=private PROJECT=YOUR_PROJECT ./deploy/deploy_gcp.sh
 ```
 
-This drops `--allow-unauthenticated` and grants `roles/run.invoker` to the
-whole `stanford.edu` Workspace domain. Participants are redirected to a
-Google sign-in before reaching the demo.
+The default `ALLOWED_DOMAINS` is `stanford.edu,tri.global` — anyone with a
+signed-in Google Workspace account on either domain can access the demo
+after a sign-in screen; everyone else gets 403. Override with a different
+list:
+
+```bash
+AUTH_MODE=private \
+    ALLOWED_DOMAINS="stanford.edu,tri.global,example.com" \
+    PROJECT=YOUR_PROJECT \
+    ./deploy/deploy_gcp.sh
+```
 
 To grant individual users instead of a whole domain, after the deploy:
 
