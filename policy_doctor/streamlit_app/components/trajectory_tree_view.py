@@ -146,7 +146,11 @@ def render_trajectory_tree(
         )
 
     if show_stats:
-        _render_stats(nodes, nodes_f, cluster_names)
+        _render_stats(
+            nodes, nodes_f, cluster_names,
+            key_prefix=key_prefix,
+            interactive=(view_mode == "native_svg"),
+        )
 
 
 # ── Native SVG branch ────────────────────────────────────────────────────────
@@ -189,12 +193,16 @@ def _render_native_svg(
         g = int(39 + (160 - 39) * t)
         b = int(40 + (44 - 40) * t)
         return f"rgb({r},{g},{b})"
-    # Pre-compute V range for value mode.
+    # Pre-compute V range for value mode. Exclude SUCCESS / FAILURE /
+    # END / START terminals — their hardcoded ±1 values dominate the
+    # range and squash every behavioral cluster into the grey middle.
     v_range = 1.0
     if color_mode == "value":
+        _terminal_ids = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
         v_range = max(
             (abs(_v_for_cluster(nd["cluster_id"], nd["n_success"], nd["n_episodes"]))
-             for nd in nodes_f),
+             for nd in nodes_f
+             if nd["cluster_id"] not in _terminal_ids),
             default=1.0,
         ) or 1.0
 
@@ -352,6 +360,13 @@ def _render_native_svg(
                 for i in idxs:
                     synth_labels[i] = nid
 
+    # Save mapping so `_render_stats` can convert a clicked path's
+    # cluster-id sequence back into synthetic node ids to highlight.
+    st.session_state[f"{key_prefix}_path_to_id"] = {
+        tuple(p): nid for p, nid in path_to_id.items()
+    }
+    _highlighted_path = st.session_state.get(f"{key_prefix}_highlighted_path")
+
     render_graph_full_width(
         graph=synth_graph,
         labels=synth_labels,
@@ -363,6 +378,7 @@ def _render_native_svg(
         pos=pos_final,
         symbol_override=symbol_override,
         color_override=color_override,
+        highlighted_path=_highlighted_path,
     )
 
 
@@ -399,6 +415,9 @@ def _render_stats(
     nodes_all: List[Dict],
     nodes_filtered: List[Dict],
     cluster_names: Dict[int, str],
+    *,
+    key_prefix: str = "ttree",
+    interactive: bool = False,
 ) -> None:
     """Top success / failure paths summary below the chart."""
     root = nodes_all[0]
@@ -433,14 +452,51 @@ def _render_stats(
         return " → ".join(disp)
 
     total_eps = max(1, root["n_episodes"])
+
+    _current = st.session_state.get(f"{key_prefix}_highlighted_path")
+
+    def _maybe_button(label: str, key: str, leaf_path: tuple) -> None:
+        """Render a button when interactive, otherwise a markdown bullet.
+
+        Clicking a path highlights it; clicking the currently-highlighted
+        path again deselects it (toggle).
+        """
+        if not interactive:
+            st.markdown(f"- {label}")
+            return
+        path_to_id = st.session_state.get(f"{key_prefix}_path_to_id", {})
+        synth_path: list[int] = []
+        for i in range(1, len(leaf_path) + 1):
+            nid = path_to_id.get(tuple(leaf_path[:i]))
+            if nid is not None:
+                synth_path.append(nid)
+        is_active = (_current is not None and list(_current) == synth_path)
+        display_label = ("✓  " + label) if is_active else label
+        if st.button(display_label, key=key, use_container_width=True):
+            if is_active:
+                st.session_state.pop(f"{key_prefix}_highlighted_path", None)
+            elif synth_path:
+                st.session_state[f"{key_prefix}_highlighted_path"] = synth_path
+            st.rerun()
+
+    # "Clear highlight" affordance, only useful when a path is currently set.
+    if interactive and st.session_state.get(f"{key_prefix}_highlighted_path"):
+        if st.button(
+            "Clear highlighted path", key=f"{key_prefix}_clear_highlight",
+        ):
+            st.session_state.pop(f"{key_prefix}_highlighted_path", None)
+            st.rerun()
+
     c_s, c_f = st.columns(2)
     with c_s:
-        st.markdown("**Top success paths**")
-        for nd in succ_paths:
+        st.markdown("**Top success paths**" + ("  (click to highlight)" if interactive else ""))
+        for i, nd in enumerate(succ_paths):
             pct = nd["n_episodes"] / total_eps * 100
-            st.markdown(f"- ({nd['n_episodes']:>3} eps · {pct:.0f}%) {_format_path(nd)}")
+            label = f"( {nd['n_episodes']:>3} eps · {pct:.0f}% )  {_format_path(nd)}"
+            _maybe_button(label, key=f"{key_prefix}_succ_path_{i}", leaf_path=tuple(nd["path"]))
     with c_f:
-        st.markdown("**Top failure paths**")
-        for nd in fail_paths:
+        st.markdown("**Top failure paths**" + ("  (click to highlight)" if interactive else ""))
+        for i, nd in enumerate(fail_paths):
             pct = nd["n_episodes"] / total_eps * 100
-            st.markdown(f"- ({nd['n_episodes']:>3} eps · {pct:.0f}%) {_format_path(nd)}")
+            label = f"( {nd['n_episodes']:>3} eps · {pct:.0f}% )  {_format_path(nd)}"
+            _maybe_button(label, key=f"{key_prefix}_fail_path_{i}", leaf_path=tuple(nd["path"]))
