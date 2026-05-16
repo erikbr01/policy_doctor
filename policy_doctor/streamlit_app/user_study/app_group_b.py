@@ -24,6 +24,7 @@ from policy_doctor.streamlit_app.user_study.initial_conditions import (
     _initial_slice_per_episode,
     _success_per_episode,
 )
+from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.path_explorer import render_path_explorer
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
@@ -612,9 +613,14 @@ allocations = render_strategy_allocator(
 )
 render_strategy_summary(allocations, strategies, total_budget)
 
-# ── Section 6: Submit ─────────────────────────────────────────────────────────
+# ── Section 6: NASA Task Load Index ──────────────────────────────────────────
 st.divider()
-st.header("Step 6 — Submit")
+st.header("Step 6 — NASA Task Load Index")
+tlx_responses = render_nasa_tlx(key_prefix="gb_tlx")
+
+# ── Section 7: Submit ─────────────────────────────────────────────────────────
+st.divider()
+st.header("Step 7 — Submit")
 
 notes = st.text_area(
     "Any additional notes or reasoning about your choices",
@@ -633,6 +639,7 @@ if st.button("Submit", type="primary"):
         "participant_id": participant_id,
         "group": "B",
         "allocations": allocations,
+        "nasa_tlx": tlx_responses,
         "notes": notes,
         "timestamp": timestamp,
     }

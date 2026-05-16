@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
+from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
     render_strategy_allocator,
@@ -119,7 +120,12 @@ render_strategy_summary(allocations, strategies, total_budget)
 
 st.divider()
 
-st.header("3. Submit")
+st.header("3. NASA Task Load Index")
+tlx_responses = render_nasa_tlx(key_prefix="ga_tlx")
+
+st.divider()
+
+st.header("4. Submit")
 
 notes = st.text_area("Any additional notes or reasoning", value="", height=120)
 
@@ -132,6 +138,7 @@ if st.button("Submit", type="primary"):
     result = {
         "participant_id": participant_id,
         "allocations": allocations,
+        "nasa_tlx": tlx_responses,
         "notes": notes,
         "timestamp": timestamp,
     }
