@@ -1,0 +1,15 @@
+# Minimal runtime deps for the policy-doctor demo app.
+# Pinned conservatively; tighten further before deployment if needed.
+
+streamlit>=1.32
+numpy>=1.24,<3
+plotly>=5.18
+pyyaml>=6
+networkx>=3
+scipy>=1.10
+pandas>=2
+
+# Video frames + thumbnails (used by the click-to-explore panel).
+imageio>=2.31
+imageio-ffmpeg>=0.4.9
+pillow>=10
