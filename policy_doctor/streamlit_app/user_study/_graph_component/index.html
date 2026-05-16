@@ -347,6 +347,20 @@ function render(data, svgW, svgH) {
       "data-node-id": String(node.id),
     });
 
+    // Selection halo: a translucent ring rendered behind the node so the
+    // node keeps its normal white stroke when selected (no jarring restyle).
+    if (node.id === selectedNodeId) {
+      const haloR = r + 8;
+      const halo = svgEl("circle", {
+        r: haloR,
+        fill: "none",
+        stroke: "rgba(80, 200, 255, 0.95)",
+        "stroke-width": "3",
+        "pointer-events": "none",
+      });
+      g.appendChild(halo);
+    }
+
     // Main circle/shape
     let shape;
     if (node.symbol === "diamond") {
@@ -380,11 +394,13 @@ function render(data, svgW, svgH) {
       shape.textContent = "✕";
       shape.style.fill = node.color;
     } else {
+      // Always keep the standard white outline; selection is conveyed by
+      // the cyan halo ring rendered above (behind the node).
       shape = svgEl("circle", {
         r: r,
         fill: node.color,
-        stroke: node.id === selectedNodeId ? "#1a1a1a" : "white",
-        "stroke-width": node.id === selectedNodeId ? "3" : "2",
+        stroke: "white",
+        "stroke-width": "2",
         class: "node-circle",
       });
     }

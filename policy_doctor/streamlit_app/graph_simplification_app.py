@@ -820,7 +820,10 @@ with tab_inspect:
 
 # ── Trajectory tree tab ──────────────────────────────────────────────────────
 
-with tab_tree:
+@st.fragment
+def _render_tree_tab() -> None:
+    """Wrapped in a fragment so node clicks only re-run this tab body, not
+    the whole script (which would re-render every other tab too)."""
     st.markdown(
         "**Trajectory tree.** Each episode's run-length-collapsed cluster sequence "
         "becomes a path from START to SUCCESS/FAILURE. Episodes sharing the same "
@@ -1382,6 +1385,10 @@ with tab_tree:
             for nd in fail_paths:
                 st.markdown(f"- ({nd['n_episodes']:>3} eps) {_format_path(nd)}")
 
+
+
+with tab_tree:
+    _render_tree_tab()
 
 # ── Tab 1: Temporal smoothing ────────────────────────────────────────────────
 
