@@ -802,7 +802,7 @@ def build_trajectory_tree(
             success[m[ep_key]] = m["success"]
 
     # Per-episode run-length-collapsed sequence, then append terminal token
-    sequences: List[Tuple[Tuple[int, ...], Optional[bool]]] = []
+    sequences: List[Tuple[int, Tuple[int, ...], Optional[bool]]] = []  # (ep_id, seq, success)
     for ep, pairs in eps.items():
         pairs.sort()
         seq: List[int] = []
@@ -818,14 +818,18 @@ def build_trajectory_tree(
             seq.append(FAILURE_NODE_ID)
         else:
             seq.append(END_NODE_ID)
-        sequences.append((tuple(seq), success.get(ep)))
+        sequences.append((int(ep), tuple(seq), success.get(ep)))
 
-    # Build trie. node_counts[path] = (n_episodes, n_success, n_failure)
+    # Build trie. node_counts[path] = (n_episodes, n_success, n_failure).
+    # Also track which episode indices pass through each prefix so node
+    # panels can list videos for the episodes that took that path.
     counts: Dict[Tuple[int, ...], List[int]] = defaultdict(lambda: [0, 0, 0])
-    for seq, succ in sequences:
+    ep_through: Dict[Tuple[int, ...], List[int]] = defaultdict(list)
+    for ep_id, seq, succ in sequences:
         for depth in range(1, len(seq) + 1):
             prefix = seq[:depth]
             counts[prefix][0] += 1
+            ep_through[prefix].append(ep_id)
             if succ is True:
                 counts[prefix][1] += 1
             elif succ is False:
@@ -838,9 +842,10 @@ def build_trajectory_tree(
         "cluster_id": START_NODE_ID,
         "depth": 0,
         "n_episodes": len(sequences),
-        "n_success": sum(1 for _, s in sequences if s is True),
-        "n_failure": sum(1 for _, s in sequences if s is False),
+        "n_success": sum(1 for _, _, s in sequences if s is True),
+        "n_failure": sum(1 for _, _, s in sequences if s is False),
         "parent_path": None,
+        "episode_indices": [ep_id for ep_id, _, _ in sequences],
     }]
     for path, (n_ep, n_succ, n_fail) in counts.items():
         cid = path[-1]
@@ -856,5 +861,6 @@ def build_trajectory_tree(
             "n_success": n_succ,
             "n_failure": n_fail,
             "parent_path": path[:-1],
+            "episode_indices": list(ep_through[path]),
         })
     return nodes

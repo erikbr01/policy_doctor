@@ -1073,10 +1073,15 @@ with tab_tree:
                     else:
                         nm = st.session_state[_NAMES_STATE_KEY].get(int(cid))
                         name = nm if nm else f"Behavior {cid}"
-                    agg[nid] = {"name": name, "n_episodes": 0, "n_success": 0, "n_failure": 0}
+                    agg[nid] = {
+                        "name": name, "n_episodes": 0,
+                        "n_success": 0, "n_failure": 0,
+                        "episode_indices": set(),
+                    }
                 agg[nid]["n_episodes"] += nd["n_episodes"]
                 agg[nid]["n_success"] += nd["n_success"]
                 agg[nid]["n_failure"] += nd["n_failure"]
+                agg[nid]["episode_indices"].update(nd.get("episode_indices", []))
 
             synth_nodes: Dict[int, BehaviorNode] = {}
             for nid, info in agg.items():
@@ -1084,8 +1089,8 @@ with tab_tree:
                     cluster_id=nid,
                     name=info["name"],
                     num_timesteps=info["n_episodes"],
-                    num_episodes=info["n_episodes"],
-                    episode_indices=[],
+                    num_episodes=len(info["episode_indices"]),
+                    episode_indices=sorted(info["episode_indices"]),
                 )
 
             # Build transition counts: tree-parent → tree-child gets count
