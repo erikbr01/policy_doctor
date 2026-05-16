@@ -48,20 +48,14 @@ def _episodes_for_edge(
     labels: np.ndarray,
     metadata: list[dict],
     graph: Optional[BehaviorGraph] = None,
-) -> list[tuple[int, int, int]]:
+) -> list[tuple[int, int, Optional[int], Optional[int]]]:
     """Find episodes containing the src -> tgt transition.
 
-    Returns [(ep_idx, ts_src, ts_tgt), ...] sorted by ep_idx.
-    Handles edges involving special nodes (START, FAILURE, SUCCESS):
-      START->X:  episodes whose first cluster is X  (ts_src == ts_tgt == first_ts)
-      X->FAILURE: failing episodes whose last cluster is X
-      X->SUCCESS: succeeding episodes whose last cluster is X
-
-    Fallback for synthetic graphs (e.g. trajectory tree where each branch
-    has its own terminal id): if the label-walking finds nothing AND a
-    graph is provided AND the target node has episode_indices, use those
-    directly (ts_src/ts_tgt = None → no slice highlight, but at least the
-    videos play).
+    Returns [(ep_idx, ts_src, ts_tgt, ts_tgt_end), ...] sorted by ep_idx.
+      • ts_src: window_start of the src behavior
+      • ts_tgt: window_start of the tgt behavior (None for X→FAILURE/SUCCESS,
+        which extend the source bar to episode end and omit the target bar)
+      • ts_tgt_end: window_start of the behavior AFTER tgt (None if tgt is last)
     """
     ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
 
@@ -77,7 +71,7 @@ def _episodes_for_edge(
         if ep_idx not in ep_success:
             ep_success[ep_idx] = m.get("success")
 
-    result = []
+    result: list[tuple[int, int, Optional[int], Optional[int]]] = []
     for ep_idx, wins in ep_wins.items():
         wins.sort()
         rle: list[tuple[int, int]] = []
@@ -95,20 +89,22 @@ def _episodes_for_edge(
 
         if src_id == START_NODE_ID:
             if tgt_id == first_lab:
-                result.append((ep_idx, first_ts, first_ts))
+                tgt_end = rle[1][0] if len(rle) > 1 else None
+                result.append((ep_idx, first_ts, first_ts, tgt_end))
             continue
         if tgt_id == FAILURE_NODE_ID:
             if last_lab == src_id and success is False:
-                result.append((ep_idx, last_ts, last_ts))
+                result.append((ep_idx, last_ts, None, None))
             continue
         if tgt_id == SUCCESS_NODE_ID:
             if last_lab == src_id and success is True:
-                result.append((ep_idx, last_ts, last_ts))
+                result.append((ep_idx, last_ts, None, None))
             continue
 
         for i in range(len(rle) - 1):
             if rle[i][1] == src_id and rle[i + 1][1] == tgt_id:
-                result.append((ep_idx, rle[i][0], rle[i + 1][0]))
+                ts_tgt_end = rle[i + 2][0] if i + 2 < len(rle) else None
+                result.append((ep_idx, rle[i][0], rle[i + 1][0], ts_tgt_end))
                 break
 
     # Fallback for synthetic graphs (trajectory tree, etc.) where the
@@ -118,14 +114,10 @@ def _episodes_for_edge(
         tgt_node = graph.nodes.get(tgt_id) if hasattr(graph, "nodes") else None
         if tgt_node is not None and getattr(tgt_node, "episode_indices", None):
             for ep_idx in tgt_node.episode_indices:
-                # No timestep info available — return ts_src=ts_tgt=last_ts so
-                # the panel can still highlight the end of the episode.
-                last_ts_local = 0
-                if ep_idx in ep_wins:
-                    last_ts_local = max(
-                        ts for ts, _ in ep_wins[ep_idx]
-                    )
-                result.append((ep_idx, last_ts_local, last_ts_local))
+                last_ts_local = max(
+                    (ts for ts, _ in ep_wins.get(ep_idx, [])), default=0,
+                )
+                result.append((ep_idx, last_ts_local, None, None))
 
     return sorted(result)
 
@@ -188,12 +180,16 @@ def _render_edge_panel(
                     st.rerun()
 
         vid_cols = st.columns(min(3, len(show_triples)))
-        for col, (ep_idx, ts_src, ts_tgt) in zip(vid_cols, show_triples):
+        for col, (ep_idx, ts_src, ts_tgt, ts_tgt_end) in zip(vid_cols, show_triples):
             ep_entry = _find_mp4_episode(ep_idx, mp4_index)
             if ep_entry is None:
                 continue
             success = ep_entry.get("success")
             status = "✓" if success is True else "✗" if success is False else ""
+            total_frames = ep_entry.get("frame_count")
+            # Terminal transitions (X→FAILURE/SUCCESS) have ts_tgt=None.
+            # Extend the source bar to episode end and skip the target bar.
+            effective_tgt = ts_tgt if ts_tgt is not None else total_frames
             with col:
                 st.caption(f"Ep {ep_idx} {status}")
                 mp4_player(
@@ -201,8 +197,12 @@ def _render_edge_panel(
                     key=f"{key_prefix}_edge_vid_{src_id}_{tgt_id}_{ep_idx}",
                     max_height_px=220,
                     slice_start=ts_src,
-                    slice_end=ts_tgt,
-                    total_frames=ep_entry.get("frame_count"),
+                    slice_end=effective_tgt,
+                    total_frames=total_frames,
+                    slice2_start=ts_tgt if (ts_tgt is not None and ts_tgt_end is not None) else None,
+                    slice2_end=ts_tgt_end,
+                    bar1_label=src_name,
+                    bar2_label=tgt_name if (ts_tgt is not None and ts_tgt_end is not None) else "",
                 )
 
 
