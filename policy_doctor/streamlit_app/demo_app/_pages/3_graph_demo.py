@@ -296,7 +296,9 @@ min_branch = st.slider("Hide branches occurring only in N episodes", 0, 50, 2)
 if min_branch == 0:
     st.caption("Showing every branch — no filtering.")
 else:
-    st.caption(f"≈ {min_branch / max(1, n_total_eps):.0%} likelihood threshold")
+    st.caption(
+        f"Hides branches traversed by < {min_branch / max(1, n_total_eps):.0%} of rollouts"
+    )
 max_depth = 500
 
 # Build the underlying Markov graph (used for value computation + Markov views).
