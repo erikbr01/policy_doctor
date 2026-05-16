@@ -178,15 +178,15 @@ def _compute_layout(
     return pos
 
 
-def _extract_node_thumbnails(
-    graph: BehaviorGraph,
-    mp4_dir: Path,
+@st.cache_resource(show_spinner=False)
+def _extract_node_thumbnails_cached(
+    cache_key: str,
+    node_eps: tuple[tuple[int, tuple[int, ...]], ...],
+    mp4_dir_str: str,
 ) -> dict[int, list[str]]:
-    """Extract representative frame thumbnails for each cluster node.
-
-    Returns a mapping from node_id to a list of up to 2 base64-encoded JPEG
-    strings (each suitable as a ``data:image/jpeg;base64,...`` src).
-    Missing or unreadable mp4 files are silently skipped.
+    """Cached worker: ``cache_key`` is unused except to dedup the cache key
+    by graph identity + mp4_dir; ``node_eps`` is the canonical hashable form
+    of ``{node_id: episode_indices[:2]}`` and is what we actually iterate.
     """
     try:
         import imageio  # type: ignore
@@ -194,12 +194,11 @@ def _extract_node_thumbnails(
     except ImportError:
         return {}
 
+    mp4_dir = Path(mp4_dir_str)
     thumbnails: dict[int, list[str]] = {}
-    for nid, node in graph.nodes.items():
-        if nid in _SPECIAL_IDS:
-            continue
+    for nid, ep_indices in node_eps:
         imgs: list[str] = []
-        for ep_idx in node.episode_indices[:2]:
+        for ep_idx in ep_indices:
             mp4_path = mp4_dir / f"ep{ep_idx}.mp4"
             if not mp4_path.exists():
                 continue
@@ -218,6 +217,22 @@ def _extract_node_thumbnails(
         if imgs:
             thumbnails[nid] = imgs
     return thumbnails
+
+
+def _extract_node_thumbnails(
+    graph: BehaviorGraph,
+    mp4_dir: Path,
+) -> dict[int, list[str]]:
+    """Cached wrapper. Hashes the graph's non-special nodes' first-two
+    episode_indices + mp4_dir so the imageio decode runs once per graph
+    revision, not on every Streamlit rerun."""
+    node_eps = tuple(
+        (nid, tuple(node.episode_indices[:2]))
+        for nid, node in sorted(graph.nodes.items())
+        if nid not in _SPECIAL_IDS
+    )
+    cache_key = f"{mp4_dir}|{hash(node_eps)}"
+    return _extract_node_thumbnails_cached(cache_key, node_eps, str(mp4_dir))
 
 
 def _build_graph_json(
@@ -334,9 +349,11 @@ def render_graph_component(
         for nid in graph.nodes:
             if nid not in pos:
                 pos[nid] = (0.0, 0.0)
+    # Thumbnails on tooltip-hover were costing 3-10s of imageio frame
+    # extraction on every Streamlit rerun for ~zero user-visible benefit
+    # (only seen on hover; the panel below the graph shows the videos
+    # anyway). Disabled.
     thumbnails: dict[int, list[str]] | None = None
-    if mp4_dir is not None:
-        thumbnails = _extract_node_thumbnails(graph, mp4_dir)
     graph_json = _build_graph_json(
         graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob,
         min_edge_count=min_edge_count,
@@ -371,7 +388,9 @@ def render_graph_component(
         if isinstance(clicked, list) and len(clicked) == 2:
             st.session_state[f"{key}_selected_edge"] = tuple(clicked)
             st.session_state.pop(f"{key}_selected", None)
-            return None
+            # Force a second pass so the iframe args carry the new
+            # selected_edge instead of the pre-click (None) value.
+            st.rerun()
         try:
             node_id = int(clicked)
             if node_id == -1:
@@ -381,7 +400,10 @@ def render_graph_component(
             if node_id in graph.nodes:
                 st.session_state[f"{key}_selected"] = node_id
                 st.session_state.pop(f"{key}_selected_edge", None)
-                return node_id
+                # Second pass so the iframe's next render args reflect the
+                # newly-selected node, keeping the halo in sync with the
+                # panel that this function's caller is about to draw.
+                st.rerun()
         except (TypeError, ValueError):
             pass
 
