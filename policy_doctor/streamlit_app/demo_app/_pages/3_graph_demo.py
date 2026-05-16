@@ -200,8 +200,34 @@ def _pick(label, options, key, default=None):
     return st.sidebar.selectbox(label, options=options, index=idx, key=key)
 
 
+_REP_DESCRIPTIONS = {
+    "infembed":
+        "**InfEmbed** — per-timestep embedding in the policy's loss-Hessian "
+        "eigenspace. Captures how a window influences the training loss; close "
+        "neighbours have similar attribution to the same training demos.",
+    "trak":
+        "**TRAK** — per-timestep random-projected (Johnson–Lindenstrauss) "
+        "gradient features used for attribution. Close neighbours have "
+        "similar gradient directions w.r.t. the loss.",
+    "policy_emb_bottleneck_plan_t0":
+        "**Policy embedding (bottleneck, plan t=0)** — the diffusion policy's "
+        "bottleneck activation at the first plan timestep. An internal "
+        "representation of the policy itself, not a derived attribution.",
+    "state_full_history":
+        "**State (full history)** — concatenated raw observation across the "
+        "full observation horizon (n_obs_steps), flattened and UMAP-reduced. "
+        "Pure environment state, no policy info.",
+    "state_action_full_history_full_plan":
+        "**State + action (full history + full plan)** — concatenation of the "
+        "full observation history *and* the full predicted action plan, "
+        "flattened and UMAP-reduced. Captures both what the robot sees and "
+        "what it intends to do.",
+}
+
 reps = sorted({e["rep"] for e in _INDEX})
 rep_pick = _pick("Embedding", reps, "demo_rep", default=_DEFAULT["rep"])
+if rep_pick in _REP_DESCRIPTIONS:
+    st.sidebar.caption(_REP_DESCRIPTIONS[rep_pick])
 filt = _filter(rep=rep_pick)
 ks = sorted({e["k"] for e in filt})
 k_pick = _pick("K (clusters)", ks, "demo_k", default=_DEFAULT["k"])
