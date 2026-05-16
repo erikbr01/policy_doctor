@@ -23,12 +23,17 @@ W_VALUES=(3 5 8)
 S_VALUES=(1 2)
 AGG="mean"
 
-# Representations to sweep. policy_emb takes a --layer kwarg; infembed
-# doesn't (eval_dir + default arnoldi_dir provide the source). Entries
-# are "rep_name:layer_or_blank".
+# Representations to sweep. Format: "rep_id:flag1=val1:flag2=val2:..."
+# rep_id is what appears in the slug; the flags are passed to
+# build_alt_clustering.py. Slugs for non-default obs/action strategies
+# include a marker so existing variants (e.g. state at obs=current)
+# stay distinct from the new ones (obs=full_history).
 REPS=(
-    "policy_emb:bottleneck_plan_t0"
-    "infembed:"
+    "infembed:--representation=infembed"
+    "trak:--representation=trak"
+    "policy_emb_bottleneck_plan_t0:--representation=policy_emb:--layer=bottleneck_plan_t0"
+    "state_full_history:--representation=state:--obs_strategy=full_history"
+    "state_action_full_history_full_plan:--representation=state_action:--obs_strategy=full_history:--action_strategy=full_plan"
 )
 
 TRUNK_ROOT="/tmp/sweep_trunks"
@@ -42,29 +47,30 @@ for entry in "${TASKS[@]}"; do
     echo "================================================================"
 
     for rep_entry in "${REPS[@]}"; do
-        rep="${rep_entry%%:*}"
-        layer="${rep_entry##*:}"
-        rep_id="$rep"
-        layer_args=()
-        slug_base="$rep"
-        if [ -n "$layer" ]; then
-            rep_id="${rep}_${layer}"
-            layer_args=(--layer "$layer")
-            slug_base="${rep}_${layer}"
-        fi
+        # First colon-separated field is the slug base (what users see); the
+        # rest are flags forwarded to build_alt_clustering.py.
+        IFS=':' read -r -a parts <<< "$rep_entry"
+        rep_id="${parts[0]}"
+        rep_flags=()
+        for ((i=1; i<${#parts[@]}; i++)); do
+            rep_flags+=("${parts[i]}")
+        done
+        slug_base="$rep_id"
         echo "--- rep: $rep_id ---"
 
         trunk_dir="$TRUNK_ROOT/${task}_${rep_id}"
         if [ ! -f "$trunk_dir/timestep_embeddings.npy" ]; then
             echo "Building trunk for $task/$rep_id..."
             python scripts/build_alt_clustering.py \
-                --representation "$rep" \
-                "${layer_args[@]}" \
+                "${rep_flags[@]}" \
                 --eval_dir "$eval_dir" \
                 --out_dir "$trunk_dir" \
                 --timestep_embed_only \
                 --normalize none --prescale standard --reducer umap \
-                --umap_n_components 50 --umap_n_jobs -1
+                --umap_n_components 50 --umap_n_jobs -1 || {
+                    echo "  [warn] trunk build failed for $task/$rep_id; skipping rep"
+                    continue 2
+                }
         else
             echo "Trunk already exists: $trunk_dir"
         fi
@@ -92,8 +98,7 @@ for entry in "${TASKS[@]}"; do
                     fi
                     echo "  [build] $slug"
                     python scripts/build_alt_clustering.py \
-                        --representation "$rep" \
-                        "${layer_args[@]}" \
+                        "${rep_flags[@]}" \
                         --eval_dir "$eval_dir" \
                         --out_dir "$out_dir" \
                         --timestep_embed_dir "$trunk_dir" \
