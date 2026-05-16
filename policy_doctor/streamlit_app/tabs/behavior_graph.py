@@ -379,19 +379,17 @@ def _render_graph_with_selector(
         "tree_native_svg",
         "tree_sunburst",
         "tree_icicle",
-        "tree_treemap",
         "markov_svg_bfs",
         "markov_svg_temporal",
         "markov_pyvis",
     ]
     VIZ_LABELS = {
-        "tree_native_svg":     "🌳 Trajectory tree (clickable nodes)  ← default",
-        "tree_sunburst":       "🌞 Trajectory tree (sunburst)",
-        "tree_icicle":         "📊 Trajectory tree (icicle)",
-        "tree_treemap":        "🟦 Trajectory tree (treemap)",
-        "markov_svg_bfs":      "🔁 Markov graph — BFS-layered (clickable)",
-        "markov_svg_temporal": "🕒 Markov graph — temporal mean (clickable)",
-        "markov_pyvis":        "🔧 Markov graph — Pyvis (physics)",
+        "tree_native_svg":     "Trajectory tree",
+        "tree_sunburst":       "Sunburst",
+        "tree_icicle":         "Icicle",
+        "markov_svg_bfs":      "Markov graph — BFS-layered",
+        "markov_svg_temporal": "Markov graph — temporal mean",
+        "markov_pyvis":        "Markov graph — Pyvis (physics)",
     }
     viz_type = st.selectbox(
         "Visualization",
@@ -408,24 +406,11 @@ def _render_graph_with_selector(
     is_tree = viz_type.startswith("tree_")
 
     # ── Pruning controls (unified across tree + Markov) ───────────────────
-    if is_tree:
-        c_mb, c_md = st.columns(2)
-        with c_mb:
-            min_branch = st.slider(
-                "Hide branches reaching fewer than N episodes",
-                1, 50, 2, key=f"{view_key}_minbranch",
-            )
-        with c_md:
-            max_depth_cap = st.slider(
-                "Max depth (rarely needs to cap)",
-                2, 500, 500, key=f"{view_key}_maxdepth",
-            )
-    else:
-        min_branch = st.slider(
-            "Hide branches reaching fewer than N episodes",
-            1, 50, 2, key=f"{view_key}_minbranch",
-        )
-        max_depth_cap = 500
+    min_branch = st.slider(
+        "Hide branches reaching fewer than N episodes",
+        1, 50, 2, key=f"{view_key}_minbranch",
+    )
+    max_depth_cap = 500
 
     # ── Color-by selector (single source of truth, applies to every viz) ──
     if is_tree:

@@ -287,7 +287,7 @@ def _render_node_panel(
     with st.container(border=True):
         header_col, close_col = st.columns([10, 1])
         with header_col:
-            st.subheader(f"🔍 {node.name}")
+            st.subheader(node.name)
         with close_col:
             if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_graph_selected", None)

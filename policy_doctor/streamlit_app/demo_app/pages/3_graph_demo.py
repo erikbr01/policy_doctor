@@ -47,8 +47,8 @@ from policy_doctor.streamlit_app.user_study.graph_plot import (
     render_graph_component,
 )
 
-st.set_page_config(page_title="Graph Demo — Policy Doctor", page_icon="🌳", layout="wide")
-st.title("🌳 Graph Demo")
+st.set_page_config(page_title="Graph Demo — Policy Doctor", layout="wide")
+st.title("Graph Demo")
 st.caption(
     "Pick a task, choose a clustering, and explore the behavior graph or "
     "trajectory tree. All nodes and edges are clickable."
@@ -240,17 +240,15 @@ VIZ_OPTIONS = [
     "tree_native_svg",
     "tree_sunburst",
     "tree_icicle",
-    "tree_treemap",
     "markov_svg_bfs",
     "markov_svg_temporal",
 ]
 VIZ_LABELS = {
-    "tree_native_svg":     "🌳 Trajectory tree (clickable nodes)  ← default",
-    "tree_sunburst":       "🌞 Trajectory tree (sunburst)",
-    "tree_icicle":         "📊 Trajectory tree (icicle)",
-    "tree_treemap":        "🟦 Trajectory tree (treemap)",
-    "markov_svg_bfs":      "🔁 Markov graph — BFS-layered (clickable)",
-    "markov_svg_temporal": "🕒 Markov graph — temporal mean (clickable)",
+    "tree_native_svg":     "Trajectory tree",
+    "tree_sunburst":       "Sunburst",
+    "tree_icicle":         "Icicle",
+    "markov_svg_bfs":      "Markov graph — BFS-layered",
+    "markov_svg_temporal": "Markov graph — temporal mean",
 }
 
 c_viz, c_color = st.columns([2, 1])
@@ -284,15 +282,8 @@ with c_color:
         index=0,
     )
 
-if is_tree:
-    c_mb, c_md = st.columns(2)
-    with c_mb:
-        min_branch = st.slider("Hide branches reaching fewer than N episodes", 1, 50, 2)
-    with c_md:
-        max_depth = st.slider("Max depth (rarely needs to cap)", 2, 500, 500)
-else:
-    min_branch = st.slider("Hide branches reaching fewer than N episodes", 1, 50, 2)
-    max_depth = 500
+min_branch = st.slider("Hide branches reaching fewer than N episodes", 1, 50, 2)
+max_depth = 500
 
 # Build the underlying Markov graph (used for value computation + Markov views).
 @st.cache_data(show_spinner=False)

@@ -29,12 +29,11 @@ from policy_doctor.behaviors import graph_simplification as gs
 from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
 
 
-TREE_VIEW_OPTIONS = ["native_svg", "sunburst", "icicle", "treemap"]
+TREE_VIEW_OPTIONS = ["native_svg", "sunburst", "icicle"]
 TREE_VIEW_LABELS = {
-    "native_svg": "🌳 Tree (clickable nodes)",
-    "sunburst": "🌞 Tree (sunburst)",
-    "icicle": "📊 Tree (icicle)",
-    "treemap": "🟦 Tree (treemap)",
+    "native_svg": "Trajectory tree",
+    "sunburst": "Sunburst",
+    "icicle": "Icicle",
 }
 
 

@@ -1,0 +1,4 @@
+label: "Square MH (Feb 5)"
+mp4_dir: /tmp/study_mp4s/square_mh_feb5
+study_config: policy_doctor/configs/user_study/square_mh_feb5.yaml
+clustering_dir: third_party/influence_visualizer/configs/square_mh_feb5/clustering/policy_emb_bottleneck_plan_t0_seed0_kmeans_k10

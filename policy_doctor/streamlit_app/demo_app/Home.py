@@ -3,7 +3,8 @@
 Run with:
     streamlit run policy_doctor/streamlit_app/demo_app/Home.py
 
-Streamlit auto-discovers `pages/` and renders one nav entry per file.
+Uses st.navigation to decouple sidebar display label from the URL slug,
+so URLs stay lowercase while labels stay nicely cased.
 """
 
 from __future__ import annotations
@@ -21,52 +22,18 @@ if str(_WORKTREE) not in sys.path:
     sys.path.insert(0, str(_WORKTREE))
 
 
-st.set_page_config(
-    page_title="Policy Doctor — Demo",
-    page_icon="🩺",
-    layout="wide",
-)
+_HERE = Path(__file__).parent
 
-st.title("Policy Doctor — Demo")
-st.caption(
-    "Use the sidebar to switch between the user-study pages and the "
-    "graph-testing playground."
-)
+pages = [
+    st.Page(str(_HERE / "_home_content.py"), title="Home",
+            url_path="home", default=True),
+    st.Page(str(_HERE / "pages" / "1_user_study_a.py"),
+            title="User Study A", url_path="user_study_a"),
+    st.Page(str(_HERE / "pages" / "2_user_study_b.py"),
+            title="User Study B", url_path="user_study_b"),
+    st.Page(str(_HERE / "pages" / "3_graph_demo.py"),
+            title="Graph Demo", url_path="graph_demo"),
+]
 
-st.markdown(
-    """
-This bundle contains three sibling pages, picked from the left-hand
-**Navigation** sidebar:
-
-- **👤 User study A** — original *Group A* protocol (video-only condition).
-  Participants watch rollout videos and allocate a data-collection budget.
-
-- **👤 User study B** — original *Group B* protocol (videos **plus** the
-  behavior graph). Participants can click clusters, edges, and paths.
-
-- **🌳 Graph demo** — interactive playground for exploring behavior-graph
-  and trajectory-tree visualizations. Pick a task, switch between
-  clusterings (representation × K × W × S × aggregation), choose a
-  visualization, set color / pruning controls, and click any node or edge
-  to drill in to its videos and stats.
-
-All three pages share the same underlying clustering data and MP4
-artifacts. Switching pages does not reset participant state.
-"""
-)
-
-st.divider()
-st.markdown(
-    """
-##### About the data
-
-The pre-bundled clusterings live under
-`third_party/influence_visualizer/configs/<task>/clustering/`. The
-rendered rollout videos live under `/tmp/study_mp4s/<task>/`. Both are
-mirrored into the docker image if you're running the containerized
-build.
-
-If you're running locally and either is missing, the page will tell you
-which file it expected to find.
-"""
-)
+pg = st.navigation(pages)
+pg.run()

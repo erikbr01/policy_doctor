@@ -1,0 +1,4 @@
+label: "Lift MH (Jan 26)"
+mp4_dir: /tmp/study_mp4s/lift_mh_jan26
+study_config: policy_doctor/configs/user_study/lift_mh_jan26.yaml
+clustering_dir: third_party/influence_visualizer/configs/lift_mh_jan26/clustering/policy_emb_bottleneck_plan_t0_seed0_kmeans_k10
