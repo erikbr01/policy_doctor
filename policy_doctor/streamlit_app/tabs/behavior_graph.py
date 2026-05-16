@@ -831,11 +831,15 @@ def _episodes_for_edge(
     tgt_id: int,
     labels: np.ndarray,
     metadata: List[Dict],
+    graph: Optional[Any] = None,
 ) -> List[tuple]:
     """Return (ep_idx, ts_src, ts_tgt, ts_tgt_end) for each episode containing src→tgt.
 
     ts_tgt_end is the window_start of the behavior after tgt (or None if tgt is last).
     Handles terminal edges (START/SUCCESS/FAILURE) the same way as the user study.
+    For synthetic graphs (e.g. trajectory tree leaves with per-branch terminal
+    ids), falls back to graph.nodes[tgt_id].episode_indices when label-walking
+    finds nothing.
     """
     from policy_doctor.behaviors.behavior_graph import FAILURE_NODE_ID, START_NODE_ID, SUCCESS_NODE_ID
 
@@ -889,6 +893,18 @@ def _episodes_for_edge(
                 result.append((ep_idx, rle[i][0], rle[i + 1][0], ts_tgt_end))
                 break
 
+    # Synthetic-graph fallback: target id isn't one of the canonical
+    # SUCCESS/FAILURE constants but the graph genuinely has episodes
+    # passing through it (e.g. per-branch terminal in a trajectory tree).
+    if not result and graph is not None:
+        tgt_node = graph.nodes.get(tgt_id) if hasattr(graph, "nodes") else None
+        if tgt_node is not None and getattr(tgt_node, "episode_indices", None):
+            for ep_idx in tgt_node.episode_indices:
+                last_ts_local = max(
+                    (ts for ts, _ in ep_wins.get(ep_idx, [])), default=0,
+                )
+                result.append((ep_idx, last_ts_local, None, None))
+
     return sorted(result)
 
 
@@ -924,7 +940,7 @@ def _render_edge_panel(
                 st.session_state.pop(f"{key_prefix}_selected_edge", None)
                 st.rerun()
 
-        all_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata)
+        all_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)
         n_eps = len(all_triples)
 
         if not all_triples:

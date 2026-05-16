@@ -47,6 +47,7 @@ def _episodes_for_edge(
     tgt_id: int,
     labels: np.ndarray,
     metadata: list[dict],
+    graph: Optional[BehaviorGraph] = None,
 ) -> list[tuple[int, int, int]]:
     """Find episodes containing the src -> tgt transition.
 
@@ -55,6 +56,12 @@ def _episodes_for_edge(
       START->X:  episodes whose first cluster is X  (ts_src == ts_tgt == first_ts)
       X->FAILURE: failing episodes whose last cluster is X
       X->SUCCESS: succeeding episodes whose last cluster is X
+
+    Fallback for synthetic graphs (e.g. trajectory tree where each branch
+    has its own terminal id): if the label-walking finds nothing AND a
+    graph is provided AND the target node has episode_indices, use those
+    directly (ts_src/ts_tgt = None → no slice highlight, but at least the
+    videos play).
     """
     ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
 
@@ -104,6 +111,22 @@ def _episodes_for_edge(
                 result.append((ep_idx, rle[i][0], rle[i + 1][0]))
                 break
 
+    # Fallback for synthetic graphs (trajectory tree, etc.) where the
+    # special START/SUCCESS/FAILURE checks don't match because terminals
+    # have synthetic ids per branch.
+    if not result and graph is not None:
+        tgt_node = graph.nodes.get(tgt_id) if hasattr(graph, "nodes") else None
+        if tgt_node is not None and getattr(tgt_node, "episode_indices", None):
+            for ep_idx in tgt_node.episode_indices:
+                # No timestep info available — return ts_src=ts_tgt=last_ts so
+                # the panel can still highlight the end of the episode.
+                last_ts_local = 0
+                if ep_idx in ep_wins:
+                    last_ts_local = max(
+                        ts for ts, _ in ep_wins[ep_idx]
+                    )
+                result.append((ep_idx, last_ts_local, last_ts_local))
+
     return sorted(result)
 
 
@@ -133,7 +156,7 @@ def _render_edge_panel(
                 st.session_state.pop(f"{key_prefix}_graph_selected_edge", None)
                 st.rerun()
 
-        all_ep_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata)
+        all_ep_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)
         n_eps = len(all_ep_triples)
 
         if not all_ep_triples:
