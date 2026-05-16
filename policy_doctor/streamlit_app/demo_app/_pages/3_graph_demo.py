@@ -209,10 +209,8 @@ _REP_DESCRIPTIONS = {
         "matrix (rollout × training demos), reduced to 200D with truncated "
         "SVD before windowing.",
     "policy_emb_bottleneck_plan_t0":
-        "**Policy embedding (bottleneck, plan t=0)** — activations of the "
-        "diffusion U-Net bottleneck (mid-block) at denoising timestep t=0. "
-        "In DDPM convention t runs from T (pure noise) down to 0, so t=0 is "
-        "the *final* denoising step that produces the clean action plan.",
+        "**Policy embedding (bottleneck, plan t=0)** — diffusion U-Net "
+        "bottleneck (mid-block) activations at the final denoising step.",
     "state_full_history":
         "**State (full history)** — full observation history, flattened and "
         "UMAP-reduced.",
