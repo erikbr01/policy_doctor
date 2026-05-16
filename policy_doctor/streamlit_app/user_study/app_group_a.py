@@ -41,14 +41,16 @@ session_choice = st.sidebar.selectbox(
     format_func=lambda k: _session_labels.get(k, k),
 )
 
-if st.sidebar.button("Load"):
+
+def _resolve(p: str) -> Path:
+    path = Path(p)
+    return path if path.is_absolute() else _REPO_ROOT / path
+
+
+# Auto-load on session change (no Load button click required).
+if st.session_state.get("ga_loaded_session") != session_choice:
     sess_path = _SESSIONS_DIR / f"{session_choice}.yaml"
     sess = yaml.safe_load(sess_path.read_text())
-
-    def _resolve(p: str) -> Path:
-        path = Path(p)
-        return path if path.is_absolute() else _REPO_ROOT / path
-
     mp4_dir = _resolve(sess["mp4_dir"])
     config_path = _resolve(sess["study_config"])
 
@@ -72,12 +74,11 @@ if st.sidebar.button("Load"):
         st.session_state["ga_budget"] = cfg.get("budget", {}).get("total_demos", 500)
         st.session_state["ga_alloc_step"] = cfg.get("budget", {}).get("allocation_step", 25)
         st.session_state["ga_mp4_dir"] = str(mp4_dir)
-        st.sidebar.success("Loaded.")
+        st.session_state["ga_loaded_session"] = session_choice
 
 if "ga_index" in st.session_state:
     st.sidebar.caption(
-        f"{len(st.session_state['ga_index']['episodes'])} episodes loaded from "
-        f"{st.session_state['ga_mp4_dir']}"
+        f"{len(st.session_state['ga_index']['episodes'])} episodes loaded"
     )
 
 index = st.session_state.get("ga_index")
@@ -85,7 +86,7 @@ strategies = st.session_state.get("ga_strategies")
 mp4_dir_str = st.session_state.get("ga_mp4_dir")
 
 if index is None or strategies is None:
-    st.info("Use the sidebar to load an MP4 directory and study config, then click **Load**.")
+    st.error("Failed to load session — check the sidebar for errors.")
     st.stop()
 
 mp4_dir = Path(mp4_dir_str)

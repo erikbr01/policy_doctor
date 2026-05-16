@@ -403,7 +403,12 @@ def render_graph_component(
                 if node_id in graph.nodes:
                     st.session_state[f"{key}_selected"] = node_id
                     st.session_state.pop(f"{key}_selected_edge", None)
-                    return node_id
+                    # Force a second pass so the iframe args carry the
+                    # newly-selected node id; otherwise the iframe message
+                    # handler overwrites the JS-local halo back to the
+                    # pre-click `selected`. The seq dedup prevents the
+                    # second pass from re-processing the click.
+                    st.rerun()
             elif len(clicked) == 3:
                 try:
                     src_v, tgt_v = int(clicked[0]), int(clicked[1])
@@ -411,6 +416,8 @@ def render_graph_component(
                     return selected
                 st.session_state[f"{key}_selected_edge"] = (src_v, tgt_v)
                 st.session_state.pop(f"{key}_selected", None)
-                return None
+                # Same reasoning: ensure args reflect the new edge selection
+                # so the iframe halo lands on the correct edge.
+                st.rerun()
 
     return selected
