@@ -362,22 +362,70 @@ def _render_graph_with_selector(
     values: Optional[Dict] = None,
     gamma: float = 0.99,
 ) -> None:
-    """Shared graph renderer: SVG component or Pyvis, with node panel."""
-    from policy_doctor import plotting
+    """Unified graph visualizer with a viz-type dropdown.
+
+    Defaults to the clickable native-SVG trajectory tree (root → distinct
+    leaves, no cycles). Other options: tree variants (sunburst / icicle /
+    treemap) for compactness, and the original Markov graph (BFS-layered or
+    temporal-mean) for transition-probability semantics.
+    """
     from policy_doctor.plotting.plotly.behavior_graph import create_interactive_behavior_graph
     from policy_doctor.plotting.plotly.behavior_graph_timesteps import (
         create_timestep_colored_interactive_graph,
     )
 
-    renderer_col, view_col = st.columns([1, 2])
-    with renderer_col:
-        renderer = st.selectbox(
-            "Renderer",
-            options=["svg", "pyvis"],
-            format_func=lambda x: {"svg": "SVG (clickable nodes)", "pyvis": "Pyvis (physics)"}[x],
-            key=f"{view_key}_renderer",
-        )
-    with view_col:
+    # ── Visualization-type dropdown ───────────────────────────────────────
+    VIZ_OPTIONS = [
+        "tree_native_svg",
+        "tree_sunburst",
+        "tree_icicle",
+        "tree_treemap",
+        "markov_svg_bfs",
+        "markov_svg_temporal",
+        "markov_pyvis",
+    ]
+    VIZ_LABELS = {
+        "tree_native_svg":     "🌳 Trajectory tree (clickable nodes)  ← default",
+        "tree_sunburst":       "🌞 Trajectory tree (sunburst)",
+        "tree_icicle":         "📊 Trajectory tree (icicle)",
+        "tree_treemap":        "🟦 Trajectory tree (treemap)",
+        "markov_svg_bfs":      "🔁 Markov graph — BFS-layered (clickable)",
+        "markov_svg_temporal": "🕒 Markov graph — temporal mean (clickable)",
+        "markov_pyvis":        "🔧 Markov graph — Pyvis (physics)",
+    }
+    viz_type = st.selectbox(
+        "Visualization",
+        options=VIZ_OPTIONS,
+        format_func=lambda v: VIZ_LABELS[v],
+        index=0,
+        key=f"{view_key}_viz",
+        help=(
+            "Tree views show each episode's run-length-collapsed sequence as a "
+            "path from a shared START root to a per-branch terminal; no cycles. "
+            "Markov-graph views show transition probabilities between clusters."
+        ),
+    )
+    is_tree = viz_type.startswith("tree_")
+
+    # ── Tree-only controls ────────────────────────────────────────────────
+    if is_tree:
+        c_mb, c_md = st.columns(2)
+        with c_mb:
+            min_branch = st.slider(
+                "Hide branches reaching fewer than N episodes",
+                1, 50, 2, key=f"{view_key}_minbranch",
+            )
+        with c_md:
+            max_depth_cap = st.slider(
+                "Max depth (rarely needs to cap)",
+                2, 500, 500, key=f"{view_key}_maxdepth",
+            )
+    else:
+        min_branch = 2
+        max_depth_cap = 500
+
+    # ── Markov-only controls (color mode + edge-prob threshold) ───────────
+    if not is_tree:
         view_options = ["plain", "timesteps"]
         view_labels = {
             "plain": "Cluster palette",
@@ -392,17 +440,16 @@ def _render_graph_with_selector(
             format_func=lambda x: view_labels.get(x, x),
             key=view_key,
         )
+    else:
+        view_mode = "plain"
 
     min_prob = st.slider(
         "Min edge probability",
-        0.0,
-        0.5,
-        0.0,
-        0.01,
+        0.0, 0.5, 0.0, 0.01,
         key=min_prob_key,
     )
 
-    # Show what representation was used for this clustering
+    # ── Caption: which feature space the clustering came from ─────────────
     clust_src = st.session_state.get("clustering_influence_source") or st.session_state.get(
         "clustering_params", {}
     ).get("clustering_influence_source")
@@ -417,7 +464,32 @@ def _render_graph_with_selector(
         emb_label = _SRC_LABELS.get(str(clust_src), str(clust_src))
         st.caption(f"Graph built from **{emb_label}** clustering")
 
-    if renderer == "svg":
+    # ── Dispatch ──────────────────────────────────────────────────────────
+    if is_tree:
+        from policy_doctor.streamlit_app.components.trajectory_tree_view import (
+            render_trajectory_tree,
+        )
+        # Resolve MP4s for the click-to-explore panel
+        mp4_dir = st.session_state.get("mp4_dir")
+        mp4_index = st.session_state.get("mp4_index") or {"episodes": []}
+        tree_view = viz_type.replace("tree_", "")  # native_svg / sunburst / ...
+        render_trajectory_tree(
+            labels=np.asarray(labels, dtype=np.int64),
+            metadata=metadata,
+            view_mode=tree_view,
+            min_branch=int(min_branch),
+            max_depth_cap=int(max_depth_cap),
+            cluster_names=None,
+            mp4_dir=mp4_dir,
+            mp4_index=mp4_index,
+            height=height,
+            level=getattr(graph, "level", "rollout"),
+            key_prefix=f"{graph_key}_tree",
+        )
+        return
+
+    # ── Markov graph branches ─────────────────────────────────────────────
+    if viz_type in ("markov_svg_bfs", "markov_svg_temporal"):
         from policy_doctor.streamlit_app.user_study.graph_plot import (
             compute_pruned_graph_nodes,
             render_graph_component,
@@ -425,12 +497,24 @@ def _render_graph_with_selector(
         excluded = compute_pruned_graph_nodes(
             graph, min_visit_prob=0.0, n_total=graph.num_episodes, min_edge_prob=min_prob
         )
+        pos = None
+        if viz_type == "markov_svg_temporal":
+            from policy_doctor.behaviors import graph_simplification as gs
+            try:
+                pos = gs.temporal_layout(
+                    graph, np.asarray(labels, dtype=np.int64), metadata,
+                    level=getattr(graph, "level", "rollout"),
+                )
+            except Exception as e:
+                st.warning(f"Temporal layout failed ({e}); falling back to BFS-layered.")
+                pos = None
         clicked = render_graph_component(
             graph,
             height=height,
             key=graph_key,
             excluded_node_ids=excluded,
             min_edge_prob=min_prob,
+            pos=pos,
         )
         selected_edge = st.session_state.get(f"{graph_key}_selected_edge")
         if clicked is not None and clicked in graph.nodes:
@@ -443,7 +527,7 @@ def _render_graph_with_selector(
                 st.caption("Click a node or edge to explore it.")
         else:
             st.caption("Click a node or edge to explore it.")
-    else:
+    else:  # markov_pyvis
         if show_value_option and view_mode == "value" and values:
             from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
             html = create_value_colored_interactive_graph(graph, values, gamma=gamma, min_probability=min_prob)

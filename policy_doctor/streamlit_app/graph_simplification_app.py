@@ -858,8 +858,10 @@ def _render_tree_tab() -> None:
         min_branch = st.slider(
             "Hide branches reaching fewer than N episodes", 1, 50, 2, key="tree_min_branch",
         )
+        # Uncap max depth in practice — set to a value well above any
+        # realistic trajectory length so the slider effectively never trims.
         max_depth_cap = st.slider(
-            "Max depth (cap tree depth)", 2, 30, 10, key="tree_max_depth",
+            "Max depth (rarely needs to cap)", 2, 500, 500, key="tree_max_depth",
         )
 
     tree_labels = labels0.copy()
