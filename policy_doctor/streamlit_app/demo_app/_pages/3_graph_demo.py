@@ -203,7 +203,7 @@ def _pick(label, options, key, default=None):
 _REP_DESCRIPTIONS = {
     "infembed":
         "**InfEmbed** — influence-based representation computed via a "
-        "low-rank factorization of the policy's loss Hessian.",
+        "low-rank factorization of the Hessian.",
     "trak":
         "**TRAK** — per-timestep features from the TRAK influence-score "
         "matrix (rollout × training demos), reduced to 200D with truncated "
