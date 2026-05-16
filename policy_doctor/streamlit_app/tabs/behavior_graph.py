@@ -424,6 +424,34 @@ def _render_graph_with_selector(
         min_branch = 2
         max_depth_cap = 500
 
+    # ── Color-by selector (applies to every viz type) ─────────────────────
+    if is_tree:
+        color_options = ["outcome", "id", "value"]
+        color_labels = {
+            "outcome": "Outcome (success rate)",
+            "id": "Cluster ID (palette)",
+            "value": "Value V(s) (Bellman)",
+        }
+    else:
+        color_options = ["id", "value"]
+        color_labels = {
+            "id": "Cluster ID (palette)",
+            "value": "Value V(s) (Bellman)",
+        }
+    color_by = st.selectbox(
+        "Color nodes by",
+        options=color_options,
+        format_func=lambda v: color_labels[v],
+        index=0,
+        key=f"{view_key}_colorby",
+        help=(
+            "ID = palette (same color for the same cluster across the view). "
+            "Value = the cluster's Bellman value V(s) on a red→grey→green diverging "
+            "scale (red=worst, green=best). Outcome (trees only) = success rate of "
+            "the downstream subtree."
+        ),
+    )
+
     # ── Markov-only controls (color mode + edge-prob threshold) ───────────
     if not is_tree:
         view_options = ["plain", "timesteps"]
@@ -464,6 +492,15 @@ def _render_graph_with_selector(
         emb_label = _SRC_LABELS.get(str(clust_src), str(clust_src))
         st.caption(f"Graph built from **{emb_label}** clustering")
 
+    # ── Compute V(s) once if we'll need it ────────────────────────────────
+    node_values: Dict[int, float] = {}
+    if color_by == "value":
+        try:
+            node_values = graph.compute_values(gamma=gamma)
+        except Exception as e:
+            st.warning(f"Could not compute V(s): {e}. Falling back to ID colors.")
+            color_by = "id"
+
     # ── Dispatch ──────────────────────────────────────────────────────────
     if is_tree:
         from policy_doctor.streamlit_app.components.trajectory_tree_view import (
@@ -479,6 +516,8 @@ def _render_graph_with_selector(
             view_mode=tree_view,
             min_branch=int(min_branch),
             max_depth_cap=int(max_depth_cap),
+            color_mode=color_by,
+            node_values=node_values,
             cluster_names=None,
             mp4_dir=mp4_dir,
             mp4_index=mp4_index,
@@ -508,6 +547,29 @@ def _render_graph_with_selector(
             except Exception as e:
                 st.warning(f"Temporal layout failed ({e}); falling back to BFS-layered.")
                 pos = None
+        # Color-by override: cluster_id (palette) is the renderer's default,
+        # so we only set color_override when color_by == "value".
+        color_override_arg: Optional[Dict[int, str]] = None
+        if color_by == "value" and node_values:
+            from policy_doctor.behaviors.behavior_graph import (
+                END_NODE_ID as _END, FAILURE_NODE_ID as _FAIL,
+                START_NODE_ID as _START, SUCCESS_NODE_ID as _SUCC,
+            )
+            _SPECIAL = {_END, _FAIL, _START, _SUCC}
+            def _diverging(t: float) -> str:
+                t = max(0.0, min(1.0, t))
+                r = int(214 + (44 - 214) * t)
+                g = int(39 + (160 - 39) * t)
+                b = int(40 + (44 - 40) * t)
+                return f"rgb({r},{g},{b})"
+            non_term = [v for cid, v in node_values.items() if cid not in _SPECIAL]
+            v_range = max((abs(v) for v in non_term), default=1.0) or 1.0
+            color_override_arg = {}
+            for nid in graph.nodes:
+                if nid in _SPECIAL:
+                    continue
+                v = node_values.get(nid, 0.0)
+                color_override_arg[nid] = _diverging(0.5 + v / (2 * v_range))
         clicked = render_graph_component(
             graph,
             height=height,
@@ -515,6 +577,7 @@ def _render_graph_with_selector(
             excluded_node_ids=excluded,
             min_edge_prob=min_prob,
             pos=pos,
+            color_override=color_override_arg,
         )
         selected_edge = st.session_state.get(f"{graph_key}_selected_edge")
         if clicked is not None and clicked in graph.nodes:

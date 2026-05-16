@@ -846,10 +846,12 @@ def _render_tree_tab() -> None:
             horizontal=False, key="tree_view",
         )
     with cc2:
-        color_by = st.radio(
-            "Color", ["Outcome (success rate)", "Cluster id"],
+        color_by_label = st.radio(
+            "Color",
+            ["Outcome (success rate)", "Cluster id", "Value V(s)"],
             horizontal=False, key="tree_color",
         )
+        color_by = color_by_label  # kept as the original variable name below
     with cc3:
         smooth_for_tree = st.checkbox(
             "Smooth labels first (sticky λ=5)", value=False, key="tree_smooth",
@@ -983,29 +985,26 @@ def _render_tree_tab() -> None:
             f"Failure: {nd['n_failure']} ({nd['n_failure']/max(1,nd['n_episodes']):.0%})"
             for nd in nodes_f
         ]
-        if color_by.startswith("Outcome"):
-            # Use a green→red diverging scale; terminals get fixed colors
-            marker_colors = succ_rate
-            colorscale = [[0.0, "#d62728"], [0.5, "#ddd"], [1.0, "#2ca02c"]]
-            colorbar_title = "Success rate"
-            colors_kwargs = dict(
-                marker=dict(
-                    colors=marker_colors,
-                    colorscale=colorscale,
-                    cmid=0.5, cmin=0.0, cmax=1.0,
-                    colorbar=dict(title=colorbar_title) if view_mode != "Treemap" else None,
-                ),
+        # ── Map UI radio label → plotting module's color_mode + V values ──
+        _COLOR_MODE_FOR = {
+            "Outcome (success rate)": "outcome",
+            "Cluster id": "id",
+            "Value V(s)": "value",
+        }
+        _color_mode = _COLOR_MODE_FOR.get(color_by, "outcome")
+        _node_values: Dict[int, float] = {}
+        if _color_mode == "value":
+            # Build a Markov graph from the same (possibly smoothed) labels
+            # and compute V(s) on it. Tree node colors look up their
+            # cluster's V from this dict.
+            _bg_for_v = BehaviorGraph.from_cluster_assignments(
+                tree_labels, meta, level=level,
             )
-        else:
-            from policy_doctor.plotting.plotly.clusters import CLUSTER_COLORS
-            def _color_for(nd):
-                cid = nd["cluster_id"]
-                if cid == SUCCESS_NODE_ID: return "#2ca02c"
-                if cid == FAILURE_NODE_ID: return "#d62728"
-                if cid == END_NODE_ID: return "#888"
-                if cid == START_NODE_ID: return "#1a1a1a"
-                return CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
-            colors_kwargs = dict(marker=dict(colors=[_color_for(nd) for nd in nodes_f]))
+            try:
+                _node_values = _bg_for_v.compute_values()
+            except Exception as _e:
+                st.warning(f"compute_values() failed ({_e}); falling back to ID coloring.")
+                _color_mode = "id"
 
         # ── Plotly figure construction lives in policy_doctor.plotting ──
         from policy_doctor.plotting.plotly.trajectory_tree import (
@@ -1014,14 +1013,16 @@ def _render_tree_tab() -> None:
             create_trajectory_treemap,
             create_trajectory_node_edge_plotly,
         )
-        _color_by_outcome = color_by.startswith("Outcome")
         _plot_height = int(height) + 200
+        _plot_kwargs = dict(
+            color_mode=_color_mode, node_values=_node_values, height=_plot_height,
+        )
         if view_mode.startswith("Sunburst"):
-            fig = create_trajectory_sunburst(nodes_f, color_by_outcome=_color_by_outcome, height=_plot_height)
+            fig = create_trajectory_sunburst(nodes_f, **_plot_kwargs)
         elif view_mode.startswith("Icicle"):
-            fig = create_trajectory_icicle(nodes_f, color_by_outcome=_color_by_outcome, height=_plot_height)
+            fig = create_trajectory_icicle(nodes_f, **_plot_kwargs)
         elif view_mode.startswith("Treemap"):
-            fig = create_trajectory_treemap(nodes_f, color_by_outcome=_color_by_outcome, height=_plot_height)
+            fig = create_trajectory_treemap(nodes_f, **_plot_kwargs)
         elif view_mode.startswith("Node-edge tree (native"):
             # ── Native SVG tree via the existing graph component. ─────────
             # Each tree node gets a unique synthetic ID. Terminal leaves keep
@@ -1042,6 +1043,28 @@ def _render_tree_tab() -> None:
             symbol_override: Dict[int, str] = {}
             color_override: Dict[int, str] = {}
             next_id = 100_000
+
+            # Shared diverging-color helper for outcome / value modes.
+            def _diverging(t: float) -> str:
+                t = max(0.0, min(1.0, t))
+                r = int(214 + (44 - 214) * t)
+                g = int(39 + (160 - 39) * t)
+                b = int(40 + (44 - 40) * t)
+                return f"rgb({r},{g},{b})"
+
+            def _v_for_cluster(cid: int) -> float:
+                if cid == SUCCESS_NODE_ID: return 1.0
+                if cid == FAILURE_NODE_ID: return -1.0
+                if cid in (END_NODE_ID, START_NODE_ID): return 0.0
+                return float(_node_values.get(int(cid), 0.0))
+
+            _v_range = 1.0
+            if _color_mode == "value":
+                _v_range = max(
+                    (abs(_v_for_cluster(nd["cluster_id"])) for nd in nodes_f),
+                    default=1.0,
+                ) or 1.0
+
             for nd in nodes_f:
                 p = tuple(nd["path"])
                 cid = nd["cluster_id"]
@@ -1049,19 +1072,24 @@ def _render_tree_tab() -> None:
                     path_to_id[p] = START_NODE_ID
                 else:
                     path_to_id[p] = next_id
-                    if cid == SUCCESS_NODE_ID:
-                        symbol_override[next_id] = "star"
-                        color_override[next_id] = "#2ca02c"
-                    elif cid == FAILURE_NODE_ID:
-                        symbol_override[next_id] = "x"
-                        color_override[next_id] = "#d62728"
-                    elif cid == END_NODE_ID:
-                        symbol_override[next_id] = "square"
-                        color_override[next_id] = "#888888"
+                    # Symbol stays the same regardless of color mode.
+                    if cid == SUCCESS_NODE_ID: symbol_override[next_id] = "star"
+                    elif cid == FAILURE_NODE_ID: symbol_override[next_id] = "x"
+                    elif cid == END_NODE_ID:    symbol_override[next_id] = "square"
+                    is_special = cid in (
+                        START_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID,
+                    )
+                    if _color_mode == "outcome" and not is_special:
+                        rate = nd["n_success"] / max(1, nd["n_episodes"])
+                        color_override[next_id] = _diverging(rate)
+                    elif _color_mode == "value" and not is_special:
+                        v = _v_for_cluster(cid)
+                        color_override[next_id] = _diverging(0.5 + v / (2 * _v_range))
+                    elif cid == SUCCESS_NODE_ID: color_override[next_id] = "#2ca02c"
+                    elif cid == FAILURE_NODE_ID: color_override[next_id] = "#d62728"
+                    elif cid == END_NODE_ID:     color_override[next_id] = "#888888"
                     else:
-                        # Regular cluster: pin color to the underlying
-                        # cluster_id so every instance of "Behavior c" looks
-                        # the same.
+                        # id mode → palette
                         color_override[next_id] = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
                     next_id += 1
 
@@ -1226,9 +1254,7 @@ def _render_tree_tab() -> None:
             fig = None  # signal that we already rendered
 
         else:  # Node-edge tree (Plotly)
-            fig = create_trajectory_node_edge_plotly(
-                nodes_f, color_by_outcome=_color_by_outcome, height=_plot_height,
-            )
+            fig = create_trajectory_node_edge_plotly(nodes_f, **_plot_kwargs)
 
         if fig is not None:
             if not view_mode.startswith("Node-edge"):

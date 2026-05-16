@@ -45,7 +45,8 @@ def render_trajectory_tree(
     view_mode: str = "native_svg",
     min_branch: int = 2,
     max_depth_cap: int = 500,
-    color_by_outcome: bool = True,
+    color_mode: str = "outcome",
+    node_values: Optional[Dict[int, float]] = None,
     cluster_names: Optional[Dict[int, str]] = None,
     mp4_dir: Optional[Path] = None,
     mp4_index: Optional[Dict] = None,
@@ -137,9 +138,13 @@ def render_trajectory_tree(
             cluster_names=cluster_names,
             mp4_dir=mp4_dir, mp4_index=mp4_index,
             height=height, level=level, key_prefix=key_prefix,
+            color_mode=color_mode, node_values=node_values or {},
         )
     else:
-        _render_plotly(nodes_f, view_mode, color_by_outcome, height, key=f"{key_prefix}_plotly")
+        _render_plotly(
+            nodes_f, view_mode, color_mode, node_values or {},
+            height, key=f"{key_prefix}_plotly",
+        )
 
     if show_stats:
         _render_stats(nodes, nodes_f, cluster_names)
@@ -158,7 +163,10 @@ def _render_native_svg(
     height: int,
     level: str,
     key_prefix: str,
+    color_mode: str = "outcome",
+    node_values: Optional[Dict[int, float]] = None,
 ) -> None:
+    node_values = node_values or {}
     from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
     by_path_all: Dict[Tuple, Dict] = {tuple(nd["path"]): nd for nd in nodes_f}
 
@@ -169,6 +177,28 @@ def _render_native_svg(
     symbol_override: Dict[int, str] = {}
     color_override: Dict[int, str] = {}
     next_id = 100_000
+
+    # Helpers for value / outcome color modes.
+    def _v_for_cluster(cid: int, n_success: int, n_episodes: int) -> float:
+        if cid == SUCCESS_NODE_ID: return 1.0
+        if cid == FAILURE_NODE_ID: return -1.0
+        if cid in (END_NODE_ID, START_NODE_ID): return 0.0
+        return float(node_values.get(int(cid), 0.0))
+    def _diverging(t: float) -> str:
+        t = max(0.0, min(1.0, t))
+        r = int(214 + (44 - 214) * t)
+        g = int(39 + (160 - 39) * t)
+        b = int(40 + (44 - 40) * t)
+        return f"rgb({r},{g},{b})"
+    # Pre-compute V range for value mode.
+    v_range = 1.0
+    if color_mode == "value":
+        v_range = max(
+            (abs(_v_for_cluster(nd["cluster_id"], nd["n_success"], nd["n_episodes"]))
+             for nd in nodes_f),
+            default=1.0,
+        ) or 1.0
+
     for nd in nodes_f:
         p = tuple(nd["path"])
         cid = nd["cluster_id"]
@@ -176,16 +206,23 @@ def _render_native_svg(
             path_to_id[p] = START_NODE_ID
         else:
             path_to_id[p] = next_id
-            if cid == SUCCESS_NODE_ID:
-                symbol_override[next_id] = "star"
-                color_override[next_id] = "#2ca02c"
-            elif cid == FAILURE_NODE_ID:
-                symbol_override[next_id] = "x"
-                color_override[next_id] = "#d62728"
-            elif cid == END_NODE_ID:
-                symbol_override[next_id] = "square"
-                color_override[next_id] = "#888888"
+            # Symbol stays the same regardless of color mode.
+            if cid == SUCCESS_NODE_ID: symbol_override[next_id] = "star"
+            elif cid == FAILURE_NODE_ID: symbol_override[next_id] = "x"
+            elif cid == END_NODE_ID:    symbol_override[next_id] = "square"
+            # Color depends on color_mode.
+            is_special = cid in (SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID)
+            if color_mode == "outcome" and not is_special:
+                rate = nd["n_success"] / max(1, nd["n_episodes"])
+                color_override[next_id] = _diverging(rate)
+            elif color_mode == "value" and not is_special:
+                v = _v_for_cluster(cid, nd["n_success"], nd["n_episodes"])
+                color_override[next_id] = _diverging(0.5 + v / (2 * v_range))
+            elif cid == SUCCESS_NODE_ID: color_override[next_id] = "#2ca02c"
+            elif cid == FAILURE_NODE_ID: color_override[next_id] = "#d62728"
+            elif cid == END_NODE_ID:     color_override[next_id] = "#888888"
             else:
+                # id mode
                 color_override[next_id] = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
             next_id += 1
 
@@ -337,7 +374,8 @@ def _render_native_svg(
 def _render_plotly(
     nodes_f: List[Dict],
     view_mode: str,
-    color_by_outcome: bool,
+    color_mode: str,
+    node_values: Dict[int, float],
     height: int,
     key: str,
 ) -> None:
@@ -346,12 +384,13 @@ def _render_plotly(
         create_trajectory_icicle,
         create_trajectory_treemap,
     )
+    kwargs = dict(color_mode=color_mode, node_values=node_values, height=height)
     if view_mode == "sunburst":
-        fig = create_trajectory_sunburst(nodes_f, color_by_outcome=color_by_outcome, height=height)
+        fig = create_trajectory_sunburst(nodes_f, **kwargs)
     elif view_mode == "icicle":
-        fig = create_trajectory_icicle(nodes_f, color_by_outcome=color_by_outcome, height=height)
+        fig = create_trajectory_icicle(nodes_f, **kwargs)
     else:  # treemap
-        fig = create_trajectory_treemap(nodes_f, color_by_outcome=color_by_outcome, height=height)
+        fig = create_trajectory_treemap(nodes_f, **kwargs)
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 

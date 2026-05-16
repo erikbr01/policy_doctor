@@ -45,7 +45,44 @@ def _cluster_color_kwargs(nodes_f: List[Dict]) -> Dict[str, Any]:
     return dict(marker=dict(colors=[_color(nd) for nd in nodes_f]))
 
 
-def _common_kwargs(nodes_f: List[Dict], color_by_outcome: bool) -> Dict[str, Any]:
+def _value_color_kwargs(
+    nodes_f: List[Dict],
+    node_values: Dict[int, float],
+) -> Dict[str, Any]:
+    """Color by V(cluster) on a red→grey→green diverging scale.
+
+    `node_values` maps cluster_id (NOT tree-node synthetic id) → V. Tree
+    nodes share their underlying cluster's V; terminals get fixed rewards.
+    """
+    vs = []
+    for nd in nodes_f:
+        cid = nd["cluster_id"]
+        if cid == SUCCESS_NODE_ID:
+            v = 1.0
+        elif cid == FAILURE_NODE_ID:
+            v = -1.0
+        elif cid == END_NODE_ID:
+            v = 0.0
+        elif cid == START_NODE_ID:
+            v = 0.0
+        else:
+            v = float(node_values.get(int(cid), 0.0))
+        vs.append(v)
+    cmax = max(abs(min(vs)), abs(max(vs)), 1e-9)
+    return dict(
+        marker=dict(
+            colors=vs,
+            colorscale=[[0.0, "#d62728"], [0.5, "#dddddd"], [1.0, "#2ca02c"]],
+            cmid=0.0, cmin=-cmax, cmax=cmax,
+        ),
+    )
+
+
+def _common_kwargs(
+    nodes_f: List[Dict],
+    color_mode: str,
+    node_values: Dict[int, float],
+) -> Dict[str, Any]:
     def _id(nd):
         return "/".join(str(x) for x in nd["path"]) or "ROOT"
     def _parent(nd):
@@ -69,9 +106,12 @@ def _common_kwargs(nodes_f: List[Dict], color_by_outcome: bool) -> Dict[str, Any
         f"Failure: {nd['n_failure']} ({nd['n_failure']/max(1,nd['n_episodes']):.0%})"
         for nd in nodes_f
     ]
-    color = (
-        _outcome_color_kwargs(succ_rate) if color_by_outcome else _cluster_color_kwargs(nodes_f)
-    )
+    if color_mode == "value":
+        color = _value_color_kwargs(nodes_f, node_values)
+    elif color_mode == "id":
+        color = _cluster_color_kwargs(nodes_f)
+    else:  # outcome
+        color = _outcome_color_kwargs(succ_rate)
     return dict(
         ids=ids, labels=labels, parents=parents, values=values,
         branchvalues="total", hovertext=hovertext, hoverinfo="text",
@@ -82,11 +122,16 @@ def _common_kwargs(nodes_f: List[Dict], color_by_outcome: bool) -> Dict[str, Any
 def create_trajectory_sunburst(
     nodes_f: List[Dict],
     *,
-    color_by_outcome: bool = True,
+    color_mode: str = "outcome",
+    node_values: Dict[int, float] | None = None,
     height: int = 700,
 ) -> go.Figure:
-    """Sunburst: radial, root at the center, leaves on the outer ring."""
-    common = _common_kwargs(nodes_f, color_by_outcome)
+    """Sunburst: radial, root at the center, leaves on the outer ring.
+
+    `color_mode` ∈ {"outcome", "id", "value"}. For "value", supply
+    `node_values` as a dict mapping cluster_id → V(cluster).
+    """
+    common = _common_kwargs(nodes_f, color_mode, node_values or {})
     fig = go.Figure(go.Sunburst(**common, insidetextorientation="radial"))
     fig.update_layout(height=height, margin=dict(l=10, r=10, t=20, b=10))
     return fig
@@ -95,11 +140,12 @@ def create_trajectory_sunburst(
 def create_trajectory_icicle(
     nodes_f: List[Dict],
     *,
-    color_by_outcome: bool = True,
+    color_mode: str = "outcome",
+    node_values: Dict[int, float] | None = None,
     height: int = 700,
 ) -> go.Figure:
     """Icicle: horizontal flat tree, depth = x-axis, weight = vertical extent."""
-    common = _common_kwargs(nodes_f, color_by_outcome)
+    common = _common_kwargs(nodes_f, color_mode, node_values or {})
     fig = go.Figure(go.Icicle(**common, tiling=dict(orientation="h")))
     fig.update_layout(height=height, margin=dict(l=10, r=10, t=20, b=10))
     return fig
@@ -108,11 +154,12 @@ def create_trajectory_icicle(
 def create_trajectory_treemap(
     nodes_f: List[Dict],
     *,
-    color_by_outcome: bool = True,
+    color_mode: str = "outcome",
+    node_values: Dict[int, float] | None = None,
     height: int = 700,
 ) -> go.Figure:
     """Treemap: nested rectangles, area = episode count."""
-    common = _common_kwargs(nodes_f, color_by_outcome)
+    common = _common_kwargs(nodes_f, color_mode, node_values or {})
     fig = go.Figure(go.Treemap(**common))
     fig.update_layout(height=height, margin=dict(l=10, r=10, t=20, b=10))
     return fig
@@ -121,15 +168,19 @@ def create_trajectory_treemap(
 def create_trajectory_node_edge_plotly(
     nodes_f: List[Dict],
     *,
-    color_by_outcome: bool = True,
+    color_mode: str = "outcome",
+    node_values: Dict[int, float] | None = None,
     height: int = 700,
 ) -> go.Figure:
     """Top-down node-edge tree with subtree-weighted horizontal layout.
 
     Children of each node are laid out left-to-right in horizontal slots
     proportional to their subtree's episode count. Edges are vertical
-    splines colored by the success rate of the downstream subtree.
+    splines. `color_mode` ∈ {"outcome", "id", "value"} controls both node
+    fill and edge color; for "value" pass `node_values` mapping cluster_id
+    → V(cluster).
     """
+    node_values = node_values or {}
     by_path: Dict[Tuple, Dict] = {tuple(nd["path"]): nd for nd in nodes_f}
     children_of: Dict[Tuple, List[Tuple]] = defaultdict(list)
     for nd in nodes_f:
@@ -156,19 +207,30 @@ def create_trajectory_node_edge_plotly(
     max_depth = max(d for _, d in pos.values()) or 1
     y_scale = 1.0 / max(1, abs(max_depth))
 
-    def _outcome_color(rate: float) -> str:
-        r = int(214 + (44 - 214) * rate)
-        g = int(39 + (160 - 39) * rate)
-        b = int(40 + (44 - 40) * rate)
+    def _diverging_color(t: float) -> str:
+        """t ∈ [0, 1]; 0 = red, 0.5 = grey, 1 = green."""
+        t = max(0.0, min(1.0, t))
+        r = int(214 + (44 - 214) * t)
+        g = int(39 + (160 - 39) * t)
+        b = int(40 + (44 - 40) * t)
         return f"rgb({r},{g},{b})"
 
-    def _node_color(nd: Dict) -> str:
+    def _node_color_id(nd: Dict) -> str:
         cid = nd["cluster_id"]
         if cid == SUCCESS_NODE_ID: return "#2ca02c"
         if cid == FAILURE_NODE_ID: return "#d62728"
         if cid == END_NODE_ID: return "#888"
         if cid == START_NODE_ID: return "#444"
         return CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
+
+    # Pre-compute value range for normalization (value mode)
+    def _v_for(nd: Dict) -> float:
+        cid = nd["cluster_id"]
+        if cid == SUCCESS_NODE_ID: return 1.0
+        if cid == FAILURE_NODE_ID: return -1.0
+        if cid in (END_NODE_ID, START_NODE_ID): return 0.0
+        return float(node_values.get(int(cid), 0.0))
+    v_range = max(abs(_v_for(nd)) for nd in nodes_f) or 1.0
 
     fig = go.Figure()
 
@@ -184,7 +246,16 @@ def create_trajectory_node_edge_plotly(
         y0s, y1s = y0 * y_scale, y1 * y_scale
         width = max(0.8, 0.6 + np.log1p(nd["n_episodes"]) * 0.9)
         rate = nd["n_success"] / max(1, nd["n_episodes"])
-        ec = _outcome_color(rate) if color_by_outcome else "rgba(140,140,140,0.6)"
+        if color_mode == "outcome":
+            ec = _diverging_color(rate)
+        elif color_mode == "value":
+            # Edge advantage = V(child) - V(parent); map to [0, 1] for color.
+            parent_v = _v_for(by_path[parent])
+            child_v = _v_for(nd)
+            adv = (child_v - parent_v) / (2 * v_range)  # in [-0.5, 0.5]
+            ec = _diverging_color(0.5 + adv)
+        else:  # id
+            ec = "rgba(140,140,140,0.6)"
         cx, cy = (x0 + x1) / 2, (y0s + y1s) / 2
         fig.add_trace(go.Scatter(
             x=[x0, cx, x1], y=[y0s, cy, y1s],
@@ -212,12 +283,15 @@ def create_trajectory_node_edge_plotly(
             f"Success rate: {rate:.0%}<br>"
             f"Path: {' → '.join(str(c) for c in path)}"
         )
-        if color_by_outcome and nd["cluster_id"] not in (
-            START_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID
-        ):
-            colors_.append(_outcome_color(rate))
+        cid = nd["cluster_id"]
+        is_special = cid in (START_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID)
+        if color_mode == "outcome" and not is_special:
+            colors_.append(_diverging_color(rate))
+        elif color_mode == "value" and not is_special:
+            v = _v_for(nd)
+            colors_.append(_diverging_color(0.5 + v / (2 * v_range)))
         else:
-            colors_.append(_node_color(nd))
+            colors_.append(_node_color_id(nd))
         sizes.append(max(10, min(60, 8 + np.log1p(nd["n_episodes"]) * 8)))
 
     fig.add_trace(go.Scatter(
