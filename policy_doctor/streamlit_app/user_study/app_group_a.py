@@ -7,6 +7,11 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
+from policy_doctor.streamlit_app.user_study.intro import gate_or_render
+from policy_doctor.streamlit_app.user_study.likert_survey import (
+    render_block2_strategy,
+    render_block3_final,
+)
 from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
@@ -16,6 +21,8 @@ from policy_doctor.streamlit_app.user_study.strategies import (
 from policy_doctor.streamlit_app.user_study.video_browser import render_video_browser
 
 st.set_page_config(page_title="User Study — Group A", layout="wide")
+
+gate_or_render()
 
 st.title("User Study: Data Collection Strategy Design")
 st.markdown(
@@ -120,12 +127,24 @@ render_strategy_summary(allocations, strategies, total_budget)
 
 st.divider()
 
-st.header("3. NASA Task Load Index")
+st.header("3. Strategy-Selection Survey")
+likert_strategy = render_block2_strategy(key_prefix="ga_likert")
+
+st.divider()
+
+st.header("4. NASA Task Load Index")
 tlx_responses = render_nasa_tlx(key_prefix="ga_tlx")
 
 st.divider()
 
-st.header("4. Submit")
+st.header("5. Final Assessment")
+likert_final = render_block3_final(
+    key_prefix="ga_likert", include_graph_questions=False,
+)
+
+st.divider()
+
+st.header("6. Submit")
 
 notes = st.text_area("Any additional notes or reasoning", value="", height=120)
 
@@ -137,8 +156,11 @@ if st.button("Submit", type="primary"):
 
     result = {
         "participant_id": participant_id,
+        "group": "A",
         "allocations": allocations,
         "nasa_tlx": tlx_responses,
+        "likert_strategy": likert_strategy,
+        "likert_final": likert_final,
         "notes": notes,
         "timestamp": timestamp,
     }

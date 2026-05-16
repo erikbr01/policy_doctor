@@ -24,6 +24,12 @@ from policy_doctor.streamlit_app.user_study.initial_conditions import (
     _initial_slice_per_episode,
     _success_per_episode,
 )
+from policy_doctor.streamlit_app.user_study.intro import gate_or_render
+from policy_doctor.streamlit_app.user_study.likert_survey import (
+    render_block1_graph_interaction,
+    render_block2_strategy,
+    render_block3_final,
+)
 from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.path_explorer import render_path_explorer
 from policy_doctor.streamlit_app.user_study.strategies import (
@@ -34,6 +40,8 @@ from policy_doctor.streamlit_app.user_study.strategies import (
 from policy_doctor.streamlit_app.user_study.video_browser import render_video_browser
 
 st.set_page_config(page_title="User Study — Group B", layout="wide")
+
+gate_or_render()
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.header("Configuration")
@@ -591,14 +599,19 @@ else:
                     )
 
 st.info(
-    "Use what you found above to guide your choices in Step 5 below. "
+    "Use what you found above to guide your choices in Step 6 below. "
     "For example, nodes that frequently exit to failure suggest targeted data collection "
     "around those behaviors (e.g. constrained initial positions or recovery demos)."
 )
 
-# ── Section 5: Strategy design ────────────────────────────────────────────────
+# ── Section 5: Behavior-graph interaction survey ─────────────────────────────
 st.divider()
-st.header("Step 5 — Design Your Data Collection Strategy")
+st.header("Step 5 — Behavior-Graph Survey")
+likert_graph = render_block1_graph_interaction(key_prefix="gb_likert")
+
+# ── Section 6: Strategy design ────────────────────────────────────────────────
+st.divider()
+st.header("Step 6 — Design Your Data Collection Strategy")
 st.markdown(
     "Based on what you observed above, allocate your **{} demo budget** across the "
     "strategies below. Each strategy targets a specific data collection protocol. "
@@ -613,14 +626,26 @@ allocations = render_strategy_allocator(
 )
 render_strategy_summary(allocations, strategies, total_budget)
 
-# ── Section 6: NASA Task Load Index ──────────────────────────────────────────
+# ── Section 7: Strategy-selection survey ──────────────────────────────────────
 st.divider()
-st.header("Step 6 — NASA Task Load Index")
+st.header("Step 7 — Strategy-Selection Survey")
+likert_strategy = render_block2_strategy(key_prefix="gb_likert")
+
+# ── Section 8: NASA Task Load Index ──────────────────────────────────────────
+st.divider()
+st.header("Step 8 — NASA Task Load Index")
 tlx_responses = render_nasa_tlx(key_prefix="gb_tlx")
 
-# ── Section 7: Submit ─────────────────────────────────────────────────────────
+# ── Section 9: Final assessment ──────────────────────────────────────────────
 st.divider()
-st.header("Step 7 — Submit")
+st.header("Step 9 — Final Assessment")
+likert_final = render_block3_final(
+    key_prefix="gb_likert", include_graph_questions=True,
+)
+
+# ── Section 10: Submit ───────────────────────────────────────────────────────
+st.divider()
+st.header("Step 10 — Submit")
 
 notes = st.text_area(
     "Any additional notes or reasoning about your choices",
@@ -640,6 +665,9 @@ if st.button("Submit", type="primary"):
         "group": "B",
         "allocations": allocations,
         "nasa_tlx": tlx_responses,
+        "likert_graph": likert_graph,
+        "likert_strategy": likert_strategy,
+        "likert_final": likert_final,
         "notes": notes,
         "timestamp": timestamp,
     }
