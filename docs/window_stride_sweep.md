@@ -137,6 +137,67 @@ homogenize phases. **MI with the outcome bit is cheap to compute** (sklearn's
 `mutual_info_score` on the labels-vs-success array) and is the metric to
 optimize when picking W and S.
 
+## Why outcome-neutral clusters don't bias the W/S comparison
+
+A natural objection: MI rewards clusters that segregate by outcome, but many
+real behavioral phases (e.g., "reach toward block") are present in
+*every* episode regardless of success or failure. Those clusters contribute
+~zero MI even though they're behaviorally meaningful. Doesn't this make MI
+unfair as a W/S selection metric?
+
+Not for *comparing* settings. Outcome-neutral clusters contribute ~0 MI in
+**every** W/S setting, so they neither help nor hurt the ranking. The metric
+only varies with how well each setting separates the *outcome-informative*
+phases.
+
+There is a subtler effect worth being explicit about: **K is fixed at 10
+across all settings, so cluster budget is a shared constraint**. Different
+W/S settings spend that budget differently, and MI penalizes two distinct
+failure modes:
+
+1. **Resolution failure** (W too big). The window blurs behaviorally
+   distinct phases together. At W=10/S=2, "approach with successful grip"
+   and "approach with botched grip" land in the same cluster because the
+   10-frame mean is dominated by the shared "approach" prefix. The cluster's
+   outcome distribution moves toward the marginal → per-cluster MI drops.
+
+2. **Fragmentation failure** (S too big at small W). Behaviorally identical
+   timesteps get spread across multiple cluster labels because non-
+   overlapping windows decorrelate. At W=5/S=5, "reach" might end up split
+   into 2-3 different clusters depending on which 5-frame window happens to
+   capture it → an outcome-neutral behavior consumes 2-3 of the K=10
+   cluster budget instead of 1, leaving less budget for discriminative
+   phases.
+
+The sweet spot is **"just enough resolution to separate distinct phases,
+but not so fragmented that uniform behaviors split"**. At K=10 for
+transport, this lands at W=5, S=1.
+
+Concretely from the table:
+
+- **W=5/S=1**: enough temporal resolution that "reach" gets captured as a
+  single coherent cluster → ~9 of 10 clusters free for outcome-relevant
+  phases → MI=0.188.
+- **W=5/S=5**: no window overlap → "reach" gets fragmented across micro-
+  clusters → ~7-8 clusters left for discriminative phases → MI=0.137
+  despite each cluster being geometrically tighter (silhouette=0.490).
+- **W=10/S=2**: large window blurs "reach" + early manipulation together,
+  but also blurs discriminative phases → MI=0.150. Loses on *resolution*,
+  not on budget.
+
+The clean interpretation: **MI is invariant to "free passenger" clusters
+that appear everywhere; it only scores how well the *budget-spent* clusters
+align with the success bit.** A setting that wastes budget on fragmenting
+neutral behaviors is correctly penalized, while one that captures them
+parsimoniously is correctly rewarded. The point that neutral clusters
+contribute equally (zero) to every setting's MI is exactly *why* the metric
+ranks fairly across W/S choices.
+
+(For perfectly rigorous comparisons one could normalize by entropy of the
+cluster label distribution to penalize trivial single-cluster assignments,
+but with KMeans-K=10 the assignments are roughly balanced and unnormalized
+MI is sufficient.)
+
 ## Methodology notes & limitations
 
 - MI(label, success) treats the success bit as constant across an episode
