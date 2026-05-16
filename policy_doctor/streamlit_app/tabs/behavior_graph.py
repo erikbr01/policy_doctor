@@ -414,10 +414,7 @@ def _render_graph_with_selector(
     if min_branch == 0:
         st.caption("Showing every branch — no filtering.")
     elif _n_total > 0:
-        st.caption(
-            f"≈ {min_branch / _n_total:.0%} of {_n_total} rollouts "
-            "— branches at or below this likelihood are hidden."
-        )
+        st.caption(f"≈ {min_branch / _n_total:.0%} likelihood threshold")
     max_depth_cap = 500
 
     # ── Color-by selector (single source of truth, applies to every viz) ──
