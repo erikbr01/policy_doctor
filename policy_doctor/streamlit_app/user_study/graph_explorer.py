@@ -154,6 +154,9 @@ def _render_edge_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_graph_selected_edge", None)
+                st.session_state.pop(f"{key_prefix}_graph_last_click", None)
+                _rt_key = f"{key_prefix}_graph_render_token"
+                st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
 
         all_ep_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)
@@ -213,6 +216,7 @@ def render_graph_full_width(
     highlighted_path: list[int] | None = None,
     excluded_node_ids: frozenset[int] = frozenset(),
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
     pos: dict[int, tuple[float, float]] | None = None,
     symbol_override: dict[int, str] | None = None,
     color_override: dict[int, str] | None = None,
@@ -231,6 +235,7 @@ def render_graph_full_width(
         mp4_dir=mp4_dir,
         excluded_node_ids=excluded_node_ids,
         min_edge_prob=min_edge_prob,
+        min_edge_count=min_edge_count,
         pos=pos,
         symbol_override=symbol_override,
         color_override=color_override,
@@ -286,6 +291,9 @@ def _render_node_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_graph_selected", None)
+                st.session_state.pop(f"{key_prefix}_graph_last_click", None)
+                _rt_key = f"{key_prefix}_graph_render_token"
+                st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
 
         # ── Videos first — they are the primary content ──────────────────────

@@ -407,7 +407,7 @@ def _render_graph_with_selector(
     )
     is_tree = viz_type.startswith("tree_")
 
-    # ── Tree-only controls ────────────────────────────────────────────────
+    # ── Pruning controls (unified across tree + Markov) ───────────────────
     if is_tree:
         c_mb, c_md = st.columns(2)
         with c_mb:
@@ -421,7 +421,10 @@ def _render_graph_with_selector(
                 2, 500, 500, key=f"{view_key}_maxdepth",
             )
     else:
-        min_branch = 2
+        min_branch = st.slider(
+            "Hide branches reaching fewer than N episodes",
+            1, 50, 2, key=f"{view_key}_minbranch",
+        )
         max_depth_cap = 500
 
     # ── Color-by selector (single source of truth, applies to every viz) ──
@@ -454,11 +457,9 @@ def _render_graph_with_selector(
         ),
     )
 
-    min_prob = st.slider(
-        "Min edge probability",
-        0.0, 0.5, 0.0, 0.01,
-        key=min_prob_key,
-    )
+    # Slider value `min_branch` (episode count) drives Markov pruning; we
+    # keep `min_prob = 0.0` for the pyvis path which expects a probability.
+    min_prob = 0.0
 
     # ── Caption: which feature space the clustering came from ─────────────
     clust_src = st.session_state.get("clustering_influence_source") or st.session_state.get(
@@ -517,7 +518,8 @@ def _render_graph_with_selector(
             render_graph_component,
         )
         excluded = compute_pruned_graph_nodes(
-            graph, min_visit_prob=0.0, n_total=graph.num_episodes, min_edge_prob=min_prob
+            graph, min_visit_prob=0.0, n_total=graph.num_episodes,
+            min_edge_count=int(min_branch),
         )
         pos = None
         if viz_type == "markov_svg_temporal":
@@ -579,7 +581,7 @@ def _render_graph_with_selector(
             height=height,
             key=graph_key,
             excluded_node_ids=excluded,
-            min_edge_prob=min_prob,
+            min_edge_count=int(min_branch),
             pos=pos,
             color_override=color_override_arg,
         )
@@ -639,6 +641,9 @@ def _render_node_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_selected", None)
+                st.session_state.pop(f"{key_prefix}_last_click", None)
+                _rt_key = f"{key_prefix}_render_token"
+                st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
 
         # Episode success stats
@@ -1009,6 +1014,9 @@ def _render_edge_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_selected_edge", None)
+                st.session_state.pop(f"{key_prefix}_last_click", None)
+                _rt_key = f"{key_prefix}_render_token"
+                st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
 
         all_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)

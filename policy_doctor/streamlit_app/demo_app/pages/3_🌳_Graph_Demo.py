@@ -124,6 +124,16 @@ if not _tasks:
 default_task_idx = _tasks.index("transport_mh_jan28") if "transport_mh_jan28" in _tasks else 0
 task = st.sidebar.selectbox("Task", _tasks, index=default_task_idx)
 
+# When the task changes, clear stale per-component state (selected node,
+# selected edge, last-click dedupe, render token) so the next click in the
+# new graph isn't silently deduped against the previous task's last click.
+_prev_task = st.session_state.get("_demo_prev_task")
+if _prev_task != task:
+    st.session_state["_demo_prev_task"] = task
+    for prefix in ("demo_markov_graph", "demo_tree"):
+        for suffix in ("_selected", "_selected_edge", "_last_click", "_render_token"):
+            st.session_state.pop(prefix + suffix, None)
+
 st.sidebar.header("Clustering")
 _cands = _clusterings_for_task(task)
 if not _cands:
@@ -281,10 +291,8 @@ if is_tree:
     with c_md:
         max_depth = st.slider("Max depth (rarely needs to cap)", 2, 500, 500)
 else:
-    min_branch = 2
+    min_branch = st.slider("Hide branches reaching fewer than N episodes", 1, 50, 2)
     max_depth = 500
-
-min_prob = st.slider("Min edge probability", 0.0, 0.5, 0.0, 0.01)
 
 # Build the underlying Markov graph (used for value computation + Markov views).
 @st.cache_data(show_spinner=False)
@@ -323,7 +331,8 @@ if is_tree:
 else:
     # Markov SVG (BFS or temporal layout)
     excluded = compute_pruned_graph_nodes(
-        bg, min_visit_prob=0.0, n_total=bg.num_episodes, min_edge_prob=min_prob,
+        bg, min_visit_prob=0.0, n_total=bg.num_episodes,
+        min_edge_count=int(min_branch),
     )
     pos = None
     if viz_type == "markov_svg_temporal":
@@ -367,7 +376,7 @@ else:
         mp4_dir=_MP4_DIR if _MP4_DIR is not None else Path("/tmp/_nonexistent"),
         mp4_index=_MP4_INDEX,
         key_prefix="demo_markov",
-        min_edge_prob=min_prob,
+        min_edge_count=int(min_branch),
         pos=pos,
         excluded_node_ids=excluded,
         color_override=color_override,

@@ -41,20 +41,25 @@ def compute_pruned_graph_nodes(
     min_visit_prob: float,
     n_total: int,
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
 ) -> frozenset[int]:
     """Return the set of node IDs to EXCLUDE from the graph.
 
     Algorithm:
-    1. Remove regular nodes whose visit frequency < min_visit_prob.
-    2. BFS from START following only edges with prob >= min_edge_prob through
-       surviving nodes; remove anything unreachable.
+    1. Remove regular nodes whose visit frequency < min_visit_prob
+       (or whose num_episodes < min_edge_count, when min_edge_count > 0).
+    2. BFS from START following only edges with prob >= min_edge_prob
+       (and transition_count >= min_edge_count when > 0) through surviving
+       nodes; remove anything unreachable.
     Special nodes (START/SUCCESS/FAILURE) are never excluded by the threshold but
     may disappear if all paths to them are cut by node or edge pruning.
     """
     surviving = {
         nid for nid, node in graph.nodes.items()
-        if nid in _SPECIAL_IDS or n_total == 0 or
-        node.num_episodes / n_total >= min_visit_prob
+        if nid in _SPECIAL_IDS or (
+            (n_total == 0 or node.num_episodes / n_total >= min_visit_prob)
+            and (min_edge_count <= 0 or node.num_episodes >= min_edge_count)
+        )
     }
 
     reachable: set[int] = set()
@@ -65,8 +70,15 @@ def compute_pruned_graph_nodes(
             continue
         reachable.add(nid)
         for tgt, prob in graph.transition_probs.get(nid, {}).items():
-            if tgt in surviving and tgt not in reachable and prob >= min_edge_prob:
-                queue.append(tgt)
+            if tgt not in surviving or tgt in reachable:
+                continue
+            if prob < min_edge_prob:
+                continue
+            if min_edge_count > 0:
+                cnt = graph.transition_counts.get(nid, {}).get(tgt, 0)
+                if cnt < min_edge_count:
+                    continue
+            queue.append(tgt)
 
     return frozenset(nid for nid in graph.nodes if nid not in reachable)
 
@@ -213,6 +225,7 @@ def _build_graph_json(
     pos: dict[int, tuple[float, float]],
     thumbnails: dict[int, list[str]] | None = None,
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
     symbol_override: Optional[dict[int, str]] = None,
     color_override: Optional[dict[int, str]] = None,
 ) -> str:
@@ -276,7 +289,13 @@ def _build_graph_json(
     edges = []
     for src, targets in graph.transition_probs.items():
         for tgt, prob in targets.items():
-            if prob >= max(0.01, min_edge_prob) and src in pos and tgt in pos:
+            if prob < max(0.01, min_edge_prob):
+                continue
+            if min_edge_count > 0:
+                cnt = graph.transition_counts.get(src, {}).get(tgt, 0)
+                if cnt < min_edge_count:
+                    continue
+            if src in pos and tgt in pos:
                 edges.append({"src": src, "tgt": tgt, "prob": round(prob, 4)})
 
     positions = {str(nid): list(xy) for nid, xy in pos.items()}
@@ -292,6 +311,7 @@ def render_graph_component(
     mp4_dir: Optional[Path] = None,
     excluded_node_ids: frozenset[int] = frozenset(),
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
     pos: Optional[dict[int, tuple[float, float]]] = None,
     symbol_override: Optional[dict[int, str]] = None,
     color_override: Optional[dict[int, str]] = None,
@@ -319,11 +339,20 @@ def render_graph_component(
         thumbnails = _extract_node_thumbnails(graph, mp4_dir)
     graph_json = _build_graph_json(
         graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob,
+        min_edge_count=min_edge_count,
         symbol_override=symbol_override, color_override=color_override,
     )
     selected = st.session_state.get(f"{key}_selected")
     selected_edge = st.session_state.get(f"{key}_selected_edge")
     last_click = st.session_state.get(f"{key}_last_click", _SENTINEL)
+
+    # Streamlit's component bridge only pushes a render when args change.
+    # When selection is cleared (e.g. X-button popped session state) the
+    # iframe's persisted return value still equals `last_click` and args
+    # hash to the same value as the previous render, so the iframe never
+    # re-renders → halo stays on. The X-button handlers bump
+    # `{key}_render_token` to force args to change.
+    render_token = st.session_state.get(f"{key}_render_token", 0)
 
     clicked = _graph_component(
         graph_json=graph_json,
@@ -331,6 +360,7 @@ def render_graph_component(
         selected_node_id=selected,
         selected_edge=list(selected_edge) if selected_edge else None,
         highlighted_path=highlighted_path,
+        render_token=render_token,
         key=key,
         default=None,
     )
