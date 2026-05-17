@@ -17,5 +17,11 @@ outputs/
 # Local run-output dirs (treated as transient; not source)
 /experiments/
 
+# Model checkpoints (too large for git; download separately)
+/checkpoints/
+
+# DROID rollout artifacts
+/data/droid_eval_runs/
+
 # Pre-implementation spec, superseded by docs/experiments/experiment_e2_agent_proposals.md
 /E2_vlm_proposals.md

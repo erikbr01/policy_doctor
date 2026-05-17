@@ -1,0 +1,312 @@
+# Running diffusion-policy inference on the real DROID rig
+
+End-to-end guide for serving a trained image-diffusion-policy checkpoint to the
+real Franka via the standalone client `scripts/run_droid_diffusion_inference.py`.
+Companion to [`docs/droid_robot_setup.md`](droid_robot_setup.md) (data collection
++ training); this doc only covers the inference / rollout side.
+
+The setup runs as three separate processes on the workstation, each in its own
+conda / uv environment. They communicate over localhost:
+
+```
+  Terminal A   policy server      (cupid_torch25, GPU)
+                  │
+                  │ HTTP POST /infer_dict
+                  ▼
+  Terminal C   inference client   (zed_env)           ←──── ZMQ PULL ──── Terminal B
+              run_droid_diffusion_inference.py                            pi_eval_viser.py
+                                                      ────── ZMQ PUSH ───►   (viser dashboard,
+                                                                              openpi/.venv)
+```
+
+The split exists because the ZED SDK + Franka RDK stack lives in one Python env,
+the diffusion_policy + torch stack lives in another, and viser + pyroki need
+Python ≥ 3.10. They never share a process.
+
+---
+
+## 1. One-time setup
+
+### 1.1 Build the `cupid_torch25` env (server side)
+
+Hosts the diffusion-policy checkpoint + Flask `/infer_dict` endpoint. Built
+from scratch (does not depend on a pre-existing `cupid_torch2` env):
+
+```bash
+cd /home/hardware/code/erik/policy_doctor
+bash scripts/create_cupid_torch25_from_yaml.sh
+```
+
+Takes ~5 min. Installs torch 2.5.1+cu124 plus everything in
+`third_party/cupid/conda_environment.yaml` (minus the simulator deps —
+inference doesn't need MuJoCo / robosuite simulation).
+
+**On Blackwell-class GPUs (RTX 5090, sm_120):** torch 2.5.1+cu124 only ships
+kernels up to sm_90, so the first `predict_action` call will fail with
+`CUDA error: no kernel image is available for execution on the device`. Fix:
+
+```bash
+conda run -n cupid_torch25 pip install --upgrade \
+    torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
+Verify:
+
+```bash
+conda run -n cupid_torch25 python -c "
+import torch
+print(torch.__version__, torch.cuda.get_arch_list())
+print(torch.cuda.get_device_properties(0).name,
+      torch.cuda.get_device_capability(0))
+"
+# Expect:  2.7.0+cu128 [..., 'sm_120', 'compute_120']
+#          NVIDIA GeForce RTX 5090 (12, 0)
+```
+
+### 1.2 Client env (robot side)
+
+The inference client runs in `zed_env` (or `zed_env_spacemouse` — anywhere
+the DROID stack and pyzed already work). It needs only `numpy`, `cv2`,
+`requests`, plus `pyzmq` + `msgpack` if you want viser. All four are already
+present in `zed_env_spacemouse`.
+
+**Do not install `policy_doctor` into the robot env.** The client script
+imports only `droid.robot_env.RobotEnv` and stdlib + the four packages above;
+it has no `policy_doctor` dependency. Mixing the policy_doctor / torch stack
+into the ZED env is what we are explicitly avoiding.
+
+### 1.3 Dashboard env (optional, for viser)
+
+`pi_eval_viser.py` (from droid-spacemouse) needs `viser`, `pyroki`,
+`yourdfpy`, `robot_descriptions`, `msgpack`, `zmq`. The openpi uv venv has
+all of these:
+
+```bash
+/home/hardware/code/openpi/.venv/bin/python --version   # 3.11
+/home/hardware/code/openpi/.venv/bin/python -c "import viser, pyroki, msgpack, zmq"
+```
+
+If you need a fresh env: see the docstring at the top of
+`droid-spacemouse/scripts/pi_eval_viser.py` for two recipes
+(uv pip into the openpi venv, or a dedicated conda env).
+
+### 1.4 Checkpoint location
+
+The default checkpoint used during validation lives at:
+
+```
+checkpoints/may13_droid.ckpt   (1.5 GB)
+```
+
+You can store checkpoints anywhere; just point `--checkpoint` at the right
+path in step 2.1 below.
+
+---
+
+## 2. Start the three processes
+
+### 2.1 Terminal A — policy server
+
+```bash
+conda activate cupid_torch25
+cd /home/hardware/code/erik/policy_doctor
+python -m policy_doctor.envs.policy_server \
+    --checkpoint checkpoints/may13_droid.ckpt \
+    --device cuda:0 \
+    --port 5001
+```
+
+Wait for the line `[server] ready on cuda:0`. Health check from any shell:
+
+```bash
+curl http://127.0.0.1:5001/health
+# {"device":"cuda:0","status":"ok"}
+```
+
+Notes:
+
+- The server has two endpoints. `/infer` is for low-dim policies and is
+  unused for DROID. `/infer_dict` accepts an npz-serialised dict-of-arrays
+  matching the checkpoint's `cfg.shape_meta.obs` and is what
+  `run_droid_diffusion_inference.py` calls.
+- Checkpoints saved while the model was wrapped with `torch.compile` have
+  `._orig_mod.` injected into `state_dict` keys. The server strips that
+  prefix at load time so a non-compiled instance can load them — no manual
+  pre-processing of the checkpoint required.
+
+### 2.2 Terminal B — viser dashboard (optional but recommended)
+
+```bash
+/home/hardware/code/openpi/.venv/bin/python \
+    /home/hardware/code/erik/droid-spacemouse/scripts/pi_eval_viser.py \
+    --port 5556 --pause-port 5557
+```
+
+Open the URL it prints (typically `http://localhost:8080`).
+
+The dashboard's URDF **does not auto-animate predicted action chunks** — it
+shows the live joint state (which doesn't change in `--dry-run`). To see
+where the policy wants to go, click **"Play preview"** in the GUI panel; the
+URDF will animate through the latest received chunk. Adjust `Velocity scale`,
+`Preview horizon`, and `Play speed` to taste.
+
+The dashboard also exposes **Pause** (suppresses `env.step()` while inference
+keeps flowing — useful for "freeze the arm, watch what the policy would do")
+and **Reset** (ends the rollout, homes the arm).
+
+### 2.3 Terminal C — inference client
+
+Three run modes, mutually exclusive:
+
+```bash
+conda activate zed_env
+cd /home/hardware/code/erik/policy_doctor
+
+# (a) Wire-format check only — no robot, fake observations
+python scripts/run_droid_diffusion_inference.py --no-robot --max-timesteps 32
+
+# (b) Dry-run — real RobotEnv (arm homes once on init), real obs, NO env.step
+python scripts/run_droid_diffusion_inference.py \
+    --dry-run \
+    --viser-port 5556 --pause-port 5557 \
+    --external-camera left \
+    --max-timesteps 300
+
+# (c) Live — real everything, ARM MOVES
+python scripts/run_droid_diffusion_inference.py \
+    --viser-port 5556 --pause-port 5557 \
+    --external-camera left \
+    --max-timesteps 60 \
+    --max-joint-vel 0.5
+```
+
+Key flags:
+
+| Flag                  | Default              | Notes                                                                                  |
+|-----------------------|----------------------|----------------------------------------------------------------------------------------|
+| `--server-url`        | `http://127.0.0.1:5001` | Where the policy server is listening.                                                 |
+| `--external-camera`   | `left`               | `left` → ZED 36716034, `right` → ZED 37617599. Whichever you pick is sent to the policy as `exterior_image_1_left`. |
+| `--wrist-serial`      | `14313307`           | Wrist ZED serial. Sent to the policy as `hand_camera_image`.                          |
+| `--max-timesteps`     | `600`                | Hard step cap. ~40 s at 15 Hz. **Use 60 for first live runs.**                        |
+| `--open-loop-horizon` | `8`                  | Steps from each predicted chunk to execute before requesting a new chunk.             |
+| `--control-hz`        | `15.0`               | DROID's standard data-collection rate. Don't change unless you know why.              |
+| `--max-joint-vel`     | `0.5`                | Hard cap on \|joint velocity\| in rad/s. **Conservative; expect to relax to 1.0–2.0 later.** |
+| `--no-robot`          | off                  | No RobotEnv init, no env.step, fake obs. Wire-format check only.                      |
+| `--dry-run`           | off                  | Real RobotEnv (homes the arm on init), real obs, env.step suppressed.                 |
+| `--viser-port`        | `None`               | If set, publishes per-step state + predicted chunks via ZMQ PUSH to the dashboard.    |
+| `--pause-port`        | `None`               | If set, listens for Pause/Reset commands from the dashboard.                          |
+
+Note: `RobotEnv.__init__` always homes the arm. The `--dry-run` flag only
+gates `env.step()` calls during the rollout, not the init reset.
+
+---
+
+## 3. Going from dry-run to live
+
+Order of operations for the first live rollout against a new checkpoint:
+
+1. **`--no-robot`**, short. Confirms server is up, wire format is intact,
+   chunks come back the right shape. See `[client] t=0 inference ...ms
+   chunk shape=(8, 8)` and a non-zero `mean=...ms` summary.
+2. **`--dry-run --viser-port 5556`**. Real obs flow through the policy.
+   Click Play preview in viser; the predicted trajectory should look like
+   something the policy plausibly wants to do for the task.
+3. **Live, `--max-timesteps 60 --max-joint-vel 0.5`.** First live attempt is
+   intentionally short and slow. Stand within reach of Pause / Reset / Ctrl+C
+   / hardware E-stop.
+4. **Iterate one knob at a time** — usually just `max_joint_vel` upward and
+   `max_timesteps` longer. The training-data joint-velocity range goes to
+   roughly ±1.5–3 rad/s, so 0.5 will visibly saturate joint 4 (the elbow).
+
+---
+
+## 4. How obs and actions map between training and inference
+
+The checkpoint stores its expected obs schema under `cfg.shape_meta.obs`:
+
+| Policy key                 | Shape         | Source on the robot                                                       |
+|----------------------------|---------------|---------------------------------------------------------------------------|
+| `hand_camera_image`        | `(3, 256, 256)` float in [0, 1] | wrist ZED, BGRA → RGB, INTER_AREA-resized 1280×720→256×256, /255, HWC→CHW |
+| `exterior_image_1_left`    | `(3, 256, 256)` float in [0, 1] | selected exterior ZED, same pipeline                                      |
+| `joint_positions`          | `(7,)` float32                  | `RobotEnv.get_observation()["robot_state"]["joint_positions"]`            |
+| `gripper_position`         | `(1,)` float32                  | `[state["gripper_position"]]`                                             |
+
+Each key is sent to `/infer_dict` with a leading `(1, n_obs_steps=2, …)` —
+the client maintains a 2-step history deque and stacks consecutive frames.
+
+The policy internally crops `256×256 → 224×224` (center crop;
+`crop_shape=[224, 224]`, `eval_fixed_crop=True`). Don't pre-crop on the
+client side.
+
+Action chunk returned: `(n_action_steps=8, action_dim=8)`. Layout is
+`[joint_vel_0..6, gripper_position]`. The action normalizer is identity
+(checked at load time), so values are in raw training scale — no
+post-scaling needed before `env.step()`.
+
+### Image normalization sanity check
+
+- Conversion script `scripts/convert_droid_to_robomimic.py` stores `(T, H, W, 3) uint8 RGB` after `cv2.INTER_AREA` resize.
+- Training dataset (`RobomimicReplayImageDataset`) does `np.moveaxis(..., -1, 1).astype(np.float32) / 255.0` → CHW float [0, 1].
+- Image normalizer (`get_image_range_normalizer()`) applies `scale=2, offset=-1` → policy sees CHW float in **[-1, 1]**.
+- Inference client does the same `INTER_AREA` resize, the same `/255` step, and the same HWC→CHW transpose. The normalizer runs server-side on the [0, 1] input. End-to-end: no double-normalization, no channel swap drift.
+
+---
+
+## 5. Safety considerations
+
+The script applies **only one** safety layer beyond what `RobotEnv` itself
+enforces: `clip_action_safe()` in
+`scripts/run_droid_diffusion_inference.py`:
+
+- Joint velocities clipped to `±max_joint_vel`.
+- Gripper command binarized at 0.5 (matches openpi's reference; throws
+  continuous signal but eliminates threshold drift).
+
+There is **no** E-stop on inference timeout, **no** workspace-bounds check,
+**no** torque or position limit at the script layer. The DROID `RobotEnv`'s
+internal limits are the only deeper net.
+
+Abort ladder (least to most disruptive):
+
+1. **Pause** in viser dashboard — keeps inference running, suppresses
+   `env.step()`.
+2. **Reset** in viser dashboard — ends rollout, homes the arm via
+   `env.reset()`.
+3. **Ctrl+C** in Terminal C — the script's `finally` block sends one
+   `env.step(zeros)` to halt the arm on the way out.
+4. **Hardware E-stop**.
+
+---
+
+## 6. Architecture / why this isn't a `policy_doctor` import
+
+The script is deliberately standalone — modeled on
+`openpi/examples/droid/main.py` rather than the `DROIDInferenceEnv` /
+`DROIDInferenceRunner` / `ImageHttpPolicy` abstractions inside
+`policy_doctor.envs.*`. Reasons:
+
+- The robot side cannot import `policy_doctor`'s package surface without
+  pulling torch / robomimic (via the dagger-runner re-exports in
+  `policy_doctor/envs/__init__.py`).
+- A standalone client lets the robot env stay free of torch entirely.
+- The wire format between the two processes is the only contract that
+  matters; the script is the entire contract surface.
+
+If you want to use the `DROIDInferenceEnv` / `DROIDInferenceRunner`
+abstractions for an in-process / Streamlit integration, those still exist
+under `policy_doctor/envs/droid_*.py` and work with the same
+`/infer_dict` endpoint. They're just not the recommended path for the
+real-robot rollout loop.
+
+---
+
+## 7. Files referenced
+
+| Path                                                     | Role                                          |
+|----------------------------------------------------------|-----------------------------------------------|
+| `policy_doctor/envs/policy_server.py`                    | Flask `/infer` + `/infer_dict` server          |
+| `scripts/run_droid_diffusion_inference.py`               | Standalone robot-side client                   |
+| `scripts/create_cupid_torch25_from_yaml.sh`              | One-shot env build for the server side        |
+| `checkpoints/may13_droid.ckpt`                           | Reference checkpoint (kendama task)           |
+| `droid-spacemouse/scripts/pi_eval_viser.py`              | Viser dashboard (run from openpi/.venv)       |
+| `scripts/convert_droid_to_robomimic.py`                  | Authoritative source for training-data preprocessing — referenced by section 4 |

@@ -1,17 +1,17 @@
 """HTTP policy server: loads the policy and serves inference via Flask.
 
-Wire format: raw numpy bytes (application/octet-stream) using np.save/np.load.
+Two endpoints:
+  POST /infer       — low-dim path. Body = np.save bytes of (1, n_obs, obs_dim).
+                      Returns np.save bytes of (1, n_action_steps, action_dim).
+  POST /infer_dict  — image-policy path. Body = np.savez bytes of a dict-of-arrays,
+                      one entry per obs key, each shape (1, n_obs, *modality_shape).
+                      Returns np.save bytes of (1, n_action_steps, action_dim).
 
 Start the server in one terminal:
     python -m policy_doctor.envs.policy_server \
         --checkpoint /path/to/epoch=0950-....ckpt \
-        --device mps \
+        --device cuda:0 \
         --port 5001
-
-Then use PolicyClient in the DAgger runner:
-    client = PolicyClient(url="http://localhost:5001")
-    client.submit(obs_dict)            # non-blocking, fires HTTP in background thread
-    chunk = client.get()               # blocks until response (usually already ready)
 """
 
 from __future__ import annotations
@@ -44,6 +44,20 @@ def _build_app(checkpoint: str, device: str):
     cfg = payload["cfg"]
     cls = hydra.utils.get_class(cfg._target_)
     ws = cls(cfg, output_dir="/tmp/_policy_server_ws")
+
+    # Strip the "._orig_mod." prefix that torch.compile injects into state_dict
+    # keys. Checkpoints saved while the model was compiled need this so the
+    # uncompiled instance here can load them.
+    for module_key in ("model", "ema_model"):
+        sd = payload["state_dicts"].get(module_key)
+        if sd is None:
+            continue
+        cleaned = {k.replace("._orig_mod.", "."): v for k, v in sd.items()}
+        if cleaned != sd:
+            payload["state_dicts"][module_key] = cleaned
+            n = sum(1 for k in sd if "._orig_mod." in k)
+            print(f"[server] stripped ._orig_mod. from {n} keys in {module_key}", flush=True)
+
     ws.load_payload(payload, exclude_keys=None, include_keys=None)
     policy = ws.ema_model if getattr(cfg.training, "use_ema", False) else ws.model
     policy.to(device)
@@ -63,6 +77,22 @@ def _build_app(checkpoint: str, device: str):
         obs_t = torch.from_numpy(obs).float().to(device)
         with torch.no_grad():
             result = policy.predict_action({"obs": obs_t})
+        action = result["action"]
+        if hasattr(action, "detach"):
+            action = action.detach().cpu().numpy()       # (1, n_action_steps, action_dim)
+        buf = io.BytesIO()
+        np.save(buf, action)
+        return buf.getvalue(), 200, {"Content-Type": "application/octet-stream"}
+
+    @app.post("/infer_dict")
+    def infer_dict():
+        # Image-policy path: body is np.savez of a dict-of-arrays, one per obs key.
+        # Each entry shape: (1, n_obs, *modality_shape).  Low-dim entries are float32;
+        # image entries are float32 already normalized to [0, 1] in CHW order.
+        npz = np.load(io.BytesIO(request.data))
+        obs_t = {k: torch.from_numpy(npz[k]).float().to(device) for k in npz.files}
+        with torch.no_grad():
+            result = policy.predict_action(obs_t)
         action = result["action"]
         if hasattr(action, "detach"):
             action = action.detach().cpu().numpy()       # (1, n_action_steps, action_dim)
