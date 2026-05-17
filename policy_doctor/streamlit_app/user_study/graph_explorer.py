@@ -246,7 +246,7 @@ def render_graph_full_width(
     symbol_override: dict[int, str] | None = None,
     color_override: dict[int, str] | None = None,
     theme: str = "dark",
-    edge_style: str = "arrows",
+    edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
 ) -> None:

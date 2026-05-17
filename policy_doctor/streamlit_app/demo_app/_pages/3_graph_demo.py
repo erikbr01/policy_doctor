@@ -489,12 +489,12 @@ with st.expander("Advanced viz settings", expanded=False):
         edge_style = st.radio(
             "Edges",
             options=["arrows", "lines"],
-            index=0,
+            index=1,
             horizontal=True,
             help=(
-                "‘lines’ drops arrowheads. Width + grey level alone encode "
-                "transition probability — cleaner on paper, but you lose "
-                "explicit direction-of-motion."
+                "Default is ‘lines’: width + grey level already encode "
+                "transition probability cleanly. Switch to ‘arrows’ if "
+                "you need explicit direction-of-motion."
             ),
         )
     with _c_w:

@@ -331,7 +331,7 @@ def render_graph_component(
     symbol_override: Optional[dict[int, str]] = None,
     color_override: Optional[dict[int, str]] = None,
     theme: str = "dark",
-    edge_style: str = "arrows",
+    edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
 ) -> Optional[int]:

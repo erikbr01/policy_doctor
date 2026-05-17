@@ -137,7 +137,7 @@ let lastRenderArgs = null;  // svgW, svgH for re-render on reset
 
 // ── Viz options (settable from Python) ─────────────────────────────────────
 let theme = "dark";              // "dark" | "light"
-let edgeStyle = "arrows";        // "arrows" | "lines"
+let edgeStyle = "lines";         // "arrows" | "lines"
 // Linear scaling. Width = EDGE_BASE_W + edgeWidthSlope * prob; the slope
 // (in px) is the slider value, so the user reads it as "how many extra
 // pixels of stroke at p=1". Same shape for node radius vs visit fraction.
@@ -195,18 +195,18 @@ function redrawEdgesFor(nodeId) {
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.sqrt(dx*dx + dy*dy) || 1;
     const ux = dx / len, uy = dy / len;
-    // Read the strokes that render() set so the offset matches the
-    // actual arrow size for THIS edge (markerUnits=strokeWidth means
-    // the arrow's forward extent = markerWidth × strokeW px).
+    // Match the offset to the live path's marker (which is userSpaceOnUse,
+    // so the arrow is a fixed pixel size — 10/12 px or 0 for lines mode).
     const sel = `[data-src="${edge.src}"][data-tgt="${edge.tgt}"]`;
     const livePath = svg.querySelector(`path.edge${sel}`);
-    let strokeW = 1, markerWidth = 6;
+    let markerWidthPx = 10;
     if (livePath) {
-      strokeW = parseFloat(livePath.getAttribute("stroke-width")) || 1;
       const me = livePath.getAttribute("marker-end") || "url(#arrow)";
-      markerWidth = me === "url(#arrow)" ? 6 : me === "none" ? 0 : 7;
+      markerWidthPx = me === "url(#arrow)" ? 10 : me === "none" ? 0 : 12;
     }
-    const endOffset = rTgtVis + markerWidth * strokeW + 3;
+    const idealOffset = rTgtVis + markerWidthPx + 3;
+    const maxOffset = Math.max(0, len - rSrc - 2);
+    const endOffset = Math.min(idealOffset, maxOffset);
     const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
     const ex = x1 - ux * endOffset, ey = y1 - uy * endOffset;
     let ox = 0, oy = 0;
@@ -250,33 +250,36 @@ function render(data, svgW, svgH) {
   const defs = svgEl("defs");
   // Arrowhead anchored at its BASE (refX=0), not its tip — the polygon
   // extends only forward from the line endpoint, so the line never
-  // crosses underneath it (no alpha/draw-order seam).
+  // crosses underneath it.
   //
-  // markerUnits defaults to "strokeWidth", so markerWidth/Height are
-  // multiples of the line's stroke-width. We keep that default
-  // (arrows scale with the line so thick edges get visible arrowheads,
-  // thin edges get small ones — proportional). The line endpoint is
-  // computed per-edge to make room for the resulting arrow length.
+  // `markerUnits="userSpaceOnUse"` pins the arrow to a fixed pixel size
+  // regardless of stroke-width. With the default (strokeWidth units),
+  // a thick edge into a small terminal node ended up with an arrow
+  // visibly larger than the node itself — looked bizarre. Fixed sizing
+  // keeps arrows consistent and always smaller than typical nodes.
+  // Sizes are picked to be readable (≥ 10 px) but smaller than the
+  // smallest cluster (r=6 px → diameter 12 px).
   //
   // Default arrow: inherits the line's RGB via the SVG-2
   // `context-stroke` keyword (Chrome 91+, Firefox, Safari 16+).
-  const marker = svgEl("marker", { id: "arrow",
-    markerWidth: "6", markerHeight: "6", refX: "0", refY: "3", orient: "auto" });
-  marker.appendChild(svgEl("polygon", { points: "0 0, 6 3, 0 6", fill: "context-stroke" }));
+  const ARROW_BASE = { markerUnits: "userSpaceOnUse", orient: "auto" };
+  const marker = svgEl("marker", { ...ARROW_BASE, id: "arrow",
+    markerWidth: "10", markerHeight: "10", refX: "0", refY: "5" });
+  marker.appendChild(svgEl("polygon", { points: "0 0, 10 5, 0 10", fill: "context-stroke" }));
   defs.appendChild(marker);
-  const markerHL = svgEl("marker", { id: "arrow-hl",
-    markerWidth: "7", markerHeight: "7", refX: "0", refY: "3.5", orient: "auto" });
-  markerHL.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#f5a623" }));
+  const markerHL = svgEl("marker", { ...ARROW_BASE, id: "arrow-hl",
+    markerWidth: "12", markerHeight: "12", refX: "0", refY: "6" });
+  markerHL.appendChild(svgEl("polygon", { points: "0 0, 12 6, 0 12", fill: "#f5a623" }));
   defs.appendChild(markerHL);
   // Selected-node edge arrowhead (cyan)
-  const markerSel = svgEl("marker", { id: "arrow-sel",
-    markerWidth: "7", markerHeight: "7", refX: "0", refY: "3.5", orient: "auto" });
-  markerSel.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#64c8ff" }));
+  const markerSel = svgEl("marker", { ...ARROW_BASE, id: "arrow-sel",
+    markerWidth: "12", markerHeight: "12", refX: "0", refY: "6" });
+  markerSel.appendChild(svgEl("polygon", { points: "0 0, 12 6, 0 12", fill: "#64c8ff" }));
   defs.appendChild(markerSel);
   // Selected-edge arrowhead (gold)
-  const markerEdgeSel = svgEl("marker", { id: "arrow-edge-sel",
-    markerWidth: "7", markerHeight: "7", refX: "0", refY: "3.5", orient: "auto" });
-  markerEdgeSel.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#ffc832" }));
+  const markerEdgeSel = svgEl("marker", { ...ARROW_BASE, id: "arrow-edge-sel",
+    markerWidth: "12", markerHeight: "12", refX: "0", refY: "6" });
+  markerEdgeSel.appendChild(svgEl("polygon", { points: "0 0, 12 6, 0 12", fill: "#ffc832" }));
   defs.appendChild(markerEdgeSel);
   svg.appendChild(defs);
 
@@ -366,14 +369,20 @@ function render(data, svgW, svgH) {
     if (edgeStyle === "lines") markerEnd = "none";
 
     // Compute the line-end offset *after* the stroke width is decided.
-    // Markers use the default `markerUnits=strokeWidth`, so the marker's
-    // forward extent in pixels = markerWidth × strokeW. The arrow markers
-    // are 6 (`#arrow`) or 7 (`#arrow-hl|sel|edge-sel`) units wide.
-    const markerWidth = markerEnd === "url(#arrow)" ? 6
-                      : markerEnd === "none" ? 0 : 7;
-    const arrowForwardPx = markerWidth * parseFloat(strokeW);
-    const tipGap = 3;  // px between arrow tip and the visible node edge
-    const endOffset = rTgtVis + arrowForwardPx + tipGap;
+    // Markers are userSpaceOnUse so they're a fixed pixel size: 10 px for
+    // the default arrow, 12 px for the highlight/selection markers,
+    // 0 when arrowheads are disabled ("lines" mode).
+    //
+    // Clamp the offset to the chord length so the line endpoint never
+    // crosses past the source — that would reverse the path's tangent
+    // and the auto-oriented marker would point backward, which looked
+    // like "arrows flipping" on short edges.
+    const markerWidthPx = markerEnd === "url(#arrow)" ? 10
+                        : markerEnd === "none" ? 0 : 12;
+    const tipGap = 3;
+    const idealOffset = rTgtVis + markerWidthPx + tipGap;
+    const maxOffset = Math.max(0, len - rSrc - 2);
+    const endOffset = Math.min(idealOffset, maxOffset);
     const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
     const ex = x1 - ux * endOffset, ey = y1 - uy * endOffset;
 
@@ -795,7 +804,7 @@ window.addEventListener("message", (event) => {
 
     // New viz options (with safe defaults so older callers still work).
     theme = args.theme === "light" ? "light" : "dark";
-    edgeStyle = args.edge_style === "lines" ? "lines" : "arrows";
+    edgeStyle = args.edge_style === "arrows" ? "arrows" : "lines";
     edgeWidthSlope = typeof args.edge_width_slope === "number" ? args.edge_width_slope : 5.0;
     nodeSizeSlope = typeof args.node_size_slope === "number" ? args.node_size_slope : 24.0;
     document.body.classList.toggle("theme-light", theme === "light");

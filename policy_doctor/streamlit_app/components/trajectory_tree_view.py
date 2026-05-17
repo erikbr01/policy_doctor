@@ -54,7 +54,7 @@ def render_trajectory_tree(
     key_prefix: str = "tree",
     show_stats: bool = True,
     theme: str = "dark",
-    edge_style: str = "arrows",
+    edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
 ) -> None:
@@ -176,7 +176,7 @@ def _render_native_svg(
     color_mode: str = "outcome",
     node_values: Optional[Dict[int, float]] = None,
     theme: str = "dark",
-    edge_style: str = "arrows",
+    edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
 ) -> None:
