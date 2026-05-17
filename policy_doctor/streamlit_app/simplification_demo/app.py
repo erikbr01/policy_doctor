@@ -135,22 +135,26 @@ def load_clustering(path_str: str) -> Tuple[np.ndarray, List[Dict], Dict]:
 
 @st.cache_data(show_spinner=False)
 def k_sweep_baseline(task: str, family_prefix: str) -> List[Dict]:
-    """Compute passthrough metrics for every clustering matching family_prefix.
+    """Compute passthrough metrics for every clustering K matching family_prefix.
 
     family_prefix is the slug stripped of `_k{K}` (so e.g.
     "policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans" matches all K).
+    De-duplicates by K (a clustering can show up under multiple data
+    roots, but those copies are the same data — we want one point per K).
     Returns a list of dicts with the same shape as a FrontierPoint dict.
     """
     import re
     from policy_doctor.behaviors.simplification.metrics import compute_metrics
 
-    out: List[Dict] = []
+    by_k: Dict[int, Dict] = {}
     for c in list_clusterings(task):
         name = c.name
         m = re.match(rf"^{re.escape(family_prefix)}_k(\d+)$", name)
         if not m:
             continue
         k = int(m.group(1))
+        if k in by_k:
+            continue  # already have this K from another data root
         try:
             labels, meta, manifest = load_clustering(str(c))
         except Exception:
@@ -168,9 +172,8 @@ def k_sweep_baseline(task: str, family_prefix: str) -> List[Dict]:
             "k": k,
             "heldout_nll_per_original_bits": None,
         })
-        out.append(d)
-    out.sort(key=lambda p: p["n_nodes"])
-    return out
+        by_k[k] = d
+    return sorted(by_k.values(), key=lambda p: p["n_nodes"])
 
 
 @st.cache_data(show_spinner=False)
