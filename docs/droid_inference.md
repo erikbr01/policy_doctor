@@ -195,9 +195,88 @@ Key flags:
 | `--dry-run`           | off                  | Real RobotEnv (homes the arm on init), real obs, env.step suppressed.                 |
 | `--viser-port`        | `None`               | If set, publishes per-step state + predicted chunks via ZMQ PUSH to the dashboard.    |
 | `--pause-port`        | `None`               | If set, listens for Pause/Reset commands from the dashboard.                          |
+| `--output-dir`        | `data/droid_eval_runs` | Root dir for per-rollout subfolders (see §3.5). Pass `--no-recording` to disable.   |
+| `--no-recording`      | off                  | Skip MP4 + HDF5 capture entirely.                                                     |
+| `--no-success-prompt` | off                  | Skip the y/n/0-100 success prompt at the end of live rollouts.                       |
 
 Note: `RobotEnv.__init__` always homes the arm. The `--dry-run` flag only
 gates `env.step()` calls during the rollout, not the init reset.
+
+### 3.5 Rollout recording layout
+
+Every rollout (live or `--dry-run`) writes a self-contained directory under
+`--output-dir`, default `data/droid_eval_runs/<timestamp>/`:
+
+```
+data/droid_eval_runs/20260516_181500/
+├── trajectory.hdf5      one demo, training-schema layout (loadable by RobomimicReplayImageDataset)
+├── wrist.mp4            wrist ZED at native res, RGB, control_hz
+├── exterior.mp4         exterior ZED at native res, RGB, control_hz
+└── meta.json            args, instruction, latency summary, success
+```
+
+The HDF5 stores exactly what the policy saw and what the policy returned:
+
+```
+data/
+    attrs: total = T
+    demo_0/
+        attrs: num_samples = T, success = <float|nan>
+        actions          (T, 8)   float32  — clipped action sent to env.step()
+        raw_actions      (T, 8)   float32  — pre-clip action selected from the chunk
+        dones            (T,)     float32  — 1 on final step
+        rewards          (T,)     float32  — 1 on final step if success
+        executed         (T,)     bool     — env.step() actually called this step
+        t                (T,)     int32    — global control-loop step index
+        obs/
+            hand_camera_image       (T, 256, 256, 3) uint8 RGB
+            exterior_image_1_left   (T, 256, 256, 3) uint8 RGB
+            joint_positions         (T, 7)           float32
+            gripper_position        (T, 1)           float32
+            cartesian_position      (T, 6)           float32
+        inference/
+            step_indices            (N_chunks,)      int32   — t when each inference fired
+            predicted_chunks        (N_chunks, 8, 8) float32 — full chunk returned by the policy
+            latency_ms              (N_chunks,)      float32
+mask/
+    test = ["demo_0"]
+```
+
+The `obs/` group matches `scripts/convert_droid_to_robomimic.py`'s output
+exactly — image storage is `uint8 HWC RGB` at the same `256×256` resolution
+training used. The `/255` + `transpose(2,0,1)` step that converts it to
+the policy's `[0, 1] CHW float32` happens in `RobomimicReplayImageDataset`
+at load time, so these rollouts plug into the influence-computation
+pipeline without any reformatting.
+
+To reconstruct the exact `(1, n_obs_steps=2, *)` window that was sent to
+`/infer_dict` for inference call at index `i`:
+
+```python
+import h5py
+with h5py.File("trajectory.hdf5", "r") as f:
+    t = int(f["data/demo_0/inference/step_indices"][i])
+    # window = [obs at t-1, obs at t], padded with obs at t when t == 0
+    prev = max(0, t - 1)
+    hand_win = f["data/demo_0/obs/hand_camera_image"][[prev, t]]   # (2, 256, 256, 3) uint8
+    # apply training's load-time normalization
+    hand_win = (hand_win.astype("float32") / 255.0).transpose(0, 3, 1, 2)[None]  # (1, 2, 3, 256, 256)
+```
+
+`meta.json` carries the run-level metadata:
+
+```json
+{
+  "timestamp":   "20260516_181500",
+  "mode":        "live",
+  "instruction": "pick up the red cup",
+  "n_steps":     63,
+  "n_chunks":    8,
+  "success":     1.0,
+  "latencies_ms": {"mean": 254.1, "p50": 251.9, "p95": 389.4},
+  "args":        { ... CLI args ... }
+}
+```
 
 ---
 
