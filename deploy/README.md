@@ -84,10 +84,19 @@ at `policy_doctor/configs/user_study/<task>.yaml`. See
 ## Deployment options
 
 The image listens on port `8501` (the streamlit default). It exposes a
-health-check at `/_stcore/health`. Three reasonable hosting paths:
+health-check at `/_stcore/health`.
 
-- **Cloud Run / Fly / Render**: push to a registry, deploy as an HTTP
-  service. The image is small enough that cold-start ≈ 5–10 s.
+For GCP, see [`DEPLOY_PLAN.md`](DEPLOY_PLAN.md). Short version:
+
+- **`./deploy/deploy_gcp_vm.sh`** — one-VM GCE deploy on `gcp-driven-data`
+  (`e2-small`, `us-west1-a`), gated by a SHA-256-hashed shared password.
+  Works with `roles/editor`. This is the default.
+- **`./deploy/deploy_gcp.sh`** — Cloud Run alternative with Google
+  Workspace domain restriction. Needs `run.services.setIamPolicy`
+  (`roles/run.admin` or `roles/owner`) on the project.
+
+Other hosts:
+
 - **HuggingFace Spaces**: the `Dockerfile` works as-is; add the
   appropriate `README.md` frontmatter at the Space level.
 - **Local intranet**: a single `docker run -d ...` is enough.

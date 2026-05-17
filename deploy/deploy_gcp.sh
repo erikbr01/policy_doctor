@@ -24,8 +24,8 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
-PROJECT="${PROJECT:?Set PROJECT=<gcp-project-id> in the environment.}"
-REGION="${REGION:-us-central1}"
+PROJECT="${PROJECT:-gcp-driven-data}"
+REGION="${REGION:-us-west1}"             # us-west1 (Oregon): Tier 1 pricing, close to CA
 REPO="${REPO:-policy-doctor}"            # Artifact Registry repo name
 SERVICE="${SERVICE:-policy-doctor-demo}" # Cloud Run service name
 IMAGE_NAME="${IMAGE_NAME:-demo}"         # image inside the AR repo
@@ -33,7 +33,7 @@ MEMORY="${MEMORY:-1Gi}"
 CPU="${CPU:-1}"
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
 MAX_INSTANCES="${MAX_INSTANCES:-3}"
-AUTH_MODE="${AUTH_MODE:-public}"          # public | private
+AUTH_MODE="${AUTH_MODE:-private}"         # public | private
 ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-stanford.edu,tri.global}"  # comma- or space-separated list,
                                           # only used when AUTH_MODE=private
 PORT=8501
@@ -74,8 +74,10 @@ echo "→ Bundling artifacts via collect_artifacts.sh"
 "$SCRIPT_DIR/collect_artifacts.sh"
 
 # ── 2. Build docker image ────────────────────────────────────────────────────
-echo "→ Building image (this takes ~30s)"
-docker build -t policy-doctor-demo "$SCRIPT_DIR"
+# Cloud Run only runs amd64/linux. Force the build platform so Apple Silicon
+# Macs don't push arm64-only images that Cloud Run rejects.
+echo "→ Building image for linux/amd64 (this takes ~30s)"
+docker build --platform linux/amd64 -t policy-doctor-demo "$SCRIPT_DIR"
 
 # ── 3. Tag for Artifact Registry ─────────────────────────────────────────────
 echo "→ Tagging $IMAGE_LATEST and $IMAGE_SHA"

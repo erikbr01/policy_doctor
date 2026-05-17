@@ -4,3 +4,7 @@
 policy_doctor/
 third_party/
 data/
+
+# Plaintext shared password persisted by deploy_gcp_vm.sh — kept locally so
+# re-runs don't churn the password, but never committed.
+.app_password
