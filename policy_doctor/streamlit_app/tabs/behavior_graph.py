@@ -362,47 +362,98 @@ def _render_graph_with_selector(
     values: Optional[Dict] = None,
     gamma: float = 0.99,
 ) -> None:
-    """Shared graph renderer: SVG component or Pyvis, with node panel."""
-    from policy_doctor import plotting
+    """Unified graph visualizer with a viz-type dropdown.
+
+    Defaults to the clickable native-SVG trajectory tree (root → distinct
+    leaves, no cycles). Other options: tree variants (sunburst / icicle /
+    treemap) for compactness, and the original Markov graph (BFS-layered or
+    temporal-mean) for transition-probability semantics.
+    """
     from policy_doctor.plotting.plotly.behavior_graph import create_interactive_behavior_graph
     from policy_doctor.plotting.plotly.behavior_graph_timesteps import (
         create_timestep_colored_interactive_graph,
     )
 
-    renderer_col, view_col = st.columns([1, 2])
-    with renderer_col:
-        renderer = st.selectbox(
-            "Renderer",
-            options=["svg", "pyvis"],
-            format_func=lambda x: {"svg": "SVG (clickable nodes)", "pyvis": "Pyvis (physics)"}[x],
-            key=f"{view_key}_renderer",
+    # ── Visualization-type dropdown ───────────────────────────────────────
+    VIZ_OPTIONS = [
+        "tree_native_svg",
+        "tree_sunburst",
+        "tree_icicle",
+        "markov_svg_bfs",
+        "markov_svg_temporal",
+        "markov_pyvis",
+    ]
+    VIZ_LABELS = {
+        "tree_native_svg":     "Trajectory tree",
+        "tree_sunburst":       "Sunburst",
+        "tree_icicle":         "Icicle",
+        "markov_svg_bfs":      "Markov graph — BFS-layered",
+        "markov_svg_temporal": "Markov graph — temporal mean",
+        "markov_pyvis":        "Markov graph — Pyvis (physics)",
+    }
+    viz_type = st.selectbox(
+        "Visualization",
+        options=VIZ_OPTIONS,
+        format_func=lambda v: VIZ_LABELS[v],
+        index=0,
+        key=f"{view_key}_viz",
+        help=(
+            "Tree views show each episode's run-length-collapsed sequence as a "
+            "path from a shared START root to a per-branch terminal; no cycles. "
+            "Markov-graph views show transition probabilities between clusters."
+        ),
+    )
+    is_tree = viz_type.startswith("tree_")
+
+    # ── Pruning controls (unified across tree + Markov) ───────────────────
+    min_branch = st.slider(
+        "Hide branches occurring only in N episodes",
+        0, 50, 2, key=f"{view_key}_minbranch",
+    )
+    _n_total = getattr(graph, "num_episodes", 0) or 0
+    if min_branch == 0:
+        st.caption("Showing every branch — no filtering.")
+    elif _n_total > 0:
+        st.caption(
+            f"Hides branches traversed by < {min_branch / _n_total:.0%} of rollouts"
         )
-    with view_col:
-        view_options = ["plain", "timesteps"]
-        view_labels = {
-            "plain": "Cluster palette",
+    max_depth_cap = 500
+
+    # ── Color-by selector (single source of truth, applies to every viz) ──
+    if is_tree:
+        color_options = ["outcome", "id", "value"]
+        color_labels = {
+            "outcome": "Outcome (success rate)",
+            "id": "Cluster ID (palette)",
+            "value": "Value V(s) (Bellman)",
+        }
+    else:
+        color_options = ["id", "value", "timesteps"]
+        color_labels = {
+            "id": "Cluster ID (palette)",
+            "value": "Value V(s) (Bellman)",
             "timesteps": "Timestep count (viridis)",
         }
-        if show_value_option and values:
-            view_options = ["value"] + view_options
-            view_labels["value"] = "Value-colored (V(s))"
-        view_mode = st.selectbox(
-            "Color mode",
-            options=view_options,
-            format_func=lambda x: view_labels.get(x, x),
-            key=view_key,
-        )
-
-    min_prob = st.slider(
-        "Min edge probability",
-        0.0,
-        0.5,
-        0.0,
-        0.01,
-        key=min_prob_key,
+    color_by = st.selectbox(
+        "Color nodes by",
+        options=color_options,
+        format_func=lambda v: color_labels[v],
+        index=0,
+        key=f"{view_key}_colorby",
+        help=(
+            "ID = palette (same color for the same cluster across the view). "
+            "Value = the cluster's Bellman value V(s) on a red→grey→green diverging "
+            "scale. Outcome (trees only) = success rate of the downstream "
+            "subtree. Timesteps (Markov only) = viridis by total timesteps in "
+            "the cluster."
+        ),
     )
 
-    # Show what representation was used for this clustering
+    # Slider value `min_branch` (episode count) drives Markov pruning; we
+    # keep `min_prob = 0.0` for the pyvis path which expects a probability.
+    min_prob = 0.0
+
+    # ── Caption: which feature space the clustering came from ─────────────
     clust_src = st.session_state.get("clustering_influence_source") or st.session_state.get(
         "clustering_params", {}
     ).get("clustering_influence_source")
@@ -417,20 +468,114 @@ def _render_graph_with_selector(
         emb_label = _SRC_LABELS.get(str(clust_src), str(clust_src))
         st.caption(f"Graph built from **{emb_label}** clustering")
 
-    if renderer == "svg":
+    # ── Compute V(s) once if we'll need it ────────────────────────────────
+    node_values: Dict[int, float] = {}
+    if color_by == "value":
+        try:
+            node_values = graph.compute_values(gamma=gamma)
+        except Exception as e:
+            st.warning(f"Could not compute V(s): {e}. Falling back to ID colors.")
+            color_by = "id"
+
+    # ── Dispatch ──────────────────────────────────────────────────────────
+    if is_tree:
+        from policy_doctor.streamlit_app.components.trajectory_tree_view import (
+            render_trajectory_tree,
+        )
+        # Resolve MP4s for the click-to-explore panel
+        mp4_dir = st.session_state.get("mp4_dir")
+        mp4_index = st.session_state.get("mp4_index") or {"episodes": []}
+        tree_view = viz_type.replace("tree_", "")  # native_svg / sunburst / ...
+        render_trajectory_tree(
+            labels=np.asarray(labels, dtype=np.int64),
+            metadata=metadata,
+            view_mode=tree_view,
+            min_branch=int(min_branch),
+            max_depth_cap=int(max_depth_cap),
+            color_mode=color_by,
+            node_values=node_values,
+            cluster_names=None,
+            mp4_dir=mp4_dir,
+            mp4_index=mp4_index,
+            height=height,
+            level=getattr(graph, "level", "rollout"),
+            key_prefix=f"{graph_key}_tree",
+        )
+        return
+
+    # ── Markov graph branches ─────────────────────────────────────────────
+    if viz_type in ("markov_svg_bfs", "markov_svg_temporal"):
         from policy_doctor.streamlit_app.user_study.graph_plot import (
             compute_pruned_graph_nodes,
             render_graph_component,
         )
         excluded = compute_pruned_graph_nodes(
-            graph, min_visit_prob=0.0, n_total=graph.num_episodes, min_edge_prob=min_prob
+            graph, min_visit_prob=0.0, n_total=graph.num_episodes,
+            min_edge_count=int(min_branch),
         )
+        pos = None
+        if viz_type == "markov_svg_temporal":
+            from policy_doctor.behaviors import graph_simplification as gs
+            try:
+                pos = gs.temporal_layout(
+                    graph, np.asarray(labels, dtype=np.int64), metadata,
+                    level=getattr(graph, "level", "rollout"),
+                )
+            except Exception as e:
+                st.warning(f"Temporal layout failed ({e}); falling back to BFS-layered.")
+                pos = None
+        # Color-by override for Markov views: id → no override (palette is
+        # the SVG renderer's default), value → diverging by V(s),
+        # timesteps → viridis by num_timesteps.
+        color_override_arg: Optional[Dict[int, str]] = None
+        from policy_doctor.behaviors.behavior_graph import (
+            END_NODE_ID as _END, FAILURE_NODE_ID as _FAIL,
+            START_NODE_ID as _START, SUCCESS_NODE_ID as _SUCC,
+        )
+        _SPECIAL = {_END, _FAIL, _START, _SUCC}
+        if color_by == "value" and node_values:
+            def _diverging(t: float) -> str:
+                t = max(0.0, min(1.0, t))
+                r = int(214 + (44 - 214) * t)
+                g = int(39 + (160 - 39) * t)
+                b = int(40 + (44 - 40) * t)
+                return f"rgb({r},{g},{b})"
+            non_term = [v for cid, v in node_values.items() if cid not in _SPECIAL]
+            v_range = max((abs(v) for v in non_term), default=1.0) or 1.0
+            color_override_arg = {}
+            for nid in graph.nodes:
+                if nid in _SPECIAL:
+                    continue
+                v = node_values.get(nid, 0.0)
+                color_override_arg[nid] = _diverging(0.5 + v / (2 * v_range))
+        elif color_by == "timesteps":
+            # Viridis-like over log1p(num_timesteps), matching the legacy
+            # timestep-colored pyvis renderer.
+            ts_vals = [
+                graph.nodes[nid].num_timesteps for nid in graph.nodes
+                if nid not in _SPECIAL
+            ]
+            ts_max = max((np.log1p(v) for v in ts_vals), default=1.0) or 1.0
+            try:
+                import plotly.express as _px
+                viridis = _px.colors.sequential.Viridis
+            except Exception:
+                viridis = ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"]
+            color_override_arg = {}
+            for nid in graph.nodes:
+                if nid in _SPECIAL:
+                    continue
+                t = np.log1p(graph.nodes[nid].num_timesteps) / ts_max
+                idx = int(min(len(viridis) - 1, max(0, t * (len(viridis) - 1))))
+                color_override_arg[nid] = viridis[idx]
         clicked = render_graph_component(
             graph,
             height=height,
             key=graph_key,
             excluded_node_ids=excluded,
-            min_edge_prob=min_prob,
+            min_edge_count=int(min_branch),
+            pos=pos,
+            color_override=color_override_arg,
         )
         selected_edge = st.session_state.get(f"{graph_key}_selected_edge")
         if clicked is not None and clicked in graph.nodes:
@@ -443,11 +588,15 @@ def _render_graph_with_selector(
                 st.caption("Click a node or edge to explore it.")
         else:
             st.caption("Click a node or edge to explore it.")
-    else:
-        if show_value_option and view_mode == "value" and values:
+    else:  # markov_pyvis
+        if color_by == "value" and show_value_option and values:
             from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
             html = create_value_colored_interactive_graph(graph, values, gamma=gamma, min_probability=min_prob)
-        elif view_mode == "timesteps":
+        elif color_by == "value" and node_values:
+            # No precomputed values arg but we computed V(s) ourselves above.
+            from policy_doctor.plotting.plotly.behavior_graph import create_value_colored_interactive_graph
+            html = create_value_colored_interactive_graph(graph, node_values, gamma=gamma, min_probability=min_prob)
+        elif color_by == "timesteps":
             html = create_timestep_colored_interactive_graph(graph, min_probability=min_prob)
         else:
             html = create_interactive_behavior_graph(
@@ -484,6 +633,9 @@ def _render_node_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_selected", None)
+                st.session_state.pop(f"{key_prefix}_last_click", None)
+                _rt_key = f"{key_prefix}_render_token"
+                st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
 
         # Episode success stats
@@ -747,11 +899,15 @@ def _episodes_for_edge(
     tgt_id: int,
     labels: np.ndarray,
     metadata: List[Dict],
+    graph: Optional[Any] = None,
 ) -> List[tuple]:
     """Return (ep_idx, ts_src, ts_tgt, ts_tgt_end) for each episode containing src→tgt.
 
     ts_tgt_end is the window_start of the behavior after tgt (or None if tgt is last).
     Handles terminal edges (START/SUCCESS/FAILURE) the same way as the user study.
+    For synthetic graphs (e.g. trajectory tree leaves with per-branch terminal
+    ids), falls back to graph.nodes[tgt_id].episode_indices when label-walking
+    finds nothing.
     """
     from policy_doctor.behaviors.behavior_graph import FAILURE_NODE_ID, START_NODE_ID, SUCCESS_NODE_ID
 
@@ -805,6 +961,18 @@ def _episodes_for_edge(
                 result.append((ep_idx, rle[i][0], rle[i + 1][0], ts_tgt_end))
                 break
 
+    # Synthetic-graph fallback: target id isn't one of the canonical
+    # SUCCESS/FAILURE constants but the graph genuinely has episodes
+    # passing through it (e.g. per-branch terminal in a trajectory tree).
+    if not result and graph is not None:
+        tgt_node = graph.nodes.get(tgt_id) if hasattr(graph, "nodes") else None
+        if tgt_node is not None and getattr(tgt_node, "episode_indices", None):
+            for ep_idx in tgt_node.episode_indices:
+                last_ts_local = max(
+                    (ts for ts, _ in ep_wins.get(ep_idx, [])), default=0,
+                )
+                result.append((ep_idx, last_ts_local, None, None))
+
     return sorted(result)
 
 
@@ -838,9 +1006,12 @@ def _render_edge_panel(
         with close_col:
             if st.button("✕", key=f"{key_prefix}_edge_panel_close", help="Dismiss"):
                 st.session_state.pop(f"{key_prefix}_selected_edge", None)
+                st.session_state.pop(f"{key_prefix}_last_click", None)
+                _rt_key = f"{key_prefix}_render_token"
+                st.session_state[_rt_key] = st.session_state.get(_rt_key, 0) + 1
                 st.rerun()
 
-        all_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata)
+        all_triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)
         n_eps = len(all_triples)
 
         if not all_triples:

@@ -25,3 +25,7 @@ outputs/
 
 # Pre-implementation spec, superseded by docs/experiments/experiment_e2_agent_proposals.md
 /E2_vlm_proposals.md
+
+# Clustering artifacts — derived from eval data via scripts/sweep_clusterings_for_demo.sh
+# and bundled into the docker image via deploy/collect_artifacts.sh. Not source.
+third_party/influence_visualizer/configs/*/clustering/

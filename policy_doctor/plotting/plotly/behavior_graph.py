@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tempfile
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Any
 
 import numpy as np
 import plotly.graph_objects as go
@@ -179,6 +179,7 @@ def create_behavior_graph_plot(
     height: int = 700,
     title: str = "Behavior Transition Graph",
     node_scale: float = 1.0,
+    pos: Optional[Dict[int, Tuple[float, float]]] = None,
 ) -> go.Figure:
     """Create a directed graph visualization of behavior transitions.
 
@@ -225,7 +226,13 @@ def create_behavior_graph_plot(
     # refinement determines y.  START is pinned at the far left, END at
     # the far right, and cluster nodes are arranged by their shortest
     # path distance from START.
-    pos = _compute_layered_layout(G, graph)
+    if pos is None:
+        pos = _compute_layered_layout(G, graph)
+    else:
+        # Caller supplied a layout; ensure every graph node has a position.
+        for nid in graph.nodes:
+            if nid not in pos:
+                pos[nid] = (0.0, 0.0)
 
     # Identify bidirectional pairs for edge curving
     edge_set = {(s, t) for s, t, _, _ in edges}

@@ -7,6 +7,12 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
+from policy_doctor.streamlit_app.user_study.intro import gate_or_render
+from policy_doctor.streamlit_app.user_study.likert_survey import (
+    render_block2_strategy,
+    render_block3_final,
+)
+from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
     render_strategy_allocator,
@@ -15,6 +21,8 @@ from policy_doctor.streamlit_app.user_study.strategies import (
 from policy_doctor.streamlit_app.user_study.video_browser import render_video_browser
 
 st.set_page_config(page_title="User Study — Group A", layout="wide")
+
+gate_or_render()
 
 st.title("User Study: Data Collection Strategy Design")
 st.markdown(
@@ -41,14 +49,16 @@ session_choice = st.sidebar.selectbox(
     format_func=lambda k: _session_labels.get(k, k),
 )
 
-if st.sidebar.button("Load"):
+
+def _resolve(p: str) -> Path:
+    path = Path(p)
+    return path if path.is_absolute() else _REPO_ROOT / path
+
+
+# Auto-load on session change (no Load button click required).
+if st.session_state.get("ga_loaded_session") != session_choice:
     sess_path = _SESSIONS_DIR / f"{session_choice}.yaml"
     sess = yaml.safe_load(sess_path.read_text())
-
-    def _resolve(p: str) -> Path:
-        path = Path(p)
-        return path if path.is_absolute() else _REPO_ROOT / path
-
     mp4_dir = _resolve(sess["mp4_dir"])
     config_path = _resolve(sess["study_config"])
 
@@ -72,12 +82,11 @@ if st.sidebar.button("Load"):
         st.session_state["ga_budget"] = cfg.get("budget", {}).get("total_demos", 500)
         st.session_state["ga_alloc_step"] = cfg.get("budget", {}).get("allocation_step", 25)
         st.session_state["ga_mp4_dir"] = str(mp4_dir)
-        st.sidebar.success("Loaded.")
+        st.session_state["ga_loaded_session"] = session_choice
 
 if "ga_index" in st.session_state:
     st.sidebar.caption(
-        f"{len(st.session_state['ga_index']['episodes'])} episodes loaded from "
-        f"{st.session_state['ga_mp4_dir']}"
+        f"{len(st.session_state['ga_index']['episodes'])} episodes loaded"
     )
 
 index = st.session_state.get("ga_index")
@@ -85,7 +94,7 @@ strategies = st.session_state.get("ga_strategies")
 mp4_dir_str = st.session_state.get("ga_mp4_dir")
 
 if index is None or strategies is None:
-    st.info("Use the sidebar to load an MP4 directory and study config, then click **Load**.")
+    st.error("Failed to load session — check the sidebar for errors.")
     st.stop()
 
 mp4_dir = Path(mp4_dir_str)
@@ -118,7 +127,24 @@ render_strategy_summary(allocations, strategies, total_budget)
 
 st.divider()
 
-st.header("3. Submit")
+st.header("3. Strategy-Selection Survey")
+likert_strategy = render_block2_strategy(key_prefix="ga_likert")
+
+st.divider()
+
+st.header("4. NASA Task Load Index")
+tlx_responses = render_nasa_tlx(key_prefix="ga_tlx")
+
+st.divider()
+
+st.header("5. Final Assessment")
+likert_final = render_block3_final(
+    key_prefix="ga_likert", include_graph_questions=False,
+)
+
+st.divider()
+
+st.header("6. Submit")
 
 notes = st.text_area("Any additional notes or reasoning", value="", height=120)
 
@@ -130,7 +156,11 @@ if st.button("Submit", type="primary"):
 
     result = {
         "participant_id": participant_id,
+        "group": "A",
         "allocations": allocations,
+        "nasa_tlx": tlx_responses,
+        "likert_strategy": likert_strategy,
+        "likert_final": likert_final,
         "notes": notes,
         "timestamp": timestamp,
     }

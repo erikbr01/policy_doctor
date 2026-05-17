@@ -1,0 +1,73 @@
+task: square_mh_feb5
+title: "Square Task: Data Collection Strategy Study"
+description: |
+  In this study, you will design a data collection strategy for a robot arm
+  learning to insert a square peg onto a nut. You can view rollout videos
+  from the base policy and optionally explore a behavior graph showing how
+  the policy's behavior clusters into distinct modes. Your goal is to
+  allocate a data collection budget across different collection strategies
+  to improve the policy's performance.
+
+budget:
+  total_demos: 500
+  min_per_strategy: 0
+  allocation_step: 25
+
+mp4_index: null
+
+strategies:
+  - id: "s_diverse"
+    name: "Diverse Collection"
+    short: "Diverse"
+    description: |
+      Collect demonstrations with varied initial conditions, grasping approaches,
+      and insertion paths. This mirrors the base dataset distribution.
+    trajectory_constraint: null
+    initial_condition: "varied"
+    graph_nodes: []
+    color: "#4878d0"
+
+  - id: "s_top_grasp"
+    name: "Top-Down Grasp"
+    short: "Top Grasp"
+    description: |
+      Approach and grasp the square peg consistently from directly above the
+      object. Robust to in-plane position variation.
+    trajectory_constraint: "approach_top"
+    initial_condition: "standard"
+    graph_nodes: []
+    color: "#ee854a"
+
+  - id: "s_side_grasp"
+    name: "Side Grasp"
+    short: "Side Grasp"
+    description: |
+      Approach and grasp the peg from the side. Useful when the policy
+      struggles with top-down precision.
+    trajectory_constraint: "approach_side"
+    initial_condition: "standard"
+    graph_nodes: []
+    color: "#6acc65"
+
+  - id: "s_constrained_start"
+    name: "Constrained Initial Position"
+    short: "Fixed Start"
+    description: |
+      Focus on demonstrations where the peg starts in positions that the
+      base policy most frequently fails at. Narrows initial-condition
+      distribution.
+    trajectory_constraint: null
+    initial_condition: "failure_correlated"
+    graph_nodes: []
+    color: "#956cb4"
+
+  - id: "s_recovery"
+    name: "Recovery Behaviors"
+    short: "Recovery"
+    description: |
+      Collect demonstrations that explicitly demonstrate recovery from near
+      failure: misaligned approaches, partial insertions, slipped grasps.
+    trajectory_constraint: "recovery"
+    initial_condition: "near_failure"
+    graph_nodes: []
+    color: "#8c613c"

@@ -18,6 +18,7 @@ from policy_doctor.behaviors.behavior_values import (
     get_behavior_graph_and_slice_values,
     slice_indices_to_rollout_slices,
 )
+from policy_doctor.behaviors import graph_simplification  # noqa: F401
 
 __all__ = [
     "BehaviorGraph",
