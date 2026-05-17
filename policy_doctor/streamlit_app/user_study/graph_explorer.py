@@ -23,6 +23,17 @@ def _episodes_for_node(
     labels: np.ndarray,
     metadata: list[dict],
 ) -> list[tuple[int, int, int]]:
+    """Return (ep_idx, run_start, run_end) for the FIRST contiguous run of
+    ``node_id`` in each episode.
+
+    Reporting only the first run (rather than min..max of all occurrences)
+    avoids a confusing UX after node merging: a merged node can absorb
+    original clusters that occur much later in the episode, which would
+    otherwise stretch the orange highlight bar all the way to the end of
+    the rollout even though the actual instance the user clicked into ends
+    much earlier. Subsequent runs of the same merged node are still
+    discoverable via the episode list — they just aren't highlighted here.
+    """
     ep_slices: dict[int, list[int]] = defaultdict(list)
     for i, meta in enumerate(metadata):
         if int(labels[i]) == node_id:
@@ -31,7 +42,28 @@ def _episodes_for_node(
             ep_slices[ep_idx].append(ts)
     result = []
     for ep_idx, timesteps in ep_slices.items():
-        result.append((ep_idx, min(timesteps), max(timesteps)))
+        ts_sorted = sorted(timesteps)
+        if not ts_sorted:
+            continue
+        # Estimate the "contiguous gap" threshold from the median gap.
+        # With stride=1 the typical gap is 1; we treat anything > 3× median
+        # (and > 2 frames) as a discontinuity → end of a run.
+        if len(ts_sorted) > 1:
+            gaps = [ts_sorted[k + 1] - ts_sorted[k] for k in range(len(ts_sorted) - 1)]
+            gaps_sorted = sorted(gaps)
+            median_gap = gaps_sorted[len(gaps_sorted) // 2] or 1
+            gap_threshold = max(2, 3 * median_gap)
+            run_end_idx = 0
+            for k in range(len(ts_sorted) - 1):
+                if ts_sorted[k + 1] - ts_sorted[k] <= gap_threshold:
+                    run_end_idx = k + 1
+                else:
+                    break
+            run_start = ts_sorted[0]
+            run_end = ts_sorted[run_end_idx]
+        else:
+            run_start = run_end = ts_sorted[0]
+        result.append((ep_idx, run_start, run_end))
     return sorted(result, key=lambda x: x[0])
 
 

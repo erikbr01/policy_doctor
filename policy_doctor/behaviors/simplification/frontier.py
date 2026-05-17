@@ -26,6 +26,7 @@ from policy_doctor.behaviors.simplification.api import (
 from policy_doctor.behaviors.simplification.metrics import (
     DEFAULT_ALPHA,
     bootstrap_metric,
+    bootstrap_mv_ci,
     compute_metrics,
     kfold_episode_splits,
     predictive_nll_bits,
@@ -68,7 +69,8 @@ class FrontierPoint:
     train_nll_bits: float
     train_nll_per_trans_bits: float
     train_nll_per_original_bits: float       # FAIR cross-method train metric
-    markov_violation_bits: float
+    markov_violation_bits: float             # 1st-order MV
+    markov_violation_2nd_bits: float         # 2nd-order MV diagnostic
     mdl_score: float
     heldout_nll_per_trans_bits: Optional[float] = None
     heldout_nll_per_original_bits: Optional[float] = None   # FAIR cross-method held-out metric
@@ -78,6 +80,8 @@ class FrontierPoint:
     train_nll_ci_hi: Optional[float] = None
     markov_ci_lo: Optional[float] = None
     markov_ci_hi: Optional[float] = None
+    markov_2nd_ci_lo: Optional[float] = None
+    markov_2nd_ci_hi: Optional[float] = None
     extras: Dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> Dict:
@@ -91,6 +95,7 @@ class FrontierPoint:
             "train_nll_per_trans_bits": float(self.train_nll_per_trans_bits),
             "train_nll_per_original_bits": float(self.train_nll_per_original_bits),
             "markov_violation_bits": float(self.markov_violation_bits),
+            "markov_violation_2nd_bits": float(self.markov_violation_2nd_bits),
             "mdl_score": float(self.mdl_score),
             "heldout_nll_per_trans_bits": self.heldout_nll_per_trans_bits,
             "heldout_nll_per_original_bits": self.heldout_nll_per_original_bits,
@@ -100,6 +105,8 @@ class FrontierPoint:
             "train_nll_ci_hi": self.train_nll_ci_hi,
             "markov_ci_lo": self.markov_ci_lo,
             "markov_ci_hi": self.markov_ci_hi,
+            "markov_2nd_ci_lo": self.markov_2nd_ci_lo,
+            "markov_2nd_ci_hi": self.markov_2nd_ci_hi,
             "extras": {k: float(v) for k, v in self.extras.items()},
         }
 
@@ -236,15 +243,27 @@ def sweep_method(
 
         train_nll_ci = None
         markov_ci = None
+        markov_2nd_ci = None
         if with_bootstrap:
-            train_nll_ci = _train_metric_ci(
-                method, cluster_labels, metadata, level, float(lev),
-                metric="nll_per_trans", n_bootstrap=n_bootstrap, rng_seed=rng_seed,
-            )
-            markov_ci = _train_metric_ci(
-                method, cluster_labels, metadata, level, float(lev),
-                metric="markov", n_bootstrap=n_bootstrap, rng_seed=rng_seed,
-            )
+            # Fast MV bootstrap: re-evaluate MV on episode-resampled data,
+            # holding the simplification (mapping) FIXED. Reflects data noise
+            # in the metric estimate; doesn't reflect method instability.
+            try:
+                _, lo1, hi1 = bootstrap_mv_ci(
+                    cluster_labels, metadata, result.node_mapping,
+                    level=level, order=1, n_bootstrap=n_bootstrap, rng_seed=rng_seed,
+                    current_labels=result.new_labels,
+                )
+                markov_ci = (float(train_metrics.markov_violation_bits), lo1, hi1)
+                _, lo2, hi2 = bootstrap_mv_ci(
+                    cluster_labels, metadata, result.node_mapping,
+                    level=level, order=2, n_bootstrap=n_bootstrap, rng_seed=rng_seed,
+                    current_labels=result.new_labels,
+                )
+                markov_2nd_ci = (float(train_metrics.markov_violation_2nd_bits), lo2, hi2)
+            except Exception:
+                markov_ci = None
+                markov_2nd_ci = None
 
         per_trans = heldout_stats.get("per_trans") if heldout_stats else None
         per_orig = heldout_stats.get("per_original") if heldout_stats else None
@@ -259,6 +278,7 @@ def sweep_method(
             train_nll_per_trans_bits=train_metrics.nll_per_transition_bits,
             train_nll_per_original_bits=train_metrics.nll_per_original_bits,
             markov_violation_bits=train_metrics.markov_violation_bits,
+            markov_violation_2nd_bits=train_metrics.markov_violation_2nd_bits,
             mdl_score=train_metrics.mdl_score,
             heldout_nll_per_trans_bits=per_trans[0] if per_trans else None,
             heldout_nll_per_original_bits=per_orig[0] if per_orig else None,
@@ -268,6 +288,8 @@ def sweep_method(
             train_nll_ci_hi=train_nll_ci[2] if train_nll_ci else None,
             markov_ci_lo=markov_ci[1] if markov_ci else None,
             markov_ci_hi=markov_ci[2] if markov_ci else None,
+            markov_2nd_ci_lo=markov_2nd_ci[1] if markov_2nd_ci else None,
+            markov_2nd_ci_hi=markov_2nd_ci[2] if markov_2nd_ci else None,
             extras=dict(result.extras),
         )
         points.append(pt)

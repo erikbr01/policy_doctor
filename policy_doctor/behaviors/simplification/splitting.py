@@ -152,7 +152,8 @@ def vomm_split_merge(
 ) -> SimplificationResult:
     tau = 0.05 if lever is None else float(lever)
     level = graph.level
-    labels = np.asarray(cluster_labels, dtype=np.int64).copy()
+    original_labels = np.asarray(cluster_labels, dtype=np.int64).copy()
+    labels = original_labels.copy()
 
     # Map τ → δ for Hoeffding merge: smaller τ → tighter Markov →
     # also tighter merge (less compression). Empirically a 1:1 mapping works
@@ -179,7 +180,15 @@ def vomm_split_merge(
     # Final consolidation pass
     cur = BehaviorGraph.from_cluster_assignments(labels, metadata, level=level)
     cur, labels, _ = _iterative_merge(cur, labels, metadata, compat, score)
-    metrics = compute_metrics(cur, labels, metadata)
+    # Pass original_labels + node_mapping={} so compute_metrics takes the
+    # *per-timestep* path (using `labels` as current_labels). Without this it
+    # falls through to the legacy `markov_violation_bits`, which on split-
+    # derived labels gives a misleading near-zero MV (each split-only ID has
+    # one predecessor by construction).
+    metrics = compute_metrics(
+        cur, labels, metadata,
+        original_labels=original_labels, node_mapping={},
+    )
     return SimplificationResult(
         method="vomm_split_merge",
         lever_value=tau,

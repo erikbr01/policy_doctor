@@ -38,11 +38,19 @@ _PALETTE = {
 }
 
 
+_CI_FIELDS = {
+    "markov_violation_bits": ("markov_ci_lo", "markov_ci_hi"),
+    "markov_violation_2nd_bits": ("markov_2nd_ci_lo", "markov_2nd_ci_hi"),
+    "heldout_nll_per_original_bits": ("heldout_nll_ci_lo", "heldout_nll_ci_hi"),
+}
+
+
 def plot_one(
     summary: dict, y_field: str, y_label: str,
     out_path: Path, title_suffix: str = "",
 ) -> None:
     fig, ax = plt.subplots(figsize=(7, 5), dpi=110)
+    ci_lo_field, ci_hi_field = _CI_FIELDS.get(y_field, (None, None))
     for method, pts in summary["results"].items():
         pts = [p for p in pts if "error" not in p and p.get(y_field) is not None]
         if not pts:
@@ -50,9 +58,16 @@ def plot_one(
         pts_sorted = sorted(pts, key=lambda p: (p["n_nodes"], p[y_field]))
         x = [p["n_nodes"] for p in pts_sorted]
         y = [p[y_field] for p in pts_sorted]
+        color = _PALETTE.get(method, "#888")
+        # Add CI band if bootstrap CIs are present
+        if ci_lo_field:
+            lo = [p.get(ci_lo_field) for p in pts_sorted]
+            hi = [p.get(ci_hi_field) for p in pts_sorted]
+            if all(v is not None for v in lo + hi):
+                ax.fill_between(x, lo, hi, color=color, alpha=0.18, linewidth=0)
         ax.plot(
             x, y, marker="o", markersize=4, linewidth=1.5,
-            color=_PALETTE.get(method, "#888"), label=method, alpha=0.85,
+            color=color, label=method, alpha=0.85,
         )
     ax.set_xlabel("# cluster nodes (after simplification)")
     ax.set_ylabel(y_label)
@@ -112,9 +127,10 @@ def main():
 
         # Pareto plots
         for y_field, y_label, fname in [
-            ("markov_violation_bits",        "Markov violation I(prev;next|merged) [bits]",   "mv"),
-            ("heldout_nll_per_original_bits", "Held-out NLL / original transition [bits]",     "heldout"),
-            ("mdl_score",                     "MDL score [bits]",                              "mdl"),
+            ("markov_violation_bits",        "MV 1st-order I(prev_{t-1};next|merged) [bits] ↓",  "mv"),
+            ("markov_violation_2nd_bits",    "MV 2nd-order I((prev_{t-1},prev_{t-2});next|merged) [bits] ↓",  "mv2"),
+            ("heldout_nll_per_original_bits", "Held-out NLL / original transition [bits] ↓*",     "heldout"),
+            ("mdl_score",                     "MDL score [bits] ↓*",                              "mdl"),
         ]:
             out_path = _PLOTS / f"{task}__{slug}__{fname}.png"
             plot_one(summary, y_field, y_label, out_path)

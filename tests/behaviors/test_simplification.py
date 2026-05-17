@@ -105,6 +105,35 @@ class TestMetrics(unittest.TestCase):
         total, per_node = markov_violation_bits(labels, meta)
         self.assertGreater(per_node.get(1, 0.0), 0.5)
 
+    def test_markov_violation_2nd_order_detects_length_2_memory(self):
+        # 2nd-order Markov chain: memory of depth 2.
+        # Two paths share cluster 5 with the SAME immediate predecessor (4):
+        #   ep_a: [0, 4, 5, 6] — when prev_2=0, next is 6
+        #   ep_b: [1, 4, 5, 7] — when prev_2=1, next is 7
+        # 1st-order: knowing only prev=4 gives uncertain next (could be 6 or 7).
+        #           But knowing only curr=5 also gives uncertain next.
+        #           I(prev; next | curr) ≈ low because prev is constant (=4).
+        # 2nd-order: knowing (prev_1=4, prev_2 ∈ {0, 1}) pins down next.
+        #           I((prev_1, prev_2); next | curr) is HIGH.
+        from policy_doctor.behaviors.simplification.metrics import (
+            markov_violation_against_original_bits,
+        )
+        eps_a = [[0, 4, 5, 6] * 10 for _ in range(30)]
+        eps_b = [[1, 4, 5, 7] * 10 for _ in range(30)]
+        labels, meta = stack_episodes(eps_a + eps_b, [True] * 60)
+
+        # 1st-order (identity mapping, so merged == original)
+        mv1, per1 = markov_violation_against_original_bits(
+            labels, meta, node_mapping={}, level="rollout", order=1,
+        )
+        # 2nd-order on the same data
+        mv2, per2 = markov_violation_against_original_bits(
+            labels, meta, node_mapping={}, level="rollout", order=2,
+        )
+        # 2nd-order should reveal additional structure: mv2 > mv1 at the
+        # informative cluster (5)
+        self.assertGreater(per2.get(5, 0.0), per1.get(5, 0.0))
+
 
 class TestMergingMethods(unittest.TestCase):
     def _graph_with_redundant_nodes(self) -> Tuple[BehaviorGraph, np.ndarray, List[Dict]]:

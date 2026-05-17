@@ -227,6 +227,14 @@ def render_pareto_figure(
             baseline_x = float(p[x_field])
             break
 
+    # Map y_field → bootstrap CI field names (if any).
+    _CI_FIELDS = {
+        "markov_violation_bits": ("markov_ci_lo", "markov_ci_hi"),
+        "markov_violation_2nd_bits": ("markov_2nd_ci_lo", "markov_2nd_ci_hi"),
+        "heldout_nll_per_original_bits": ("heldout_nll_ci_lo", "heldout_nll_ci_hi"),
+    }
+    ci_lo_field, ci_hi_field = _CI_FIELDS.get(y_field, (None, None))
+
     for i, (method, pts) in enumerate(points_by_method.items()):
         pts = [p for p in pts if "error" not in p and p.get(x_field) is not None and p.get(y_field) is not None]
         if not pts:
@@ -244,6 +252,22 @@ def render_pareto_figure(
             ))
             continue
         color = palette[i % len(palette)]
+        # Render bootstrap CI band if available and we're on a method we care about
+        if ci_lo_field and method == selected_method:
+            lo_vals = [p.get(ci_lo_field) for p in pts_sorted]
+            hi_vals = [p.get(ci_hi_field) for p in pts_sorted]
+            if all(v is not None for v in lo_vals + hi_vals):
+                traces.append(go.Scatter(
+                    x=x + x[::-1],
+                    y=lo_vals + hi_vals[::-1],
+                    fill="toself",
+                    fillcolor=color,
+                    opacity=0.18,
+                    line=dict(width=0),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name=f"{method} 95% CI",
+                ))
         traces.append(go.Scatter(
             x=x, y=y, mode="lines+markers", name=method,
             line=dict(color=color, width=2 if method == selected_method else 1.2),
@@ -413,18 +437,33 @@ graph_simp = BehaviorGraph.from_cluster_assignments(new_labels, metadata, level=
 # Top metric row (Task / Episodes / Raw nodes / After-method nodes)
 # ---------------------------------------------------------------------------
 
-m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
 m1.metric("Task", task.split("_")[0].capitalize())
 m2.metric("Episodes", n_eps)
-m3.metric("Raw nodes", len(graph_raw.cluster_nodes))
+m3.metric("Raw nodes", len(graph_raw.cluster_nodes),
+          help="↕ Tradeoff axis — no 'better' direction; smaller is simpler, larger is more expressive.")
 m4.metric("After-method nodes", metrics["n_nodes"],
-          delta=metrics["n_nodes"] - len(graph_raw.cluster_nodes))
-m5.metric("Markov violation (bits)", f"{metrics['markov_violation_bits']:.3f}",
-          help="I(orig_prev; orig_next | merged_curr) — bits of memory thrown away. "
-               "Lower = more Markov.")
-m6.metric("MDL score (bits)", f"{metrics['mdl_score']:.1f}",
-          help="predictive NLL + (k_params / 2) · log₂(N_original). "
-               "Compressive metrics are biased toward merging — see findings doc.")
+          delta=metrics["n_nodes"] - len(graph_raw.cluster_nodes),
+          help="↕ Tradeoff axis — pick where on the Pareto frontier you want to land.")
+mv1 = metrics["markov_violation_bits"]
+mv2 = metrics.get("markov_violation_2nd_bits", 0.0) or 0.0
+m5.metric("MV 1st-order (bits) ↓", f"{mv1:.3f}",
+          help="↓ Lower is better. I(orig_prev_{t-1}; orig_next_t | merged_curr_t) — "
+               "1-step memory thrown away by the abstraction. 0 bits = perfectly Markov.")
+m6.metric("MV 2nd-order (bits) ↓", f"{mv2:.3f}",
+          delta=f"{(mv2 - mv1):+.3f} vs 1st" if mv2 > 0 else None,
+          delta_color="inverse",
+          help=(
+              "↓ Lower is better. I((prev_{t-1}, prev_{t-2}); next | merged_curr). "
+              "When this is noticeably larger than the 1st-order value, the "
+              "abstraction is hiding length-2 memory that the 1st-order metric "
+              "and the current vomm_split_merge cannot fix. Diagnostic only."
+          ))
+m7.metric("MDL score (bits) ↓*", f"{metrics['mdl_score']:.1f}",
+          help="↓ Lower is *nominally* better. predictive NLL + (k_params / 2) · log₂(N_original). "
+               "*BUT* this metric is biased toward aggressive merging (a 1-node "
+               "graph trivially wins). Use Markov violation as the primary axis; "
+               "MDL is a secondary diagnostic. See findings doc.")
 
 st.divider()
 
@@ -695,18 +734,19 @@ else:
         "`docs/simplification_findings.md` for the analysis."
     )
     pareto_y_choice = st.radio(
-        "Y axis", [
-            ("Markov violation (bits) — recommended", "markov_violation_bits"),
-            ("Held-out NLL / original transition (bits)", "heldout_nll_per_original_bits"),
-            ("MDL score (bits)", "mdl_score"),
+        "Y axis (↓ = lower is better on all of these)", [
+            ("↓ Markov violation 1st-order (bits) — recommended", "markov_violation_bits"),
+            ("↓ Markov violation 2nd-order (bits) — diagnostic", "markov_violation_2nd_bits"),
+            ("↓* Held-out NLL / original transition (bits) — biased toward merging", "heldout_nll_per_original_bits"),
+            ("↓* MDL score (bits) — biased toward merging", "mdl_score"),
         ],
         format_func=lambda x: x[0],
-        horizontal=True,
+        horizontal=False,
     )
     pareto_x_choice = st.radio(
-        "X axis", [
-            ("Cluster nodes (n_nodes)", "n_nodes"),
-            ("Free transition params", "n_free_params"),
+        "X axis (↕ tradeoff axis — no 'better' direction)", [
+            ("↕ Cluster nodes (n_nodes)", "n_nodes"),
+            ("↕ Free transition params", "n_free_params"),
         ],
         format_func=lambda x: x[0],
         horizontal=True,

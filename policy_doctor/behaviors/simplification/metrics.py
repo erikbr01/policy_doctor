@@ -374,11 +374,32 @@ def predictive_nll_bits(
 def markov_violation_against_original_bits(
     original_labels: np.ndarray,
     metadata: List[Dict],
-    node_mapping: Dict[int, int],
+    node_mapping: Optional[Dict[int, int]] = None,
     level: str = "rollout",
     alpha: float = DEFAULT_ALPHA,
+    order: int = 1,
+    current_labels: Optional[np.ndarray] = None,
 ) -> Tuple[float, Dict[int, float]]:
-    """Conditional MI I(original_prev; original_next | merged_current) in bits.
+    """Conditional MI I(original_prev[1..order]; original_next | merged_current) in bits.
+
+    With order=1 (default) this is the classic ``I(P_{t-1}; N_t | X_t)``.
+    With order=2 it generalizes to ``I((P_{t-1}, P_{t-2}); N_t | X_t)``,
+    treating the length-2 predecessor tuple as a single composite predecessor.
+    Higher orders need exponentially more data to estimate reliably — we use
+    order=2 only as a diagnostic to flag when the 1st-order metric is
+    underestimating memory.
+
+    Two ways to specify the merged-state classifier:
+      - ``current_labels`` (preferred when available): per-timestep merged
+        state. Works for any method, including ones that introduce new IDs
+        via splitting (e.g. ``vomm_split_merge``).
+      - ``node_mapping``: applied to ``original_labels`` to derive the
+        merged state. Only valid for pure-merging methods where every
+        original cluster ID maps deterministically to one merged ID.
+
+    If ``current_labels`` is provided it takes precedence; otherwise
+    ``node_mapping`` (default {}) is used.
+
 
     THIS is the principled "interpretability vs Markov property" axis:
 
@@ -399,58 +420,74 @@ def markov_violation_against_original_bits(
     from collections import defaultdict
 
     ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+    nm = node_mapping or {}
+    use_current_labels = current_labels is not None
 
     def _map(x: int) -> int:
-        if x in node_mapping:
+        if x in nm:
             seen = set()
             cur = x
-            while cur in node_mapping:
+            while cur in nm:
                 if cur in seen:
                     return cur
                 seen.add(cur)
-                cur = node_mapping[cur]
+                cur = nm[cur]
             return cur
         return x
 
-    # Build per-episode original collapsed sequences.
-    eps: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+    # Build per-episode (sort_key, sample_idx, original_label) triplets so we
+    # can look up the per-timestep current_labels[sample_idx] when computing
+    # the merged-state classifier.
+    eps: Dict[int, List[Tuple[int, int, int]]] = defaultdict(list)
     for i, m in enumerate(metadata):
         lbl = int(original_labels[i])
         if lbl == -1:
             continue
         sort_key = m.get("timestep", m.get("window_start", 0))
-        eps[m[ep_key]].append((sort_key, lbl))
+        eps[m[ep_key]].append((sort_key, i, lbl))
 
-    # For each MERGED current state, collect (orig_prev, orig_next) pairs.
-    pairs_per_merged: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+    # For each MERGED current state, collect (composite_prev, orig_next) pairs.
+    if order < 1:
+        raise ValueError(f"order must be >= 1, got {order}")
+    min_seq_len = order + 2
+    pairs_per_merged: Dict[int, List[Tuple[Tuple[int, ...], int]]] = defaultdict(list)
     for ep_idx, seq in eps.items():
-        if len(seq) < 3:
+        if len(seq) < min_seq_len:
             continue
         seq.sort(key=lambda x: x[0])
-        orig_seq = [seq[0][1]]
-        for _, lbl in seq[1:]:
-            if lbl != orig_seq[-1]:
-                orig_seq.append(lbl)
-        # interior triplets only
-        for i in range(1, len(orig_seq) - 1):
-            o_prev = orig_seq[i - 1]
-            o_cur = orig_seq[i]
-            o_next = orig_seq[i + 1]
-            m_cur = _map(o_cur)
-            pairs_per_merged[m_cur].append((o_prev, o_next))
+        # Build collapsed sequence of (original_label, representative_sample_idx).
+        # The sample_idx points to *some* timestep in the run so we can read
+        # current_labels[idx] for it; using the first idx of each run is fine
+        # because per-timestep labels within a run are constant for merging
+        # methods (and we explicitly preserve that invariant in splitting).
+        collapsed: List[Tuple[int, int]] = [(seq[0][2], seq[0][1])]
+        for _, idx, lbl in seq[1:]:
+            if lbl != collapsed[-1][0]:
+                collapsed.append((lbl, idx))
+        for i in range(order, len(collapsed) - 1):
+            composite_prev = tuple(collapsed[i - k][0] for k in range(1, order + 1))
+            o_cur, idx_cur = collapsed[i]
+            o_next = collapsed[i + 1][0]
+            if use_current_labels:
+                m_cur = int(current_labels[idx_cur])
+            else:
+                m_cur = _map(o_cur)
+            pairs_per_merged[m_cur].append((composite_prev, o_next))
 
     per_node: Dict[int, float] = {}
     total_weight = 0
     weighted_sum = 0.0
 
+    # Min-pair gate scales with the contingency table size (≈ order²).
+    min_pairs = max(4, 4 * order * order)
     for m_cur, pairs in pairs_per_merged.items():
-        if len(pairs) < 4:
+        if len(pairs) < min_pairs:
             per_node[m_cur] = 0.0
             continue
 
-        prev_counts: Dict[int, int] = defaultdict(int)
+        prev_counts: Dict = defaultdict(int)   # key may be tuple
         next_counts: Dict[int, int] = defaultdict(int)
-        joint: Dict[Tuple[int, int], int] = defaultdict(int)
+        joint: Dict[Tuple, int] = defaultdict(int)
         for p, n in pairs:
             prev_counts[p] += 1
             next_counts[n] += 1
@@ -568,7 +605,8 @@ class GraphMetrics:
     nll_bits: float                       # NLL using merged labels (compressive; comparable within method, not across)
     nll_per_transition_bits: float        # nll_bits / (# transitions after merging)
     nll_per_original_bits: float          # predictive NLL / (# original transitions)  ← FAIR across methods
-    markov_violation_bits: float
+    markov_violation_bits: float          # I(prev_{t-1}; next_t | merged_curr_t) — 1st-order memory missed
+    markov_violation_2nd_bits: float      # I((prev_{t-1}, prev_{t-2}); next_t | merged_curr_t) — 2nd-order diagnostic
     mdl_score: float                      # predictive NLL + (k/2) log2(N_original)  ← model selection criterion
 
     def as_dict(self) -> Dict[str, float]:
@@ -580,6 +618,7 @@ class GraphMetrics:
             "nll_per_transition_bits": self.nll_per_transition_bits,
             "nll_per_original_bits": self.nll_per_original_bits,
             "markov_violation_bits": self.markov_violation_bits,
+            "markov_violation_2nd_bits": self.markov_violation_2nd_bits,
             "mdl_score": self.mdl_score,
         }
 
@@ -610,15 +649,27 @@ def compute_metrics(
         pred_nll, _n_scored, n_orig = predictive_nll_bits(
             graph, original_labels, metadata, node_mapping, alpha=alpha,
         )
+        # Use the actual per-timestep simplified labels for the merged-state
+        # classifier — this is correct for both pure-merge methods (where
+        # cluster_labels == map(node_mapping, original_labels)) and for
+        # split-producing methods (where cluster_labels contains IDs not in
+        # any node_mapping entry).
         mv, _ = markov_violation_against_original_bits(
             original_labels, metadata, node_mapping,
-            level=graph.level, alpha=alpha,
+            level=graph.level, alpha=alpha, order=1,
+            current_labels=cluster_labels,
+        )
+        mv2, _ = markov_violation_against_original_bits(
+            original_labels, metadata, node_mapping,
+            level=graph.level, alpha=alpha, order=2,
+            current_labels=cluster_labels,
         )
     else:
         pred_nll, n_orig = nll, nt
         mv, _ = markov_violation_bits(
             cluster_labels, metadata, level=graph.level, alpha=alpha,
         )
+        mv2 = 0.0
     nll_per_original = pred_nll / n_orig if n_orig > 0 else 0.0
     # MDL (Rissanen / BIC-like): predictive NLL + (k/2) log₂(N_original) * mdl_lambda
     bic_penalty = 0.5 * float(np.log2(max(n_orig, 2))) * k_params
@@ -631,6 +682,7 @@ def compute_metrics(
         nll_per_transition_bits=nll_per_trans,
         nll_per_original_bits=nll_per_original,
         markov_violation_bits=mv,
+        markov_violation_2nd_bits=mv2,
         mdl_score=mdl,
     )
 
@@ -638,6 +690,67 @@ def compute_metrics(
 # ---------------------------------------------------------------------------
 # Bootstrap CI
 # ---------------------------------------------------------------------------
+
+def bootstrap_mv_ci(
+    original_labels: np.ndarray,
+    metadata: List[Dict],
+    node_mapping: Optional[Dict[int, int]] = None,
+    level: str = "rollout",
+    order: int = 1,
+    alpha: float = DEFAULT_ALPHA,
+    n_bootstrap: int = 100,
+    rng_seed: int = 0,
+    current_labels: Optional[np.ndarray] = None,
+) -> Tuple[float, float, float]:
+    """Episode-level bootstrap CI on Markov violation at fixed node_mapping.
+
+    This is the *data-noise* CI (how much MV could fluctuate if we'd seen a
+    different sample of episodes), holding the simplification result fixed.
+    Cheap — just resamples episodes and recomputes the contingency table;
+    typically <100ms per rep.
+
+    Returns ``(point_estimate, p2.5, p97.5)``.
+    """
+    from collections import defaultdict as _dd
+
+    ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+    eps: Dict[int, List[int]] = _dd(list)
+    for i, m in enumerate(metadata):
+        eps[m[ep_key]].append(i)
+    ep_list = list(eps.keys())
+    n_eps = len(ep_list)
+    if n_eps == 0:
+        return 0.0, 0.0, 0.0
+    rng = np.random.RandomState(rng_seed)
+
+    point, _ = markov_violation_against_original_bits(
+        original_labels, metadata, node_mapping,
+        level=level, alpha=alpha, order=order,
+        current_labels=current_labels,
+    )
+    samples: List[float] = []
+    for _ in range(n_bootstrap):
+        boot = rng.choice(ep_list, size=n_eps, replace=True)
+        idxs: List[int] = []
+        new_meta: List[Dict] = []
+        for new_ep, old_ep in enumerate(boot):
+            for i in eps[old_ep]:
+                idxs.append(i)
+                mm = dict(metadata[i])
+                mm[ep_key] = int(new_ep)
+                new_meta.append(mm)
+        idx_arr = np.array(idxs)
+        boot_labels = original_labels[idx_arr]
+        boot_current = current_labels[idx_arr] if current_labels is not None else None
+        v, _ = markov_violation_against_original_bits(
+            boot_labels, new_meta, node_mapping,
+            level=level, alpha=alpha, order=order,
+            current_labels=boot_current,
+        )
+        samples.append(float(v))
+    arr = np.array(samples)
+    return float(point), float(np.percentile(arr, 2.5)), float(np.percentile(arr, 97.5))
+
 
 def episode_index_groups(
     metadata: List[Dict], level: str = "rollout",

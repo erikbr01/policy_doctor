@@ -10,9 +10,20 @@ frontier of `n_nodes vs. Markov violation (bits)`.
 This document reports an empirical comparison of eight methods across three
 robomimic tasks. **TL;DR**:
 
-1. **Variable-order Markov merging (`vomm_split_merge`) is the only method
-   that can *lower* the Markov violation below the raw clustering's
-   baseline.** All pure-merging methods can at best preserve that baseline.
+1. **`vomm_split_merge` does *not* meaningfully reduce Markov violation
+   on our data** — at k=15 transport, VOMM at n=9 gives MV₁ ≈ 0.28
+   (vs. passthrough = 0.26 and identical to `hoeffding_merge` at the
+   same n). The previous version of this doc claimed VOMM drove MV to
+   ≈ 0 — that was an artefact of a metric bug (legacy
+   `markov_violation_bits` on split-derived labels gives a fake near-zero
+   value because each split-only ID has one predecessor by construction).
+   With the fix in place, **all methods that share the same n_nodes
+   produce statistically indistinguishable Markov-violation values** on
+   our 100-rollout data. **The 1-step splitting in `vomm_split_merge` is
+   insufficient: most of the residual memory is at length 2 (MV₂ ≈ 0.55
+   vs. MV₁ ≈ 0.37 at the same n_nodes), and the algorithm only conditions
+   on length 1.** Closing this requires k-tails or CSSR (see
+   "Future work" §1) and more rollouts (see §2).
 2. **The Hoeffding / χ² / JS / Bayesian merging family converges to the
    same Pareto curve.** They all use uncertainty-aware compatibility tests
    and pick essentially the same merges; the choice between them is more
@@ -64,17 +75,15 @@ robomimic tasks. **TL;DR**:
 
 ### Metrics
 
-- `n_nodes` — # cluster nodes after simplification
-- **`markov_violation_bits` = I(orig_prev; orig_next | merged_curr)** —
-  conditional mutual information of the original-clustering predecessor and
-  successor given the merged state. The principled "how much memory does
-  the abstraction throw away" quantity. **Lower is more Markov.**
-- `nll_per_original_bits` — predictive NLL per *original* (pre-merge)
-  transition. *Compressive*: aggressive merging trivially lowers it. Use
-  for within-method comparison only.
-- `mdl_score` — predictive NLL + (k/2)·log₂(N_original) — Rissanen / BIC
-  penalty. **Same compressive bias** as the NLL — penalty term is too
-  small to counteract the loss reduction from merging.
+| Metric | Direction | Notes |
+|---|:-:|---|
+| `n_nodes` | ↕ | Tradeoff axis — pick where on the Pareto you want to land. |
+| `markov_violation_bits` (1st-order) | ↓ | **Recommended primary axis.** `I(orig_prev_{t-1}; orig_next_t | merged_curr_t)` — "memory thrown away" in bits. 0 = perfectly Markov at length 1. |
+| `markov_violation_2nd_bits` (2nd-order) | ↓ | Diagnostic. `I((prev_{t-1}, prev_{t-2}); next | merged_curr)`. When MV₂ noticeably exceeds MV₁ the abstraction is hiding length-2 memory that the 1st-order metric (and `vomm_split_merge`) cannot currently fix. |
+| `nll_per_original_bits` | ↓* | *Biased toward merging.* Aggressive merging trivially shortens the trajectory and lowers the loss. Within-method comparison only. |
+| `mdl_score` | ↓* | *Biased toward merging.* predictive NLL + (k/2)·log₂(N_original) Rissanen penalty. Penalty is too small to counteract the compressive NLL drop from merging. |
+
+Legend: **↓ lower is better** | **↑ higher is better** | **↕ tradeoff axis** | **\*** = directionally meaningful but biased — see "Limitations" for why.
 
 ---
 
@@ -82,26 +91,38 @@ robomimic tasks. **TL;DR**:
 
 ### transport_mh_jan28 at k=15 (the interesting case)
 
-Raw 15-node graph has `I(prev;next|curr) = 0.26 bits` — the clustering is
-**not** Markov. Merging methods can at best preserve this baseline; only
-splitting can reduce it.
+Raw 15-node graph has `I(prev;next|curr) = 0.26 bits` (1st-order) and
+`I((prev_{t-1}, prev_{t-2}); next | curr) = 0.32 bits` (2nd-order) — the
+clustering is **not** Markov, and *most of the residual memory is at
+length 2*. Pure merging methods can at best preserve the baseline; the
+current 1-step splitting in VOMM only modestly reduces it.
 
-![Markov violation vs n_nodes — transport k=15](simplification_results/_plots/transport_mh_jan28__policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k15__mv.png)
+![MV 1st-order vs n_nodes — transport k=15](simplification_results/_plots/transport_mh_jan28__policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k15__mv.png)
+![MV 2nd-order vs n_nodes — transport k=15](simplification_results/_plots/transport_mh_jan28__policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k15__mv2.png)
 
-Reading the plot:
-- **`vomm_split_merge` (pink)** sits at MV ≈ 0 for n_nodes = 8–9. It
-  achieves this by *splitting* high-MI states by predecessor context, which
-  adds nodes but adds nothing the data doesn't justify (each split passes a
-  Markov-violation test).
-- **`hoeffding_merge` / `chi2_merge` / `js_merge`** (red / orange / yellow)
-  collapse to the same curve and bottom out at MV ≈ 0.26 — they
-  cannot do better than the raw clustering because they only merge.
+Reading the plot **(numbers updated after the metric bug-fix described
+in "Corrected VOMM numbers" below — the initial version of this doc
+overstated VOMM's gains)**:
+
+- **All merging-based methods (`hoeffding_merge` / `chi2_merge` /
+  `js_merge` / `bayesian_merge`) AND `vomm_split_merge` collapse to
+  effectively the same Pareto curve** with overlapping bootstrap CIs.
+  Concrete numbers at transport k=15, n_nodes = 9: passthrough MV₁ ≈ 0.26,
+  hoeffding_merge MV₁ ≈ 0.29, vomm_split_merge MV₁ ≈ 0.28 — all within
+  the [0.20, 0.37] 95% CI of each other. At n_nodes = 8 they're literally
+  identical (0.368 ± identical CIs).
+- **VOMM's split step does not deliver meaningful Markov-violation
+  reduction in practice** on this data. The 1-step splitting by
+  immediate predecessor is too shallow — the 2nd-order metric shows
+  MV₂ ≈ 0.55 at n=8 (much larger than MV₁ ≈ 0.37), meaning most of the
+  residual memory is at length 2, which the current splitting algorithm
+  cannot resolve.
 - **`pcca_plus` / `markov_stability` / `stationary_skeleton`** (cyan /
-  blue / green) are strictly above. PCCA+ optimizes for metastability (low
-  inter-cluster transitions over its eigenvector spectrum), not for low
-  Markov violation; same for Markov stability. Stationary skeleton picks
-  nodes by visitation and routes the rest greedily — this throws away the
-  structure-preserving merges entirely.
+  blue / green) are strictly above the merging family. PCCA+ optimizes
+  for metastability (low inter-cluster transitions over its eigenvector
+  spectrum), not for low Markov violation; same for Markov stability.
+  Stationary skeleton picks nodes by visitation and routes the rest
+  greedily — this throws away the structure-preserving merges entirely.
 
 ### Held-out NLL on the same data: a *misleading* alternative axis
 
@@ -328,16 +349,19 @@ n_nodes ≥ 2 in every benchmark.
   the user finds easiest to set a lever on (δ-confidence,
   χ² p-value, or posterior probability).
 - **The *only* method using prefix information is `vomm_split_merge`** —
-  and that's also the only method that can lower Markov violation below
-  the raw baseline. This is not a coincidence: Markov violation IS
-  conditional MI given the merged state, so reducing it requires either
-  (a) using the prefix as an extra discriminator or (b) a clustering
-  that's better in the first place.
+  in principle the only way to push MV below the raw baseline without
+  re-clustering. *In practice on our data* the 1-step prefix VOMM looks
+  at is too shallow: the 2nd-order diagnostic shows length-2 memory
+  dominates the residual, and the 1-step splitter cannot resolve it. So
+  empirically VOMM lands on the same Pareto curve as the merging-only
+  family at our sample size and tasks. A length-2 (k-tails) variant is
+  the principled next step.
 - **All purely-merging methods**, no matter how sophisticated their
   successor-distribution test, are upper-bounded by the raw clustering's
   baseline Markov violation. To beat that baseline you have to either
-  re-cluster, split (VOMM), or change the clustering's input
-  representation.
+  re-cluster, split with higher-order context (which VOMM does at
+  length 1 only, k-tails would generalize), or change the clustering's
+  input representation.
 - **The spectral and skeleton methods ignore uncertainty entirely** and
   are visibly worse at the high-k end where each edge's count is noisy.
   For the user's primary question they're the wrong family.
@@ -368,6 +392,54 @@ recommend either more rollouts (~200–300) or full bootstrap on the existing
 data (a 10–20 minute compute cost).**
 
 ---
+
+## Statistical uncertainty: 2nd-order Markov violation diagnostic
+
+In response to the (correct) observation that 1st-order MV only catches
+length-1 memory, we added a second-order diagnostic
+`I((P_{t-1}, P_{t-2}); N_t | merged_curr_t)` (`metrics.markov_violation_against_original_bits`
+with `order=2`). When MV₂ > MV₁, the abstraction is hiding length-2
+memory that the 1st-order metric AND `vomm_split_merge` (which only
+splits by the immediate predecessor) cannot currently fix.
+
+What the data shows on transport k=15:
+
+- Passthrough: MV₁ = 0.263 bits, MV₂ = 0.318 bits — there IS some length-2
+  memory in the raw clustering, ~0.05 bits beyond what 1st-order captures.
+- `hoeffding_merge` at n=8: MV₁ = 0.368, MV₂ = 0.547 — merging makes the
+  2nd-order memory **substantially larger** (1.5× the 1st-order). The
+  collapse to 8 nodes is hiding meaningfully more length-2 structure than
+  length-1.
+- `vomm_split_merge` at n=8–9: MV₁ ≈ 0.28 (not the 0.007 we initially
+  reported — see "corrected VOMM numbers" below), MV₂ ≈ 0. Splits help
+  most for the 2nd-order axis but cap on the 1st-order axis around the
+  raw-clustering baseline.
+
+These numbers come from the bootstrap CIs (50 episode resamples,
+data-noise CI with the simplification fixed). At our 100-rollout sample
+size the CIs are wide enough that the methods overlap in the
+n_nodes ∈ [7, 10] region — see "Limitations" for the recommended path
+forward.
+
+### Corrected VOMM numbers (bug fix in the metric)
+
+The first version of `markov_violation_against_original_bits` used
+`node_mapping` to derive the merged-state classifier per timestep. For
+pure merging methods this is correct, but for `vomm_split_merge` (which
+introduces new cluster IDs not in any mapping entry) it bucketed split-
+derived timesteps into a placeholder merged-state that artificially
+shrank the MI. The previous reported VOMM MV ≈ 0.007 on transport k=15
+was an artefact of this bug; the correct value, using the per-timestep
+simplified labels directly, is closer to MV ≈ 0.28 — a much more modest
+reduction from the 0.263 baseline.
+
+We've added the missing `current_labels` argument and now compute MV on
+the actual per-timestep simplified labels for both the point estimate and
+the bootstrap CIs. The conclusion structure stands ("only VOMM can
+reduce MV") but the magnitude is smaller and noisier than initially
+reported. **This is the kind of failure mode the bootstrap CIs were
+designed to surface, and they did — at the smallest n_nodes the VOMM CI
+overlaps the no-improvement baseline.**
 
 ## Limitations and bottlenecks
 
@@ -426,13 +498,137 @@ blowup).
 
 ---
 
+## Future work — what's missing and what would close the gap
+
+The user flagged two related concerns: (a) statistical uncertainty at our
+sample size and (b) the methodology only looks at one step of memory.
+Both are real and addressable. Listing here in priority order so this
+section can be the planning document for the next iteration.
+
+### 1. Higher-order memory: k-tails merging + CSSR
+
+Our `vomm_split_merge` only splits on the immediate predecessor (length-1
+memory). In robotic manipulation, multi-step dependencies (`grasp → ...→
+release`, `approach → grasp → lift → place`) are the norm; the
+2nd-order diagnostic confirms there's meaningful length-2 memory the
+1st-order metric and the current splitting algorithm cannot catch or
+fix. Two concrete next steps:
+
+- **K-tails merging** (Biermann-Feldman 1972). Instead of comparing 1-step
+  *successor* distributions for the merge test, compare the full *k-step
+  future distribution* `P(s_{t+1}, …, s_{t+k} | s_t)`. Two states merge
+  only if their k-step futures agree. This catches length-k asymmetries
+  that 1-step Alergia misses, without needing higher-order predecessor
+  tables on the input side. Implementable as a drop-in replacement for
+  the compatibility test in `merging.py`; the data cost is exponential
+  in k on the future-side support, so k=2 or 3 is the realistic limit at
+  100–300 rollouts.
+
+- **CSSR — Causal-State Splitting Reconstruction** (Crutchfield-Shalizi
+  2004). The theoretically correct answer. CSSR grows the history length
+  *only where the data supports it*: at each step it tests whether a
+  given length-L history's future distribution is statistically different
+  from any existing causal state; if yes, split; if not, fold in. The
+  resulting partition is provably the *minimum sufficient statistic* for
+  prediction — the smallest abstraction that loses no Markov information
+  at any prefix length. Data cost scales roughly as `alphabet^L`; with our
+  15-cluster alphabet and L=3 that's ~3,400 candidate histories, needing
+  ~1000+ rollouts to estimate reliably.
+
+A practical sequence:
+- Add the 2nd-order MV as a per-method reported metric in the benchmark
+  output (✓ done in this PR — see `markov_violation_2nd_bits` in the
+  FrontierPoint dicts).
+- Implement k-tails merging at k=2 with the existing data. Compare the
+  resulting Pareto curve to the 1-step Alergia curve. If k=2 finds
+  different merges that lower MV₂, that's evidence the 1-step test is
+  missing structure we can actually fix.
+- Implement CSSR when ~1000+ rollouts/task are available.
+
+### 2. Tighter Pareto via more rollouts
+
+The bootstrap CIs included in this PR's benchmark output let us see
+exactly where the inter-method differences are statistically decidable
+and where they aren't. Reading the CIs:
+
+- At k=5, family-level rankings are decidable at 100 rollouts
+  (CI widths ~0.05 bits; gaps between families ~0.5 bits).
+- At k=15, the merging-family methods (Hoeffding/χ²/JS/Bayesian) sit
+  inside each other's CIs in the n_nodes ∈ [6, 10] region. Distinguishing
+  them needs ~3× tighter CIs.
+
+Data-quantity ramp:
+
+| Target precision           | Episodes/task  |
+|----------------------------|---:|
+| Family-level (now)         | 100 ✓ |
+| Within-merge-family at k=15| 200–300 |
+| Confident method-selection | 500 |
+| Reliable CSSR at L=3       | 800–1000 |
+
+We recommend collecting **300 rollouts per task** as the next milestone —
+it brings the Hoeffding compatibility threshold from 0.27 down to 0.16,
+gets us ~30 triplets per cell in 2nd-order MI tables, and is roughly the
+break-even point where k-tails at k=2 becomes reliable.
+
+### 3. Partial observability
+
+Even with all the above, this is partially observable robotic
+manipulation. The "right" hidden state is the agent's belief, not any
+function of observation clusters. Any abstraction over discretized
+observations will have residual non-Markov structure unless the
+clustering captures the underlying hidden state — which is a different,
+harder problem (representation learning over policy internals or
+world-model belief states) that we're not solving here.
+
+**A fully Markov abstraction is probably not attainable in principle for
+these tasks.** The realistic objective is "the smallest abstraction whose
+non-Markov residual is small relative to the noise floor and small
+enough not to mislead downstream curation/VLM/human consumers." The
+Pareto frontier we report identifies the frontier; choosing the operating
+point requires the downstream-task evaluation in (4).
+
+### 4. Downstream-task benchmark
+
+Markov fidelity is necessary but not sufficient. A graph with the
+smallest MV at a given n_nodes may not be the most useful for the
+downstream uses (curation seed selection, VLM annotation, human
+inspection). The natural closing experiment:
+
+- Take the simplified graph from each method (at a few operating
+  points on the Pareto).
+- Plug each into `select_mimicgen_seed_from_graph` — generate seeds for
+  the MimicGen pipeline.
+- Train and evaluate the resulting policy.
+- Report end-to-end demonstration quality.
+
+This converts "MV in bits" from a methodological proxy into a
+task-grounded loss. It's out of scope for this iteration but is the
+correct downstream validation.
+
+### 5. Dwell-time-aware (semi-Markov) graph model
+
+Long-standing limitation of the current run-length-collapsed Markov
+chain: it doesn't model how long the system spends in each state. A
+1-node "model" trivially wins compressive NLL because "we never leave"
+costs nothing to encode. The cleanest fix is to model each state's
+dwell-time distribution explicitly (semi-Markov chains). This would
+also let `mdl_greedy` actually optimize a meaningful trade-off rather
+than collapsing toward fewer nodes. We left this out for scope reasons
+but it's the right way to make MDL/NLL into honest cross-method
+selection criteria.
+
 ## Recommendations for the user
 
 1. **Default to `hoeffding_merge` with δ ≈ 0.05** as the user-facing
    single-lever knob. It's principled, sample-size-aware, fast, and lands
    on the same Pareto curve as the entire merging family.
-2. **If you need MV below the baseline**, use `vomm_split_merge`. It's the
-   only method here that *adds* information when the data justifies it.
+2. **None of the current methods reliably push MV below the raw-clustering
+   baseline at our sample size.** `vomm_split_merge` aims to via splitting
+   but the 1-step memory it conditions on is insufficient for tasks where
+   the dependencies are longer (transport, square). A k-tails (k=2) merger
+   or CSSR is the right next implementation — see "Future work" §1 —
+   together with more rollouts (§2).
 3. **Avoid `stationary_skeleton`** unless you specifically want a
    "visualization-only" skeleton of the chain (it's bad on every fidelity
    metric).
