@@ -650,9 +650,109 @@ selection criteria.
 # Run the full benchmark (≈15 minutes wall time):
 PYTHONPATH=. python scripts/benchmark_simplification.py --n_folds 5
 
+# Run with 50-rep bootstrap CIs (≈30 minutes wall time):
+PYTHONPATH=. python scripts/benchmark_simplification.py --n_folds 5 --bootstrap --n_bootstrap 50
+
 # Generate plots + summary table:
 PYTHONPATH=. python scripts/summarize_results.py
 
 # Launch the interactive demo:
 PYTHONPATH=. streamlit run policy_doctor/streamlit_app/simplification_demo/app.py
 ```
+
+## Planned next experiment — "Choosing K via MV(K)" (TO RUN)
+
+Findings so far suggest that **re-clustering at the right K dominates any
+post-clustering simplification method** on the Markov-violation axis. The
+next experiment closes this loop by sweeping K finely on existing
+representations and using `min MV(K)` as the K-selection criterion.
+
+### Data already in place
+
+All required input artifacts are present under
+`.claude/worktrees/graph-simplification/third_party/influence_visualizer/configs/{task}/clustering/{slug}/`:
+
+| Artifact | Purpose |
+|---|---|
+| `embeddings_reduced.npy` | The UMAP-reduced embeddings k-means was fit on |
+| `cluster_labels.npy`     | Existing K-means labels (for K ∈ {5, 10, 15, 20}) |
+| `clustering_models.pkl`  | Fitted sklearn KMeans (gives us the random_state etc.) |
+| `metadata.json`          | Per-timestep `rollout_idx` / `timestep` / `success` / window info |
+| `manifest.yaml`          | rep / w / s / k metadata used by the discovery code |
+
+Existing sweep grid:
+- 2 representations: `infembed`, `policy_emb_bottleneck_plan_t0`
+- 6 (window, stride) variants: `()` (raw), `(3,1)`, `(3,2)`, `(5,1)`, `(8,1)`, `(8,2)`
+- 4 K values: 5, 10, 15, 20
+- 3 tasks: `transport_mh_jan28`, `square_mh_feb5`, `lift_mh_jan26`
+
+= **144 clusterings already on disk**. For the finer sweep we need new K
+values; everything else can be reused.
+
+### Steps to run on the workstation
+
+```bash
+# 1. Re-clustering at a finer K grid using the existing reduced embeddings.
+#    Writes new clustering directories alongside the existing ones, in the
+#    same slug format (...{rep}_w{w}_s{s}_seed0_kmeans_k{K}/).
+PYTHONPATH=. python scripts/k_sweep_clustering.py \
+  --reps infembed policy_emb_bottleneck_plan_t0 \
+  --k_values 3 4 6 8 10 12 14 16 18 20 25 30 \
+  --window_strides '5,1' '3,1' '8,1' \
+  --tasks transport_mh_jan28 square_mh_feb5 lift_mh_jan26
+
+# 2. Run passthrough+bootstrap MV (both orders) on the expanded clustering
+#    set. Only computes passthrough — no simplification methods, since the
+#    objective here is K-selection, not post-clustering simplification.
+PYTHONPATH=. python scripts/k_sweep_evaluate.py \
+  --tasks transport_mh_jan28 square_mh_feb5 lift_mh_jan26 \
+  --n_bootstrap 100 \
+  --bias_correct \                  # Miller-Madow correction on per-state MI
+  --out docs/k_sweep_results/
+
+# 3. Plot MV(K) and bias-corrected MV(K) per (rep, w, s, task).
+PYTHONPATH=. python scripts/summarize_k_sweep.py
+```
+
+### What we expect to learn
+
+1. **A canonical "elbow" plot per (rep, w, s, task)**: K vs. MV₁ with
+   bootstrap CIs. The K* that minimizes MV₁ (within its CI) is the
+   principled answer to "what's the right K?" for that
+   (representation, window, stride) combination.
+2. **Cross-validation of the choice via MV₂**: at the chosen K*, MV₂
+   should also be in the local minimum region (or at least not dramatically
+   higher than the surrounding K values). If MV₂ explodes at K*, the
+   1st-order test was too generous.
+3. **Bias-correction sanity check**: with Miller-Madow correction
+   (`MV_corrected = MV_plug-in − (R−1)(C−1)/(2N)` summed per-state and
+   visitation-weighted) the U-shape should remain but be flatter. Any
+   K* that shifts dramatically under correction is suspicious.
+4. **Best (rep, w, s) for each task**: by comparing the *minima* of the
+   K-curves, we can identify which representation × window × stride
+   combination produces the most Markov clustering at its best K. This
+   becomes a defensible default for the downstream pipeline.
+
+### Artifacts to produce
+
+- `docs/k_sweep_results/{task}__{rep}__w{w}_s{s}.json` — one JSON per
+  setting, with the full MV(K), MV₂(K), bias-corrected MV(K), and
+  bootstrap CIs.
+- `docs/k_sweep_results/_plots/{task}__{rep}__w{w}_s{s}__elbow.png` —
+  the K-vs-MV curve for that setting.
+- `docs/k_sweep_results/_plots/{task}__overlay.png` — all (rep, w, s)
+  curves overlaid for one task, with the K* and minimum MV marked per
+  curve.
+- `docs/k_sweep_results/_findings.md` — written analysis: best K per
+  setting, agreement between MV₁/MV₂/MV_corrected, best (rep, w, s)
+  per task, comparison to the (now-secondary) simplification Pareto.
+
+### Compute budget
+
+- New k-means runs at K ∈ {3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30}
+  on existing reduced embeddings: 12 K × 3 (w,s) × 2 reps × 3 tasks =
+  **216 k-means fits** (~3–7k samples each, milliseconds per fit).
+- Passthrough MV + 100-rep bootstrap CI per clustering: ~5–10 seconds
+  per clustering × 216 + existing 144 = **~30–60 min total** on a decent
+  workstation CPU.
+- No GPU needed.
