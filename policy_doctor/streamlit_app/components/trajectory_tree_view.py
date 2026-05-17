@@ -53,6 +53,10 @@ def render_trajectory_tree(
     level: str = "rollout",
     key_prefix: str = "tree",
     show_stats: bool = True,
+    theme: str = "dark",
+    edge_style: str = "arrows",
+    edge_width_slope: float = 5.0,
+    node_size_slope: float = 24.0,
 ) -> None:
     """Render the trajectory tree. Self-contained: produces controls (none —
     the caller is expected to provide the min_branch / view selectors)
@@ -126,7 +130,7 @@ def render_trajectory_tree(
         nodes_f = new_f
 
     if n_pruned > 0:
-        st.caption(f"Auto-pruned {n_pruned} unreachable / false-terminal nodes.")
+        st.caption(f"{n_pruned} nodes pruned.")
     if not nodes_f:
         st.warning("No nodes match the filter; lower 'min branch'.")
         return
@@ -138,6 +142,9 @@ def render_trajectory_tree(
             mp4_dir=mp4_dir, mp4_index=mp4_index,
             height=height, level=level, key_prefix=key_prefix,
             color_mode=color_mode, node_values=node_values or {},
+            theme=theme, edge_style=edge_style,
+            edge_width_slope=edge_width_slope,
+            node_size_slope=node_size_slope,
         )
     else:
         _render_plotly(
@@ -168,6 +175,10 @@ def _render_native_svg(
     key_prefix: str,
     color_mode: str = "outcome",
     node_values: Optional[Dict[int, float]] = None,
+    theme: str = "dark",
+    edge_style: str = "arrows",
+    edge_width_slope: float = 5.0,
+    node_size_slope: float = 24.0,
 ) -> None:
     node_values = node_values or {}
     from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
@@ -390,6 +401,10 @@ def _render_native_svg(
         symbol_override=symbol_override,
         color_override=color_override,
         highlighted_path=_highlighted_path,
+        theme=theme,
+        edge_style=edge_style,
+        edge_width_slope=edge_width_slope,
+        node_size_slope=node_size_slope,
     )
 
 

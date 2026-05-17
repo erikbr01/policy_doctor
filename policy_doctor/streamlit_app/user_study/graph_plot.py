@@ -330,6 +330,10 @@ def render_graph_component(
     pos: Optional[dict[int, tuple[float, float]]] = None,
     symbol_override: Optional[dict[int, str]] = None,
     color_override: Optional[dict[int, str]] = None,
+    theme: str = "dark",
+    edge_style: str = "arrows",
+    edge_width_slope: float = 5.0,
+    node_size_slope: float = 24.0,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
@@ -377,13 +381,31 @@ def render_graph_component(
         selected_edge=list(selected_edge) if selected_edge else None,
         highlighted_path=highlighted_path,
         render_token=render_token,
+        theme=theme,
+        edge_style=edge_style,
+        edge_width_slope=float(edge_width_slope),
+        node_size_slope=float(node_size_slope),
         key=key,
         default=None,
     )
 
-    # New protocol from JS:
-    #   [node_id, seq]        — node click  (node_id == -1 means deselect)
-    #   [src, tgt, seq]       — edge click
+    # Protocol from JS:
+    #   {svg_export: xml}    — auto-published SVG snapshot for export
+    #                          (dispatched first; dicts never look like
+    #                          a click). The JS side already dedupes by
+    #                          content; here we dedupe on the stored
+    #                          value so st.rerun() doesn't fire when the
+    #                          SVG hasn't actually changed.
+    #   [node_id, seq]       — node click  (node_id == -1 means deselect)
+    #   [src, tgt, seq]      — edge click
+    if isinstance(clicked, dict) and "svg_export" in clicked:
+        xml = str(clicked.get("svg_export", ""))
+        if xml and xml != st.session_state.get("captured_svg"):
+            st.session_state["captured_svg"] = xml
+            st.session_state[f"{key}_svg_export"] = xml
+            st.rerun()
+        return selected
+
     if isinstance(clicked, list) and len(clicked) >= 2:
         try:
             seq = int(clicked[-1])

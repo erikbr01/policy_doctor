@@ -245,12 +245,22 @@ def render_graph_full_width(
     pos: dict[int, tuple[float, float]] | None = None,
     symbol_override: dict[int, str] | None = None,
     color_override: dict[int, str] | None = None,
+    theme: str = "dark",
+    edge_style: str = "arrows",
+    edge_width_slope: float = 5.0,
+    node_size_slope: float = 24.0,
 ) -> None:
     """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
+    encoding = (
+        "Line width + grey level = transition probability"
+        if edge_style == "lines"
+        else "Arrow thickness = transition probability"
+    )
     st.caption(
-        "**Click any node or edge** to explore it — larger circles = more episodes. "
-        "Arrow thickness = transition probability. ★ = success, ✕ = failure."
+        f"**Click any node or edge** to explore it — larger circles = more episodes. "
+        f"{encoding}. ★ = success, ✕ = failure; the percentage next to each "
+        "terminal label is P(reach this terminal)."
     )
 
     clicked_node_id = render_graph_component(
@@ -264,6 +274,10 @@ def render_graph_full_width(
         pos=pos,
         symbol_override=symbol_override,
         color_override=color_override,
+        theme=theme,
+        edge_style=edge_style,
+        edge_width_slope=edge_width_slope,
+        node_size_slope=node_size_slope,
     )
 
     selected_edge = st.session_state.get(f"{key_prefix}_graph_selected_edge")

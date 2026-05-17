@@ -114,7 +114,140 @@ def _load_clustering(path_str: str) -> Tuple[np.ndarray, List[Dict], Optional[np
     return labels, meta, emb, _read_manifest(path_str)
 
 
-# ── Sidebar: task + cascading clustering picker ──────────────────────────────
+# ── Sidebar: appearance + task + cascading clustering picker ────────────────
+
+st.sidebar.header("Appearance")
+light_mode = st.sidebar.toggle(
+    "Light mode",
+    value=st.session_state.get("light_mode", False),
+    key="light_mode",
+)
+if light_mode:
+    # Streamlit's runtime theme is set in config.toml; we override the
+    # surfaces that need to look right on white. The palette is
+    # deliberately muted (warm grays) so input chrome doesn't punch out.
+    #
+    # Variables (kept here so tuning is in one place):
+    #   --text:    body / heading copy
+    #   --muted:   captions, helper text
+    #   --surface: input/button background
+    #   --border:  input/button border
+    st.markdown(
+        """
+        <style>
+          :root {
+            --pd-text:    #2b2b2b;
+            --pd-muted:   #6b6b6b;
+            --pd-surface: #f4f4f5;
+            --pd-border:  #d4d4d8;
+          }
+          /* Main canvas + sidebar */
+          [data-testid="stAppViewContainer"], [data-testid="stHeader"],
+          [data-testid="stSidebar"], section.main, .stApp, .block-container,
+          body { background: #ffffff !important; color: var(--pd-text) !important; }
+          /* Text + headers in the content area */
+          .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+          .stApp p, .stApp label, .stApp .stMarkdown,
+          [data-testid="stMetricLabel"], [data-testid="stMetricValue"] {
+            color: var(--pd-text) !important;
+          }
+          /* Captions sit slightly dimmer */
+          .stApp [data-testid="stCaptionContainer"], .stApp small,
+          .stApp [class*="caption"] { color: var(--pd-muted) !important; }
+          /* Dividers + chip-style buttons need light borders, not dark */
+          hr, [data-testid="stDivider"] { border-color: var(--pd-border) !important; }
+          /* Sidebar nav: page links are very faint on white by default. */
+          [data-testid="stSidebarNav"] a, [data-testid="stSidebarNav"] span,
+          [data-testid="stSidebarNavLink"], [data-testid="stSidebarNavLink"] * {
+            color: var(--pd-text) !important;
+          }
+
+          /* ── Inputs ───────────────────────────────────────────────────
+             By default Streamlit ships its dark theme through to widgets
+             even after we flip the page bg, so dropdowns/buttons end up
+             nearly black on the new white canvas. Force them onto the
+             muted surface palette. */
+          /* Selectbox (BaseWeb Select) */
+          .stApp [data-baseweb="select"] > div {
+            background-color: var(--pd-surface) !important;
+            border-color: var(--pd-border) !important;
+            color: var(--pd-text) !important;
+          }
+          .stApp [data-baseweb="select"] svg { fill: var(--pd-muted) !important; }
+          /* Native popover for selectbox options */
+          [data-baseweb="popover"] [role="listbox"],
+          [data-baseweb="popover"] [role="option"] {
+            background-color: #ffffff !important;
+            color: var(--pd-text) !important;
+          }
+          [data-baseweb="popover"] [role="option"]:hover {
+            background-color: var(--pd-surface) !important;
+          }
+          /* Text + number inputs */
+          .stApp input[type="text"], .stApp input[type="number"],
+          .stApp textarea {
+            background-color: var(--pd-surface) !important;
+            border-color: var(--pd-border) !important;
+            color: var(--pd-text) !important;
+          }
+          /* Buttons — secondary uses the muted surface, primary keeps
+             Streamlit's red accent so the active "highlight path"
+             button is visibly differentiated from the inactive ones.
+             stDownloadButton needs the same treatment (it renders as a
+             separate testid and the default rule above misses it). */
+          .stApp .stButton > button[kind="secondary"],
+          .stApp .stButton > button:not([kind]),
+          .stApp .stDownloadButton > button,
+          .stApp [data-testid="stDownloadButton"] button {
+            background-color: var(--pd-surface) !important;
+            border: 1px solid var(--pd-border) !important;
+            color: var(--pd-text) !important;
+          }
+          .stApp .stButton > button[kind="secondary"]:hover,
+          .stApp .stButton > button:not([kind]):hover,
+          .stApp .stDownloadButton > button:hover,
+          .stApp [data-testid="stDownloadButton"] button:hover {
+            background-color: #ebebed !important;
+            border-color: #b4b4b8 !important;
+          }
+          /* Disabled state: lighter surface, dimmer text. */
+          .stApp .stDownloadButton > button:disabled,
+          .stApp [data-testid="stDownloadButton"] button:disabled {
+            background-color: #fafafa !important;
+            color: var(--pd-muted) !important;
+            border-color: #e4e4e7 !important;
+          }
+          .stApp .stButton > button[kind="primary"] {
+            background-color: #ff4b4b !important;
+            border: 1px solid #ff4b4b !important;
+            color: #ffffff !important;
+          }
+          .stApp .stButton > button[kind="primary"]:hover {
+            background-color: #ff2b2b !important;
+            border-color: #ff2b2b !important;
+          }
+          /* Sliders: leave the red track, tone down the thumb halo and the
+             min/max labels. */
+          .stApp [data-baseweb="slider"] [role="slider"] {
+            border-color: var(--pd-border) !important;
+          }
+          /* Expander frame + body. Streamlit's stExpanderDetails container
+             keeps the default dark fill even after our top-level bg flip,
+             so we override every surface it draws on. */
+          .stApp [data-testid="stExpander"],
+          .stApp [data-testid="stExpander"] details,
+          .stApp [data-testid="stExpander"] details > summary,
+          .stApp [data-testid="stExpanderDetails"],
+          .stApp [data-testid="stExpanderContent"] {
+            background-color: #ffffff !important;
+            color: var(--pd-text) !important;
+            border-color: var(--pd-border) !important;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+_theme = "light" if light_mode else "dark"
 
 st.sidebar.header("Task")
 _tasks = _list_tasks()
@@ -323,11 +456,15 @@ with c_color:
             "value": "Value V(s) (Bellman)",
             "timesteps": "Timestep count (viridis)",
         }
+    # For the Markov views, the value-based divergent red→green colouring
+    # is the most informative default (and what the paper figures use).
+    # For trees we keep the cluster-id palette as the entry point.
+    _default_color_idx = 0 if is_tree else color_opts.index("value")
     color_by = st.selectbox(
         "Color nodes by",
         options=color_opts,
         format_func=lambda v: color_labels[v],
-        index=0,
+        index=_default_color_idx,
     )
 
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
@@ -342,6 +479,59 @@ min_branch = st.slider(
     ),
 )
 max_depth = 500
+
+# ── Advanced viz settings ────────────────────────────────────────────────────
+# Hidden by default — these knobs tune the encoding (width ↔ probability,
+# radius ↔ visit count) and let users export the graph as paper-ready SVG.
+with st.expander("Advanced viz settings", expanded=False):
+    _c_style, _c_w, _c_r = st.columns(3)
+    with _c_style:
+        edge_style = st.radio(
+            "Edges",
+            options=["arrows", "lines"],
+            index=0,
+            horizontal=True,
+            help=(
+                "‘lines’ drops arrowheads. Width + grey level alone encode "
+                "transition probability — cleaner on paper, but you lose "
+                "explicit direction-of-motion."
+            ),
+        )
+    with _c_w:
+        edge_width_slope = st.slider(
+            "Edge width per probability (px)",
+            min_value=0.0, max_value=12.0, value=5.0, step=0.5,
+            help=(
+                "Linear: width = 0.6 + slope × p. The slope is the extra "
+                "pixels added to the stroke at p = 1. Grey opacity also "
+                "tracks p linearly from 0.2 to 1.0."
+            ),
+        )
+    with _c_r:
+        node_size_slope = st.slider(
+            "Node radius per visit fraction (px)",
+            min_value=0.0, max_value=36.0, value=24.0, step=1.0,
+            help=(
+                "Linear: radius = 6 + slope × (visits / max-visits). The "
+                "slope is the extra pixels added to the radius at the "
+                "most-visited node."
+            ),
+        )
+
+    # SVG export. The iframe auto-publishes a fresh snapshot to Python on
+    # every render (deduped by content hash), so this download_button is
+    # always armed with the latest SVG — one click, native browser
+    # download. (anchor.click() driven from inside the iframe isn't a real
+    # user gesture, so Chrome drops it; the parent-window button works.)
+    _captured = st.session_state.get("captured_svg", "")
+    st.download_button(
+        "⬇ Export SVG",
+        data=(_captured or "").encode("utf-8"),
+        file_name="behavior_graph.svg",
+        mime="image/svg+xml",
+        disabled=not _captured,
+        help="Saves the current graph state (no background) as behavior_graph.svg.",
+    )
 
 # Build the underlying Markov graph (used for value computation + Markov views).
 @st.cache_data(show_spinner=False)
@@ -372,10 +562,11 @@ _n_edges_hidden = sum(
     if src in _excluded or tgt in _excluded or cnt < int(min_branch)
 )
 _n_nodes_pruned = len(_excluded)
-st.caption(
-    f"Hidden {_n_edges_hidden} / {_n_edges_total} edges  ·  "
-    f"{_n_nodes_pruned} / {_n_nodes_total} nodes pruned (unreachable from START)"
-)
+# Edge-count threshold is meaningful for the Markov views; the tree view
+# uses min_branch to filter nodes directly and renders its own pruning
+# summary inside render_trajectory_tree.
+if not is_tree:
+    st.caption(f"{_n_edges_hidden} edges hidden, {_n_nodes_pruned} nodes pruned.")
 
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -395,6 +586,10 @@ if is_tree:
         height=600,
         level=level,
         key_prefix="demo_tree",
+        theme=_theme,
+        edge_style=edge_style,
+        edge_width_slope=float(edge_width_slope),
+        node_size_slope=float(node_size_slope),
     )
 else:
     # Markov SVG (BFS or temporal layout)
@@ -448,4 +643,8 @@ else:
         pos=pos,
         excluded_node_ids=excluded,
         color_override=color_override,
+        theme=_theme,
+        edge_style=edge_style,
+        edge_width_slope=float(edge_width_slope),
+        node_size_slope=float(node_size_slope),
     )
