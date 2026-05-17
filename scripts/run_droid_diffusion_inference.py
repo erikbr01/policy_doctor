@@ -35,6 +35,32 @@ Run modes:
                             the policy's predicted actions on the dashboard.
 
     (no flag, --live)       real everything. ARM WILL MOVE.
+
+Interactive session loop:
+    The script runs an outer loop over rollouts so you don't have to restart
+    between trials. Per-rollout: press Enter to start, the policy runs until
+    --max-timesteps (or you hit a key), then you label the trial, the arm
+    homes via env.reset(), and you're prompted for the next.
+
+    Mid-rollout keys (requires foreground terminal; stdlib termios cbreak):
+        Space  pause/resume action output. While paused, env.step is
+               suppressed so you can reset the scene by hand. On resume the
+               obs history is cleared and a fresh inference is requested.
+        r      end this rollout early (then label + home + prompt for next).
+        q      end this rollout AND exit the session after labelling.
+
+    Between rollouts:
+        Enter        start the next rollout
+        q + Enter    quit the session
+        success label prompt accepts y / n / number-in-[0,1] / number-in-[0,100] / s to skip
+
+Inference mode:
+    --inference-mode sync          blocking inference at every chunk boundary
+    --inference-mode async_chunk   (default) submit next chunk after the first
+                                   step of the current chunk has executed,
+                                   overlap inference with action playback.
+                                   See policy_doctor/envs/droid_runner.py for
+                                   the in-tree sim-side equivalent.
 """
 
 from __future__ import annotations
@@ -43,10 +69,12 @@ import argparse
 import datetime
 import io
 import json
+import select
 import signal
 import sys
 import time
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -549,6 +577,261 @@ def prevent_keyboard_interrupt():
 
 
 # ---------------------------------------------------------------------------
+# Keyboard listener — single-char non-blocking stdin
+# ---------------------------------------------------------------------------
+
+class KeyboardListener:
+    """Non-blocking single-key reader using termios cbreak mode.
+
+    Use as a context manager so the original terminal settings are restored
+    on exit (including on exception). Inside the context, poll() returns one
+    pending character if available, else None.
+
+    cbreak (vs raw) leaves ISIG enabled, so Ctrl-C still raises SIGINT —
+    handled at the call site, not swallowed here.
+
+    Disabled when stdin isn't a TTY (pipes / nohup); poll() then returns None.
+    """
+
+    def __init__(self) -> None:
+        self.enabled = sys.stdin.isatty()
+        self._old_attrs = None
+
+    def __enter__(self) -> "KeyboardListener":
+        if self.enabled:
+            import termios
+            import tty
+            self._old_attrs = termios.tcgetattr(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._old_attrs is not None:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_attrs)
+            self._old_attrs = None
+
+    def poll(self) -> Optional[str]:
+        if not self.enabled or self._old_attrs is None:
+            return None
+        r, _, _ = select.select([sys.stdin], [], [], 0)
+        if r:
+            return sys.stdin.read(1)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Interactive helpers
+# ---------------------------------------------------------------------------
+
+def prompt_success_label() -> Optional[float]:
+    """Blocking success prompt. Call between rollouts (in cooked mode).
+
+    Returns 0.0 / 1.0 / fractional [0, 1], or None to skip / on EOF.
+    """
+    try:
+        while True:
+            raw = input("[rec] rollout success? (y / n / 0-100 / s to skip): ").strip().lower()
+            if raw in ("s", "skip", ""):
+                return None
+            if raw == "y":
+                return 1.0
+            if raw == "n":
+                return 0.0
+            try:
+                v = float(raw)
+                if 0 <= v <= 1:
+                    return v
+                if 0 <= v <= 100:
+                    return v / 100.0
+            except ValueError:
+                pass
+            print("  expected: y, n, a number in [0, 1] or [0, 100], or 's' to skip")
+    except (EOFError, KeyboardInterrupt):
+        print("\n[rec] success prompt skipped.")
+        return None
+
+
+def stop_arm(env, args) -> None:
+    """Send a single zero-velocity command. Safe to call on dry/no-robot paths."""
+    if env is None or args.dry_run:
+        return
+    try:
+        env.step(np.zeros(ACTION_DIM, dtype=np.float32))
+    except Exception as e:
+        print(f"[client] warning: zero-velocity stop failed: {e}")
+
+
+def run_one_rollout(
+    *,
+    env,
+    args,
+    recorder: Optional["RolloutRecorder"],
+    history: deque,
+    pause_ctrl: "PauseController",
+    viser: "ViserPublisher",
+    ext_serial: str,
+    executor: Optional[ThreadPoolExecutor],
+    latencies_ms: list,
+) -> str:
+    """Run one rollout. Mutates history + recorder + latencies_ms in place.
+
+    Returns one of:
+        "max_timesteps"  — hit args.max_timesteps
+        "user_reset"     — keyboard 'r' (caller should home + prompt for next)
+        "user_quit"      — keyboard 'q' (caller should label and exit session)
+        "viser_reset"    — viser dashboard reset button
+    """
+    pred_chunk: Optional[np.ndarray] = None
+    chunk_idx = 0
+    pending_future: Optional[Future] = None
+    pending_infer_start: float = 0.0
+    step_dt = 1.0 / args.control_hz
+    paused = False
+    end_reason = "max_timesteps"
+
+    with KeyboardListener() as kb:
+        if kb.enabled:
+            print("[kb] [Space]=pause/resume  [r]=end rollout (then home)  [q]=end + quit session")
+        else:
+            print("[kb] stdin not a TTY; interactive keys disabled "
+                  "(use --pause-port for viser reset/pause).")
+
+        for t in range(args.max_timesteps):
+            loop_start = time.time()
+
+            # 0a. drain keyboard
+            quit_inner = False
+            while True:
+                key = kb.poll()
+                if key is None:
+                    break
+                if key in (" ", "p"):
+                    paused = not paused
+                    if paused:
+                        print("[kb] PAUSED — env.step suppressed; reset scene then press Space.")
+                        stop_arm(env, args)
+                    else:
+                        print("[kb] RESUMED — clearing history; next step will re-inference.")
+                        history.clear()
+                        pred_chunk = None
+                        chunk_idx = 0
+                        pending_future = None  # orphan: executor drains it; we ignore the result
+                elif key == "r":
+                    print("[kb] RESET — ending rollout.")
+                    end_reason = "user_reset"
+                    quit_inner = True
+                    break
+                elif key == "q":
+                    print("[kb] QUIT — ending rollout and session.")
+                    end_reason = "user_quit"
+                    quit_inner = True
+                    break
+            if quit_inner:
+                break
+
+            # 0b. drain viser pause/reset
+            viser_paused = pause_ctrl.poll()
+            if pause_ctrl.consume_reset():
+                print("[viser] reset — ending rollout.")
+                end_reason = "viser_reset"
+                break
+            effective_paused = paused or viser_paused
+
+            # 1. observe
+            if env is None:
+                step_obs, recording = fake_obs()
+                joint_pos_for_viser = np.zeros(7, dtype=np.float32)
+                gripper_for_viser = np.zeros(1, dtype=np.float32)
+            else:
+                env_obs = env.get_observation()
+                step_obs, recording = extract_droid_obs(
+                    env_obs, wrist_serial=args.wrist_serial, ext_serial=ext_serial)
+                joint_pos_for_viser = step_obs["joint_positions"]
+                gripper_for_viser = step_obs["gripper_position"]
+            history.append(step_obs)
+            while len(history) < N_OBS_STEPS:
+                history.append(step_obs)
+
+            # 2a. async prefetch: fire once after step 0 of the current chunk has run
+            if (args.inference_mode == "async_chunk" and executor is not None
+                    and pred_chunk is not None
+                    and chunk_idx == 1
+                    and pending_future is None
+                    and not effective_paused):
+                pending_infer_start = time.time()
+                # deque(history) is a fresh copy — background thread reads it without
+                # contention while the foreground thread keeps rotating `history`.
+                pending_future = executor.submit(policy_infer, args.server_url, deque(history))
+
+            # 2b. refresh chunk at boundary
+            new_chunk_this_step = False
+            need_new_chunk = pred_chunk is None or chunk_idx >= args.open_loop_horizon
+            if need_new_chunk:
+                if args.inference_mode == "async_chunk" and pending_future is not None:
+                    with prevent_keyboard_interrupt():
+                        pred_chunk = pending_future.result(timeout=60)
+                    latency_ms = (time.time() - pending_infer_start) * 1000
+                    pending_future = None
+                else:
+                    infer_start = time.time()
+                    with prevent_keyboard_interrupt():
+                        pred_chunk = policy_infer(args.server_url, history)
+                    latency_ms = (time.time() - infer_start) * 1000
+                latencies_ms.append(latency_ms)
+                assert pred_chunk.shape[-1] == ACTION_DIM, (
+                    f"action_dim mismatch: server returned {pred_chunk.shape}, "
+                    f"expected (..., {ACTION_DIM})"
+                )
+                chunk_idx = 0
+                new_chunk_this_step = True
+                if recorder is not None:
+                    recorder.push_inference(t=t, chunk=pred_chunk, latency_ms=latency_ms)
+                print(f"[client] t={t:4d}  inference {latency_ms:6.1f} ms  "
+                      f"chunk shape={pred_chunk.shape}"
+                      + ("  (paused)" if effective_paused else ""))
+
+            # 3. select + safety-clip
+            raw_action = pred_chunk[chunk_idx]
+            action = clip_action_safe(raw_action, max_joint_vel=args.max_joint_vel)
+
+            # 4. publish to viser (BEFORE we maybe step the robot)
+            viser.publish(
+                joint_position   = joint_pos_for_viser,
+                gripper_position = gripper_for_viser,
+                step             = t,
+                chunk_step       = chunk_idx,
+                instruction      = args.instruction or None,
+                action_chunk     = pred_chunk if new_chunk_this_step else None,
+                experiment_id    = args.experiment_id or None,
+            )
+
+            # 5. (maybe) execute on the robot
+            will_execute = (env is not None) and (not args.dry_run) and (not effective_paused)
+            if will_execute:
+                env.step(action)
+            elif env is None and (t < 4 or t % 50 == 0):
+                print(f"[client] NO-ROBOT t={t:4d}  clipped={np.round(action, 3).tolist()}")
+
+            # 6. record
+            if recorder is not None:
+                recorder.push_step(
+                    t=t, recording=recording,
+                    action=action, raw_action=raw_action,
+                    executed=will_execute,
+                )
+
+            chunk_idx += 1
+
+            # 7. pace to control_hz
+            elapsed = time.time() - loop_start
+            if elapsed < step_dt:
+                time.sleep(step_dt - elapsed)
+
+    return end_reason
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -560,6 +843,12 @@ def main():
     parser.add_argument("--open-loop-horizon", type=int, default=OPEN_LOOP_HORIZON)
     parser.add_argument("--control-hz", type=float, default=DROID_CONTROL_HZ)
     parser.add_argument("--instruction", default="", help="Stamped into viser msg; not used by the diffusion policy.")
+    # Inference
+    parser.add_argument("--inference-mode", choices=["sync", "async_chunk"], default="async_chunk",
+                        help="sync: block on every chunk boundary. async_chunk (default): "
+                             "after the first step of each chunk has run, submit inference for the "
+                             "next chunk in a background thread; await at the boundary (should "
+                             "already be ready). Mirrors policy_doctor/envs/droid_runner.py.")
     # Cameras
     parser.add_argument("--wrist-serial", default=WRIST_SERIAL)
     parser.add_argument("--external-camera", choices=["left", "right"], default="left",
@@ -619,150 +908,101 @@ def main():
     pause = PauseController(args.pause_port)
 
     mode = "no_robot" if args.no_robot else ("dry_run" if args.dry_run else "live")
-    recorder: Optional[RolloutRecorder] = None
-    if not args.no_recording:
-        recorder = RolloutRecorder(
-            output_dir=Path(args.output_dir),
-            args=args,
-            instruction=args.instruction,
-            mode=mode,
-        )
 
-    history: deque = deque(maxlen=N_OBS_STEPS)
-    pred_chunk: Optional[np.ndarray] = None
-    chunk_idx = 0
-    step_dt = 1.0 / args.control_hz
-    latencies_ms: list[float] = []
+    # Single executor shared across all rollouts in this session. max_workers=2
+    # so that orphaned (post-pause) inferences don't block a fresh submit; the
+    # Flask server still serializes on its end, but the foreground never waits
+    # for a stale request to complete.
+    executor: Optional[ThreadPoolExecutor] = None
+    if args.inference_mode == "async_chunk":
+        executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="droid_infer")
+        print("[client] inference mode: async_chunk (overlap inference w/ chunk execution)")
+    else:
+        print("[client] inference mode: sync (blocking at every chunk boundary)")
 
     print(f"[client] rollout params: max_timesteps={args.max_timesteps}, "
           f"open_loop_horizon={args.open_loop_horizon}, control_hz={args.control_hz}, "
           f"max_joint_vel={args.max_joint_vel}")
-    print("[client] Ctrl+C to stop early.")
+    print("[client] Ctrl+C ends the session.")
+
+    rollout_idx = 0
+    is_first = True
 
     try:
-        for t in range(args.max_timesteps):
-            loop_start = time.time()
-
-            # Drain pause/reset commands from dashboard
-            paused = pause.poll()
-            if pause.consume_reset():
-                print("[client] reset requested — ending rollout.")
+        while True:
+            # Wait-for-go gate before each rollout (including the first).
+            try:
+                prompt = ("\n[ready] press Enter to start the "
+                          + ("first" if is_first else "next")
+                          + " rollout, q+Enter to quit: ")
+                raw = input(prompt).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if raw in ("q", "quit"):
                 break
 
-            # 1. observe
-            if env is None:
-                step_obs, recording = fake_obs()
-                joint_pos_for_viser = np.zeros(7, dtype=np.float32)
-                gripper_for_viser = np.zeros(1, dtype=np.float32)
-            else:
-                env_obs = env.get_observation()
-                step_obs, recording = extract_droid_obs(
-                    env_obs, wrist_serial=args.wrist_serial, ext_serial=ext_serial)
-                joint_pos_for_viser = step_obs["joint_positions"]
-                gripper_for_viser = step_obs["gripper_position"]
-            history.append(step_obs)
-            while len(history) < N_OBS_STEPS:
-                history.append(step_obs)
+            rollout_idx += 1
+            is_first = False
+            print(f"\n=== rollout {rollout_idx} ===")
 
-            # 2. refresh action chunk at boundaries
-            new_chunk_this_step = False
-            if pred_chunk is None or chunk_idx >= args.open_loop_horizon:
-                infer_start = time.time()
-                with prevent_keyboard_interrupt():
-                    pred_chunk = policy_infer(args.server_url, history)
-                latency_ms = (time.time() - infer_start) * 1000
-                latencies_ms.append(latency_ms)
-                assert pred_chunk.shape[-1] == ACTION_DIM, (
-                    f"action_dim mismatch: server returned {pred_chunk.shape}, expected (..., {ACTION_DIM})"
+            recorder: Optional[RolloutRecorder] = None
+            if not args.no_recording:
+                recorder = RolloutRecorder(
+                    output_dir=Path(args.output_dir),
+                    args=args,
+                    instruction=args.instruction,
+                    mode=mode,
                 )
-                chunk_idx = 0
-                new_chunk_this_step = True
-                if recorder is not None:
-                    recorder.push_inference(t=t, chunk=pred_chunk, latency_ms=latency_ms)
-                print(f"[client] t={t:4d}  inference {latency_ms:6.1f} ms  chunk shape={pred_chunk.shape}"
-                      + ("  (paused)" if paused else ""))
 
-            # 3. select + safety-clip
-            raw_action = pred_chunk[chunk_idx]
-            action = clip_action_safe(raw_action, max_joint_vel=args.max_joint_vel)
+            history: deque = deque(maxlen=N_OBS_STEPS)
+            latencies_ms: list = []
+            end_reason = "max_timesteps"
 
-            # 4. publish to viser (BEFORE we maybe step the robot)
-            viser.publish(
-                joint_position   = joint_pos_for_viser,
-                gripper_position = gripper_for_viser,
-                step             = t,
-                chunk_step       = chunk_idx,
-                instruction      = args.instruction or None,
-                action_chunk     = pred_chunk if new_chunk_this_step else None,
-                experiment_id    = args.experiment_id or None,
-            )
+            try:
+                end_reason = run_one_rollout(
+                    env=env, args=args, recorder=recorder, history=history,
+                    pause_ctrl=pause, viser=viser, ext_serial=ext_serial,
+                    executor=executor, latencies_ms=latencies_ms,
+                )
+            except KeyboardInterrupt:
+                print("\n[client] interrupted by user.")
+                end_reason = "user_quit"
 
-            # 5. (maybe) execute on the robot
-            will_execute = (env is not None) and (not args.dry_run) and (not paused)
-            if will_execute:
-                env.step(action)
-            elif env is None and (t < 4 or t % 50 == 0):
-                # Diagnostic print on the fully-fake path
-                print(f"[client] NO-ROBOT t={t:4d}  clipped={np.round(action, 3).tolist()}")
+            # Always stop the arm at end of rollout (no-op on dry/no-robot paths).
+            stop_arm(env, args)
 
-            # 6. record
+            # Latency summary for this rollout
+            if latencies_ms:
+                print(f"[client] inference latency: "
+                      f"mean={np.mean(latencies_ms):.1f}ms  "
+                      f"p50={np.percentile(latencies_ms, 50):.1f}ms  "
+                      f"p95={np.percentile(latencies_ms, 95):.1f}ms  "
+                      f"n_chunks={len(latencies_ms)}")
+
+            # Label (live mode + recorder + prompt enabled)
+            success: Optional[float] = None
+            if recorder is not None and mode == "live" and not args.no_success_prompt:
+                success = prompt_success_label()
+
             if recorder is not None:
-                recorder.push_step(
-                    t=t, recording=recording,
-                    action=action, raw_action=raw_action,
-                    executed=will_execute,
-                )
+                recorder.finalize(latencies_ms=latencies_ms, success=success)
 
-            chunk_idx += 1
+            if end_reason == "user_quit":
+                break
 
-            # 7. pace to control_hz
-            elapsed = time.time() - loop_start
-            if elapsed < step_dt:
-                time.sleep(step_dt - elapsed)
-    except KeyboardInterrupt:
-        print("\n[client] interrupted by user.")
+            # Home the arm before the next start prompt so the user isn't
+            # racing the policy to set up the scene.
+            if env is not None and not args.dry_run:
+                print("[client] homing arm (env.reset())...")
+                try:
+                    env.reset()
+                    print("[client] homed.")
+                except Exception as e:
+                    print(f"[client] WARNING: env.reset() failed: {e}")
     finally:
-        if env is not None and not args.dry_run:
-            # In live mode only: stop the arm by commanding zero velocity once.
-            # In dry-run we never stepped, so this is unnecessary (and would
-            # be the first env.step the user didn't ask for).
-            try:
-                env.step(np.zeros(ACTION_DIM, dtype=np.float32))
-            except Exception as e:
-                print(f"[client] warning: zero-velocity stop failed: {e}")
-        if latencies_ms:
-            print(f"[client] inference latency: "
-                  f"mean={np.mean(latencies_ms):.1f}ms  "
-                  f"p50={np.percentile(latencies_ms, 50):.1f}ms  "
-                  f"p95={np.percentile(latencies_ms, 95):.1f}ms  "
-                  f"n_chunks={len(latencies_ms)}")
-
-        # Success prompt — live mode only, and only if recording (otherwise pointless)
-        success: Optional[float] = None
-        if recorder is not None and mode == "live" and not args.no_success_prompt:
-            try:
-                while True:
-                    raw = input("[rec] rollout success? (y / n / 0-100 / s to skip): ").strip().lower()
-                    if raw in ("s", "skip", ""):
-                        break
-                    if raw == "y":
-                        success = 1.0; break
-                    if raw == "n":
-                        success = 0.0; break
-                    try:
-                        v = float(raw)
-                        if 0 <= v <= 1:
-                            success = v; break
-                        if 0 <= v <= 100:
-                            success = v / 100.0; break
-                    except ValueError:
-                        pass
-                    print("  expected: y, n, a number in [0, 1] or [0, 100], or 's' to skip")
-            except (EOFError, KeyboardInterrupt):
-                print("\n[rec] success prompt skipped.")
-
-        if recorder is not None:
-            recorder.finalize(latencies_ms=latencies_ms, success=success)
+        if executor is not None:
+            executor.shutdown(wait=False)
 
 
 if __name__ == "__main__":

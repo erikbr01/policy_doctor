@@ -180,14 +180,18 @@ python scripts/run_droid_diffusion_inference.py \
     --max-joint-vel 0.5
 ```
 
+The script runs an interactive **session loop** — one process drives many
+rollouts back-to-back. See §2.4 for keyboard controls and trial cadence.
+
 Key flags:
 
 | Flag                  | Default              | Notes                                                                                  |
 |-----------------------|----------------------|----------------------------------------------------------------------------------------|
 | `--server-url`        | `http://127.0.0.1:5001` | Where the policy server is listening.                                                 |
+| `--inference-mode`    | `async_chunk`        | `async_chunk`: after step 0 of each chunk fires, submit inference for the next chunk in a background thread; await at the chunk boundary. `sync`: block at every chunk boundary (old behaviour). See §2.5. |
 | `--external-camera`   | `left`               | `left` → ZED 36716034, `right` → ZED 37617599. Whichever you pick is sent to the policy as `exterior_image_1_left`. |
 | `--wrist-serial`      | `14313307`           | Wrist ZED serial. Sent to the policy as `hand_camera_image`.                          |
-| `--max-timesteps`     | `600`                | Hard step cap. ~40 s at 15 Hz. **Use 60 for first live runs.**                        |
+| `--max-timesteps`     | `600`                | Hard step cap **per rollout**. ~40 s at 15 Hz. **Use 60 for first live runs.**        |
 | `--open-loop-horizon` | `8`                  | Steps from each predicted chunk to execute before requesting a new chunk.             |
 | `--control-hz`        | `15.0`               | DROID's standard data-collection rate. Don't change unless you know why.              |
 | `--max-joint-vel`     | `0.5`                | Hard cap on \|joint velocity\| in rad/s. **Conservative; expect to relax to 1.0–2.0 later.** |
@@ -195,14 +199,73 @@ Key flags:
 | `--dry-run`           | off                  | Real RobotEnv (homes the arm on init), real obs, env.step suppressed.                 |
 | `--viser-port`        | `None`               | If set, publishes per-step state + predicted chunks via ZMQ PUSH to the dashboard.    |
 | `--pause-port`        | `None`               | If set, listens for Pause/Reset commands from the dashboard.                          |
-| `--output-dir`        | `data/droid_eval_runs` | Root dir for per-rollout subfolders (see §3.5). Pass `--no-recording` to disable.   |
+| `--output-dir`        | `data/droid_eval_runs` | Root dir for per-rollout subfolders (see §2.6). Pass `--no-recording` to disable.   |
 | `--no-recording`      | off                  | Skip MP4 + HDF5 capture entirely.                                                     |
 | `--no-success-prompt` | off                  | Skip the y/n/0-100 success prompt at the end of live rollouts.                       |
 
 Note: `RobotEnv.__init__` always homes the arm. The `--dry-run` flag only
 gates `env.step()` calls during the rollout, not the init reset.
 
-### 3.5 Rollout recording layout
+### 2.4 Interactive session loop
+
+The script does **not** exit after a single rollout. It runs an outer loop:
+
+```
+[ready] press Enter ──►  rollout  ──►  stop arm  ──►  label  ──►  env.reset() (home)  ──►  back to top
+                                                                                                │
+                                                                              q+Enter at prompt ┘  → exit
+```
+
+The cadence stays the same across the whole session — set up the scene,
+hit Enter, watch the rollout, label it, then the arm homes itself and you
+get the next prompt. No conda re-activation between trials.
+
+Mid-rollout keyboard controls (stdlib `termios` cbreak — the terminal
+running Terminal C must have focus):
+
+| Key   | Effect |
+|-------|--------|
+| `Space` (or `p`) | Toggle pause. While paused: `env.step()` is suppressed (zero-velocity sent once on the toggle) so you can rearrange the scene by hand. On resume: the obs-history deque is cleared and `pred_chunk` is dropped, so the next loop iteration triggers a fresh inference from the post-reset observation — no stale-chunk execution. |
+| `r`   | End the current rollout. The session continues: stop arm → label prompt → `env.reset()` homes the arm → "press Enter to start the next rollout". |
+| `q`   | End the current rollout AND exit the session after labelling. The arm is stopped and the recorder is finalized. No homing (you've quit). |
+
+Between-rollout prompts (cooked-mode `input()`, line-buffered):
+
+- **Start gate**: `press Enter to start the [first|next] rollout, q+Enter to quit`. Nothing moves until you confirm — explicit handshake before every rollout.
+- **Success label** (live mode only, unless `--no-success-prompt`): `y` / `n` / a number in `[0, 1]` / a number in `[0, 100]` / `s` to skip. Written into `meta.json` and `data/demo_0/rewards[-1]` of the HDF5.
+
+The viser **Pause** and **Reset** buttons still work in parallel and OR
+with the keyboard pause: any pause source pauses, all sources must clear to
+resume. The viser **Reset** button maps to the same end-of-rollout path as
+keyboard `r`.
+
+If stdin is not a TTY (script under `nohup`, redirected, etc.), the keyboard
+listener disables itself silently — the only mid-rollout controls are then
+viser (if wired) and `Ctrl+C`. The session loop still works; you'll just
+hit `max_timesteps` on every rollout.
+
+### 2.5 Inference modes (sync vs async_chunk)
+
+`--inference-mode async_chunk` (default) submits inference in a background
+thread one step into each chunk's execution, then awaits the result at the
+chunk boundary. With `open_loop_horizon=8` at 15 Hz, the policy has ~470 ms
+of overlap window before the foreground needs the next chunk — comfortably
+above the observed 250 ms p50 latency, so the chunk boundary rarely
+stalls. Mirrors the `ASYNC_CHUNK` path in
+`policy_doctor/envs/droid_runner.py`.
+
+`--inference-mode sync` reverts to the original behaviour (block on every
+chunk boundary). Use it when debugging timing, or when you want every chunk
+to be conditioned on the latest possible observation.
+
+On pause: any in-flight async inference is **orphaned** (the executor still
+drains it, but the foreground discards the result on resume). The executor
+runs `max_workers=2` so an orphaned inference doesn't block a fresh submit
+after resume. The Flask server itself runs `threaded=False` and serializes
+on its end, so only one inference is ever truly in flight; orphaning is
+purely a foreground bookkeeping concern.
+
+### 2.6 Rollout recording layout
 
 Every rollout (live or `--dry-run`) writes a self-contained directory under
 `--output-dir`, default `data/droid_eval_runs/<timestamp>/`:
@@ -347,13 +410,20 @@ internal limits are the only deeper net.
 
 Abort ladder (least to most disruptive):
 
-1. **Pause** in viser dashboard — keeps inference running, suppresses
-   `env.step()`.
-2. **Reset** in viser dashboard — ends rollout, homes the arm via
-   `env.reset()`.
-3. **Ctrl+C** in Terminal C — the script's `finally` block sends one
-   `env.step(zeros)` to halt the arm on the way out.
-4. **Hardware E-stop**.
+1. **`Space`** in Terminal C, or **Pause** in viser dashboard — keeps
+   inference running, suppresses `env.step()`, sends zero-velocity once.
+   Reversible: `Space` again (or unpause in viser) clears history and
+   resumes with a fresh inference.
+2. **`r`** in Terminal C, or **Reset** in viser dashboard — ends the
+   current rollout cleanly. The session loop then stops the arm,
+   prompts for a success label, and `env.reset()`s the arm before
+   prompting for the next rollout.
+3. **`q`** in Terminal C — same as `r`, but exits the session after
+   labelling instead of starting another rollout.
+4. **`Ctrl+C`** in Terminal C — abort current rollout immediately. The
+   `finally` blocks still send one `env.step(zeros)` and (if applicable)
+   finalize the recorder before exiting.
+5. **Hardware E-stop**.
 
 ---
 
