@@ -279,9 +279,10 @@ def _sil_gamma_panel(K_sil: List[int], sil_vals: List[float]) -> None:
         min_value=0.05, max_value=1.0, value=0.9, step=0.05,
         key="sil_gamma_slider",
         help=(
-            "K* = largest K < K_peak with silhouette ≥ γ · max_silhouette. "
-            "High γ → K just below the peak (most clusters). "
-            "Low γ → smaller K. Returns None when the curve is monotone decreasing."
+            "K* = smallest K (≥5) on the ascending side with silhouette ≥ γ · max_sil. "
+            "Low γ → small K (few clusters, loose threshold). "
+            "High γ → K just below the peak (maximum structure). "
+            "Returns None when the curve is monotone decreasing."
         ),
     )
     K_star_sil = select_K_by_silhouette_gamma(K_sil, sil_vals, gamma=gamma_sil)
@@ -357,9 +358,10 @@ def _sil_gamma_panel(K_sil: List[int], sil_vals: List[float]) -> None:
             "Use the MV γ-selection instead."
         )
     st.caption(
-        "**Selection rule**: largest K strictly below the silhouette peak "
-        "where silhouette ≥ γ · max_silhouette. High γ → K just below the peak. "
-        "Low γ → smaller K. When monotone decreasing, K* is undefined."
+        "**Selection rule**: smallest K (≥5, ascending side) where silhouette ≥ γ · max_sil. "
+        "Low γ → small K (minimum expressiveness to clear threshold). "
+        "High γ → K near the peak (maximum structure). "
+        "Mirrors MV γ-selection. When monotone decreasing, K* is undefined."
     )
 
 
@@ -966,13 +968,19 @@ if rep is not None and ksweep_meta is not None:
 
     # -------------------------------------------------------------------------
     # Silhouette γ-selection panel
+    # Use a checkbox instead of st.expander — expanders always reset to
+    # expanded=False on full reruns, so a slider inside them closes the panel.
+    # A checkbox persists its state in session_state across reruns.
     # -------------------------------------------------------------------------
     sil_family = [r for r in family if r.get("silhouette") is not None]
     sil_family.sort(key=lambda r: r["K"])
-    with st.expander(
+    _sil_toggle_key = f"_sil_gamma_show_{task}__{rep}__w{w_sel}_s{s_sel}"
+    show_sil_panel = st.checkbox(
         f"**Silhouette γ-selection — auto-pick K** for `{rep}`, w={w_sel}, s={s_sel}",
-        expanded=False,
-    ):
+        key=_sil_toggle_key,
+        value=False,
+    )
+    if show_sil_panel:
         if len(sil_family) < 3:
             st.info(
                 "Not enough silhouette values for this (rep, w, s) — "

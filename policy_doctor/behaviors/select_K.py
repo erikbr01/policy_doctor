@@ -277,7 +277,7 @@ def select_K_by_silhouette_gamma(
     K_list: List[int],
     sil_list: List[float],
     gamma: float = 0.9,
-    K_min: int = 3,
+    K_min: int = 5,
 ) -> Optional[int]:
     """Select K from a silhouette-vs-K curve using a gamma fraction of the peak.
 
@@ -285,14 +285,17 @@ def select_K_by_silhouette_gamma(
       1. Find K_peak = argmax(silhouette).
       2. Compute target = gamma * sil[K_peak].
       3. Among K < K_peak with sil[K] >= target and K >= K_min,
-         return the largest such K.
+         return the SMALLEST such K.
 
-    Returns None if no K satisfies the constraints (e.g. the curve is
-    monotone decreasing — no useful peak exists to the right).
+    Using min (not max) mirrors the MV γ-selection semantics:
+      - Low γ  → low target → many K qualify → pick the smallest (simplest graph)
+      - High γ → high target → only K near the peak qualify → pick the smallest
+        of those, which is the first K that reaches near-peak silhouette
+      - γ = 1.0 → target = max_sil → only K whose silhouette equals the peak
+        qualifies; since we exclude K_peak itself, this typically returns None
 
-    The gamma parameter controls how close to the peak you must be on the
-    ascending side.  gamma=1.0 selects K just below the peak; gamma=0.9
-    accepts any K that achieves 90% of max silhouette.
+    Returns None if the curve is monotone decreasing (peak at smallest K, no
+    ascending left side) or if no K meets the threshold.
     """
     if not K_list or not sil_list or len(K_list) != len(sil_list):
         return None
@@ -308,7 +311,7 @@ def select_K_by_silhouette_gamma(
         sorted_K[i] for i in range(peak_idx)
         if sorted_K[i] >= K_min and sorted_sil[i] >= target
     ]
-    return max(candidates) if candidates else None
+    return min(candidates) if candidates else None
 
 
 __all__ = [
