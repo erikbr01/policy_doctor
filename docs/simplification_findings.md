@@ -1463,3 +1463,55 @@ gate's behavior. The auto-pipeline (`select_K.py`) consumes
 `mv1_coverage_fraction` from per-clustering JSONs and applies the
 threshold + multi-cell-admissibility checks described in the
 "Automated hyperparameter selection" section above.
+
+---
+
+## γ-selection visualization
+
+For each task, the auto-pipeline's choice of `(rep, w, s, K)` is
+visualized as a two-panel figure (`scripts/plot_gamma_selection.py`):
+
+- **Left**: MV₁-vs-K curve at the auto-picked `(rep, w, s)`, with
+  horizontal lines at `γ · MV_asymp` for `γ ∈ {0.3, 0.5, 0.7, 0.9}`.
+  Ungated cells (cov₁ < 0.80 or K < 5) shown as hollow markers; gated
+  cells are filled. The picked K at each γ is marked where the
+  horizontal line first crosses the curve.
+
+- **Right**: `K*(γ)` as a staircase. Flat regions mean γ is locally
+  insensitive — the auto-pipeline's default γ=0.5 sits in a flat
+  region on all three tasks, so the answer is robust to small γ
+  changes.
+
+### Per-task panels
+
+**lift_mh_jan26** — infembed, w=1, s=1. Smooth rise K=5→20 with the
+Patch-B non-convergence drop at K=25-30 (high-K gate firing).
+
+![lift γ selection](k_sweep_results/_plots/lift_mh_jan26__gamma_selection.png)
+
+**square_mh_feb5** — infembed, w=8, s=1. Only 3 gated cells; curve is
+monotone and Patch B reports converged. K* is stable at K=12 across
+the entire γ ∈ [0.05, 0.65] range.
+
+![square γ selection](k_sweep_results/_plots/square_mh_feb5__gamma_selection.png)
+
+**transport_mh_jan28** — policy_emb, w=8, s=1. The most informative
+panel: MV peaks at K=18 (0.302) then drops sharply at K=25-30. Patch A
+captured the true ceiling; γ=0.5 lands at K=10, safely below the
+unstable high-K region.
+
+![transport γ selection](k_sweep_results/_plots/transport_mh_jan28__gamma_selection.png)
+
+### Reading the panels
+
+- **Flat regions** in the K*(γ) staircase mean the choice is robust:
+  γ ∈ [0.4, 0.6] gives the same K on every task in our data. The
+  γ=0.5 default isn't a magic number — it's in the middle of the
+  flat region.
+- **Non-monotone MV curves** (lift, transport) show the value of
+  Patch A — the asymptote is the true peak, not the high-K tail. The
+  γ targets land on the rising part of the curve, away from the
+  unstable high-K region.
+- **Coverage cliff** (square has many ungated K) is visible in the
+  hollow vs filled markers. The auto-pipeline only consumes the
+  filled markers; the ungated ones are shown for context.
