@@ -1,0 +1,49 @@
+# @package mimicgen_datagen
+# MimicGen CoffeePreparation task — D1 variant, mug tightly constrained.
+#
+# CoffeePreparation_D1 randomization bounds:
+#   drawer:         x=0.15 (fixed),   y=-0.35 (fixed),  z_rot=π (fixed)
+#   coffee_machine: x ∈ [-0.25,-0.15], y ∈ [-0.30,-0.25], z_rot ∈ [-π/6, π/6]
+#   mug:            x ∈ [-0.15, 0.20], y ∈ [0.05, 0.25], z_rot ∈ [0, 2π] (full rotation)
+#   coffee_pod:     x ∈ [-0.03, 0.03], y ∈ [-0.05, 0.03], z_rot=0 (fixed)
+#
+# Mug is constrained tightly (analogous to nut in square_d1 tight experiments):
+#   x:     ±40 mm   (8 cm total range)
+#   y:     ±40 mm   (8 cm total range)
+#   z_rot: ±30°     (60° total range)
+# All other objects: null (free — use D1 env's default range).
+
+task_name: coffee_preparation
+env_interface_name: MG_CoffeePreparation
+env_interface_type: robosuite
+source_dataset_path: data/source/mimicgen/core_datasets/coffee_preparation_d1/demo.hdf5
+
+# Trajectory variance knobs
+action_noise: 0.05
+subtask_term_offset_range: [5, 10]
+nn_k: 3
+interpolate_from_last_target_pose: true
+transform_first_robot_pose: false
+num_interpolation_steps: 5
+num_fixed_steps: 0
+
+# Mug pose constraints — tight, analogous to square nut tight constraint.
+# Other objects (drawer, coffee_machine, coffee_pod): null = use D1 env's random range.
+fix_initial_object_poses: true
+object_pose_ranges:
+  mug:
+    x: [-0.04, 0.04]       # ±40 mm
+    y: [-0.04, 0.04]       # ±40 mm
+    z_rot: [-0.524, 0.524] # ±30°
+  drawer:
+    x: null
+    y: null
+    z_rot: null
+  coffee_machine:
+    x: null
+    y: null
+    z_rot: null
+  coffee_pod:
+    x: null
+    y: null
+    z_rot: null

@@ -1,0 +1,104 @@
+# @package _global_
+# MimicGen budget × replicate sweep — CoffeePreparation D1, May 18 2026, 100-demo baseline,
+# mug TIGHTLY constrained initial poses.
+#
+# Constrain the mug's initial pose relative to the seed demo pose:
+#   x:     ±40 mm   (8 cm total range)
+#   y:     ±40 mm   (8 cm total range)
+#   z_rot: ±30°     (60° total range — vs D1's full 360°)
+#
+# All other objects (drawer, coffee_machine, coffee_pod): unconstrained (null = D1 range).
+#
+# Design mirrors the square apr26 d60 nut_constrained_tight experiment.
+# Three selection seeds all with fixed seeds (rep_seeds: [1, 2, 3]).
+#
+# Prerequisite: Phase 0 must generate the D1 pool first:
+#   conda run -n mimicgen python scripts/generate_coffee_prep_d1_pool.py \
+#     --output_dir data/source/mimicgen/core_datasets/coffee_preparation_d1 \
+#     --n_success 300
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_coffee_preparation \
+#     +experiment=mimicgen_coffee_prep_d1_may18_d100_mug_constrained \
+#     steps=[train_baseline,eval_baseline,compute_infembed,run_clustering,mimicgen_budget_rep_sweep]
+#
+# Or via the launch script:
+#   ./scripts/run_coffee_prep_d1_may18_sweep.sh
+
+task_config: coffee_prep_d1_may18
+experiment_name: mimicgen_coffee_prep_d1_may18_d100_mug_constrained
+
+run_dir: data/pipeline_runs/mimicgen_coffee_prep_d1_may18_seed1_d100_mug_constrained
+
+seeds: [1]
+reference_seed: 1
+
+train_date: may18_coffee_prep_d1_d100_mug_constrained
+device: cuda:0
+project: mimicgen_coffee_preparation
+wandb_tags: [coffee_preparation, mimicgen, may18, budget_sweep, rep_sweep, mug_constrained]
+
+baseline:
+  max_train_episodes: 100
+  checkpoint_topk: 5
+
+evaluation:
+  train_date: may18_coffee_prep_d1_d100_mug_constrained
+  eval_date: may18_coffee_prep_d1_d100_mug_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: may18_coffee_prep_d1_d100_mug_constrained
+  eval_date: may18_coffee_prep_d1_d100_mug_constrained
+
+# Clustering — same parameters as square apr26 experiments
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+mimicgen_datagen:
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  # Constrain mug initial pose tightly; leave all other objects unconstrained (null = D1 free range).
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    mug:
+      x: [-0.04, 0.04]       # ±40 mm
+      y: [-0.04, 0.04]       # ±40 mm
+      z_rot: [-0.524, 0.524] # ±30°
+    drawer:
+      x: null
+      y: null
+      z_rot: null
+    coffee_machine:
+      x: null
+      y: null
+      z_rot: null
+    coffee_pod:
+      x: null
+      y: null
+      z_rot: null
+
+# ---------------------------------------------------------------------------
+# Rep sweep: three fixed selection seeds (no null/random first phase)
+# Device: cuda:0 × 3 slots (one GPU, three concurrent arms)
+# ---------------------------------------------------------------------------
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 300, 500]
+  rep_seeds: [1, 2, 3]
+  devices: [cuda:0, cuda:0, cuda:0]
+
+steps: [mimicgen_budget_rep_sweep]

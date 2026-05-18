@@ -1,0 +1,9 @@
+task: robomimic_coffee_preparation
+name: "CoffeePrep D1 (May 18 sweep, demos=100, mug constrained)"
+
+eval_dir: "data/outputs/eval_save_episodes/may18_coffee_prep_d1_d100_mug_constrained/may18_coffee_prep_d1_d100_mug_constrained_train_diffusion_unet_lowdim_coffee_preparation_mimicgen_1/latest"
+train_dir: "data/outputs/train/may18_coffee_prep_d1_d100_mug_constrained/may18_coffee_prep_d1_d100_mug_constrained_train_diffusion_unet_lowdim_coffee_preparation_mimicgen_1"
+train_ckpt: "latest"
+exp_date: "default"
+seeds: ["1"]
+wandb_project: "mimicgen_coffee_preparation"

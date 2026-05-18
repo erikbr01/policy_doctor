@@ -1,0 +1,26 @@
+# @package _global_
+# CoffeePreparation D1 → MimicgenReplayLowdimDataset + MimicgenLowdimRunner.
+# Generate data in ``mimicgen`` conda env; train in ``cupid_torch2``.
+
+defaults:
+  - /robomimic/baseline/low_dim@baseline: coffee_preparation_mimicgen
+  - /robomimic/curation_filtering/low_dim@curation_filtering: square_mh_mimicgen
+  - /robomimic/curation_selection/low_dim@curation_selection: square_mh_mimicgen
+  - /robomimic/attribution/low_dim@attribution: coffee_preparation_mimicgen
+  - /robomimic/evaluation/low_dim@evaluation: coffee_preparation_mimicgen
+
+env: robomimic
+state: low_dim
+task: coffee_preparation_mimicgen
+task_config: coffee_prep_d1_may18
+
+data_source:
+  id: mimicgen_coffee_preparation
+  label: MimicGen CoffeePreparation D1 (merged HDF5) + cupid diffusion
+  policy_stack: diffusion_unet_lowdim
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: cupid_torch2
+  conda_env_datagen: mimicgen
+  robocasa_submodule: false
+  mimicgen_submodule: true

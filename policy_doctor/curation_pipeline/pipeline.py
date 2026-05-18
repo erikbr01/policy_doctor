@@ -16,6 +16,7 @@ _REPO_ROOT = REPO_ROOT
 # Ordered list of all steps — default execution order.
 ALL_STEPS: List[str] = [
     "train_baseline",
+    "eval_baseline",
     "eval_policies",
     "train_attribution",
     "finalize_attribution",
@@ -34,6 +35,9 @@ ALL_STEPS: List[str] = [
     # Composite arms (each runs select → generate → train under a namespaced dir):
     "mimicgen_random",              # RandomSelectionHeuristic
     "mimicgen_behavior_graph",      # BehaviorGraphPathHeuristic
+    # Config-driven budget sweep (heuristics × budgets from mimicgen_budget_sweep config):
+    "mimicgen_budget_sweep",
+    "mimicgen_budget_rep_sweep",
     # Flat steps (standalone / legacy runs):
     "select_mimicgen_seed_from_graph",
     "select_mimicgen_seed",
@@ -71,9 +75,15 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         MimicgenRandomArmStep,
         MimicgenBehaviorGraphArmStep,
     )
+    from policy_doctor.curation_pipeline.steps.eval_baseline import EvalBaselineStep
+    from policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep import (
+        MimicgenBudgetSweepStep,
+        MimicgenBudgetRepSweepStep,
+    )
 
     return {
         "train_baseline": TrainBaselineStep,
+        "eval_baseline": EvalBaselineStep,
         "eval_policies": EvalPoliciesStep,
         "train_attribution": TrainAttributionStep,
         "finalize_attribution": FinalizeAttributionStep,
@@ -90,6 +100,8 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "compare": CompareStep,
         "mimicgen_random": MimicgenRandomArmStep,
         "mimicgen_behavior_graph": MimicgenBehaviorGraphArmStep,
+        "mimicgen_budget_sweep": MimicgenBudgetSweepStep,
+        "mimicgen_budget_rep_sweep": MimicgenBudgetRepSweepStep,
         "select_mimicgen_seed_from_graph": SelectMimicgenSeedFromGraphStep,
         "select_mimicgen_seed": SelectMimicgenSeedStep,
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,

@@ -1,0 +1,20 @@
+baseline_ref:
+  train_date: may18
+  task: coffee_preparation_mimicgen
+  state: low_dim
+  method: diffusion_policy_cnn
+
+curation_config_path: null
+num_epochs: 3001
+filter_ratio: 0.00
+select_ratio: 0.10
+curation_method: influence_sum_official
+
+output_dir: data/outputs/train
+project: cupid
+
+# Multi-GPU / acceleration flags
+num_gpus: 1
+tf32: true
+compile: true
+num_steps: null
