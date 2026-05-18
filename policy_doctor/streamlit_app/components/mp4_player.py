@@ -150,7 +150,6 @@ def mp4_player(
     ):
         labels_arr = np.asarray(per_frame_labels, dtype=np.int64)
         n_total = len(labels_arr)
-        # RLE encode
         segs: list[tuple[int, int, int]] = []
         i = 0
         while i < n_total:
@@ -224,36 +223,44 @@ def mp4_player(
         extra_h += 40
 
     # ── Behavior slice bar with playhead ─────────────────────────────────────
-    if slice_start is not None and slice_end is not None and total_s is not None:
-        pct_start = max(0, slice_start / total_frames * 100)
-        pct_w = max(1, (slice_end - slice_start) / total_frames * 100)
+    # Bar positions and playhead are computed dynamically in JS from v.duration so they always
+    # match the actual video length regardless of any mismatch between total_frames/fps and the
+    # codec-reported duration.
+    if slice_start is not None and slice_end is not None:
         start_s = f"{slice_start / fps:.1f}s"
         end_s = f"{slice_end / fps:.1f}s"
+        total_s_fb = f"{total_s:.3f}" if total_s else "0"
 
-        bar2_html = ""
-        legend2_html = ""
-        if slice2_start is not None and slice2_end is not None and slice2_end > slice2_start:
-            pct_start2 = max(0, slice2_start / total_frames * 100)
-            pct_w2 = max(1, (slice2_end - slice2_start) / total_frames * 100)
+        has_bar2 = slice2_start is not None and slice2_end is not None and slice2_end > slice2_start
+        if has_bar2:
             start_s2 = f"{slice2_start / fps:.1f}s"
             end_s2 = f"{slice2_end / fps:.1f}s"
-            bar2_html = (
-                f'<div style="position:absolute;left:{pct_start2:.1f}%;width:{pct_w2:.1f}%;'
-                f'height:100%;background:#38bdf8;border-radius:5px;opacity:0.85;"></div>'
+            bar2_div = (
+                f'<div id="bar2_{uid}" style="position:absolute;left:0%;width:0%;height:100%;'
+                f'background:#38bdf8;border-radius:5px;opacity:0.85;"></div>'
             )
             lbl2 = f" {bar2_label}" if bar2_label else ""
             legend2_html = (
                 f'&nbsp;|&nbsp;<span style="color:#38bdf8;">■</span>'
                 f'<span style="color:#aaa;">{lbl2} {start_s2}–{end_s2}</span>'
             )
+            bar2_js = f"""
+  if(bar2){{
+    bar2.style.left=Math.max(0,{slice2_start}/{fps}/dur*100).toFixed(2)+'%';
+    bar2.style.width=Math.max(0.5,({slice2_end}-{slice2_start})/{fps}/dur*100).toFixed(2)+'%';
+  }}"""
+        else:
+            bar2_div = ""
+            legend2_html = ""
+            bar2_js = ""
 
         lbl1 = f" {bar1_label}" if bar1_label else ""
         timeline = f"""
         <div id="tl_{uid}" style="margin-top:6px;position:relative;height:10px;
              background:#333;border-radius:5px;cursor:pointer;">
-          <div style="position:absolute;left:{pct_start:.1f}%;width:{pct_w:.1f}%;height:100%;
+          <div id="bar1_{uid}" style="position:absolute;left:0%;width:0%;height:100%;
                       background:#f5a623;border-radius:5px;opacity:0.85;"></div>
-          {bar2_html}
+          {bar2_div}
           <div id="ph_{uid}" style="position:absolute;top:-3px;left:0%;width:3px;height:16px;
                background:#fff;border-radius:2px;transition:left 0.1s linear;"></div>
         </div>
@@ -263,13 +270,25 @@ def mp4_player(
         playhead_js = f"""
   var ph=document.getElementById('ph_{uid}');
   var tl=document.getElementById('tl_{uid}');
+  var bar1=document.getElementById('bar1_{uid}');
+  var bar2=document.getElementById('bar2_{uid}');
+  function updateBars(){{
+    var dur=v.duration||{total_s_fb};
+    if(!dur||!isFinite(dur)) return;
+    if(bar1){{
+      bar1.style.left=Math.max(0,{slice_start}/{fps}/dur*100).toFixed(2)+'%';
+      bar1.style.width=Math.max(0.5,({slice_end}-{slice_start})/{fps}/dur*100).toFixed(2)+'%';
+    }}{bar2_js}
+  }}
+  v.addEventListener('loadedmetadata',updateBars);
+  if(v.readyState>=1) updateBars();
   v.addEventListener('timeupdate',function(){{
-    var dur=v.duration||{total_s:.3f};
+    var dur=v.duration||{total_s_fb};
     var pct=v.currentTime/dur*100;
     if(ph) ph.style.left=Math.min(100,pct).toFixed(1)+'%';
   }});
   tl.addEventListener('click',function(e){{
-    var dur=v.duration||{total_s:.3f};
+    var dur=v.duration||{total_s_fb};
     var rect=tl.getBoundingClientRect();
     var pct=(e.clientX-rect.left)/rect.width;
     v.currentTime=pct*dur;
