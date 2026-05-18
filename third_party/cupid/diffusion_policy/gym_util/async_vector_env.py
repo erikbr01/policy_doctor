@@ -33,6 +33,15 @@ from gym.vector.utils import (
 __all__ = ["AsyncVectorEnv"]
 
 
+def _concat_compat(space, items, out):
+    """gym 0.21 has `concatenate(items, out, space)`; gym 0.26+ has
+    `concatenate(space, items, *, out=None)`. Probe at first call."""
+    try:
+        return concatenate(space, items, out=out)
+    except TypeError:
+        return concatenate(items, out, space)
+
+
 class AsyncState(Enum):
     DEFAULT = "default"
     WAITING_RESET = "reset"
@@ -230,7 +239,7 @@ class AsyncVectorEnv(VectorEnv):
         self._state = AsyncState.DEFAULT
 
         if not self.shared_memory:
-            self.observations = concatenate(
+            self.observations = _concat_compat(
                 self.single_observation_space, results, self.observations
             )
 
@@ -293,7 +302,7 @@ class AsyncVectorEnv(VectorEnv):
         observations_list, rewards, dones, infos = zip(*results)
 
         if not self.shared_memory:
-            self.observations = concatenate(
+            self.observations = _concat_compat(
                 self.single_observation_space, observations_list, self.observations
             )
 

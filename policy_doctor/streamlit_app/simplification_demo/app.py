@@ -11,6 +11,7 @@ Run from the worktree root:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -58,6 +59,10 @@ _DATA_ROOTS = [
         "influence_visualizer/configs"
     ),
 ]
+# Flat K-sweep clusterings produced by scripts/run_simplification_model_selection.py.
+# Slug format: {task}__{rep}__w{w}_s{s}__K{K}
+_KSWEEP_FLAT_ROOT = Path("/mnt/ssdB/erik/cupid_data/graph_simplification/clusterings")
+_KSWEEP_RESULTS_DIR = Path("/mnt/ssdB/erik/cupid_data/graph_simplification/results/k_sweep")
 _RESULTS_DIR = _WORKTREE / "docs" / "simplification_results"
 _MP4_ROOT = Path("/tmp/study_mp4s")
 
@@ -94,7 +99,52 @@ def list_tasks() -> List[str]:
                 clu = d / "clustering"
                 if clu.is_dir() and any(clu.iterdir()):
                     tasks.add(d.name)
+    # Also surface tasks from the K-sweep flat layout.
+    for task, _, _, _, _ in _list_ksweep_clusterings():
+        tasks.add(task)
     return sorted(tasks)
+
+
+_KSWEEP_SLUG_RE = re.compile(
+    r"^(?P<task>[a-z][a-z0-9_]+?)__(?P<rep>[a-z][a-z0-9_]+?)__w(?P<w>\d+)_s(?P<s>\d+)__K(?P<K>\d+)$"
+)
+
+
+@st.cache_data(show_spinner=False)
+def _list_ksweep_clusterings() -> List[Tuple[str, str, int, int, int]]:
+    """Discover K-sweep clusterings on disk; return list of (task, rep, w, s, K)."""
+    out: List[Tuple[str, str, int, int, int]] = []
+    if not _KSWEEP_FLAT_ROOT.is_dir():
+        return out
+    for d in sorted(_KSWEEP_FLAT_ROOT.iterdir()):
+        if not (d / "cluster_labels.npy").exists():
+            continue
+        m = _KSWEEP_SLUG_RE.match(d.name)
+        if not m:
+            continue
+        out.append((
+            m["task"], m["rep"], int(m["w"]), int(m["s"]), int(m["K"]),
+        ))
+    return out
+
+
+def _ksweep_clust_dir(task: str, rep: str, w: int, s: int, K: int) -> Optional[Path]:
+    cand = _KSWEEP_FLAT_ROOT / f"{task}__{rep}__w{w}_s{s}__K{K}"
+    return cand if (cand / "cluster_labels.npy").exists() else None
+
+
+@st.cache_data(show_spinner=False)
+def load_ksweep_summary() -> List[Dict]:
+    """Load all per-clustering eval JSONs for hover/plotting."""
+    if not _KSWEEP_RESULTS_DIR.is_dir():
+        return []
+    out: List[Dict] = []
+    for p in sorted(_KSWEEP_RESULTS_DIR.glob("*.json")):
+        try:
+            out.append(json.loads(p.read_text()))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
 
 
 @st.cache_data(show_spinner=False)
@@ -364,24 +414,71 @@ bench_default = "transport_mh_jan28" if "transport_mh_jan28" in tasks else tasks
 task = st.sidebar.selectbox(
     "Task", tasks, index=tasks.index(bench_default) if bench_default in tasks else 0,
 )
-clusterings = list_clusterings(task)
-if not clusterings:
-    st.error(f"No clusterings for {task}.")
-    st.stop()
 
-clust_names = [c.name for c in clusterings]
-preferred = next(
-    (n for n in clust_names if "policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k15" in n),
-    None,
-) or next(
-    (n for n in clust_names if "policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k5" in n),
-    None,
-) or clust_names[0]
-clust_name = st.sidebar.selectbox(
-    "Clustering", clust_names,
-    index=clust_names.index(preferred) if preferred in clust_names else 0,
-)
-clust_dir = next(c for c in clusterings if c.name == clust_name)
+# Prefer K-sweep flat layout when available (richer dropdowns: rep / w / s / K).
+ksweep_avail = [c for c in _list_ksweep_clusterings() if c[0] == task]
+clust_dir: Optional[Path] = None
+ksweep_meta: Optional[Dict] = None
+
+if ksweep_avail:
+    reps_avail = sorted({c[1] for c in ksweep_avail})
+    rep = st.sidebar.selectbox(
+        "Representation", reps_avail,
+        index=reps_avail.index("policy_emb") if "policy_emb" in reps_avail else 0,
+        help="`infembed` = projected Gauss-Newton training-loss Hessian eigen-embeddings. "
+             "`policy_emb` = per-timestep bottleneck activations of the policy at "
+             "the chosen diffusion timestep / action conditioning. See "
+             "`docs/k_sweep_results/_findings.md`.",
+    )
+    ws_avail = sorted({(c[2], c[3]) for c in ksweep_avail if c[1] == rep})
+    ws_labels = [f"w={w}, s={s}" for (w, s) in ws_avail]
+    default_ws = (5, 1) if (5, 1) in ws_avail else ws_avail[0]
+    ws_choice = st.sidebar.selectbox(
+        "Window / stride", ws_labels,
+        index=ws_avail.index(default_ws),
+        help="(w, s) controls how per-timestep features are aggregated into per-window features.",
+    )
+    w_sel, s_sel = ws_avail[ws_labels.index(ws_choice)]
+    Ks_avail = sorted({c[4] for c in ksweep_avail if c[1] == rep and c[2] == w_sel and c[3] == s_sel})
+    K_default = 15 if 15 in Ks_avail else Ks_avail[len(Ks_avail) // 2]
+    K_sel = st.sidebar.select_slider(
+        "K (number of KMeans clusters)", options=Ks_avail,
+        value=K_default,
+    )
+    found = _ksweep_clust_dir(task, rep, w_sel, s_sel, K_sel)
+    if found is not None:
+        clust_dir = found
+        clust_name = clust_dir.name
+    # Look up the precomputed eval metrics for this clustering, if any.
+    sum_path = _KSWEEP_RESULTS_DIR / f"{task}__{rep}__w{w_sel}_s{s_sel}__K{K_sel}.json"
+    if sum_path.exists():
+        try:
+            ksweep_meta = json.loads(sum_path.read_text())
+        except Exception:  # noqa: BLE001
+            ksweep_meta = None
+else:
+    rep = None
+    w_sel = s_sel = K_sel = None
+
+# Fallback to legacy slug-based clustering dropdown if no K-sweep on disk.
+if clust_dir is None:
+    clusterings = list_clusterings(task)
+    if not clusterings:
+        st.error(f"No clusterings for {task}.")
+        st.stop()
+    clust_names = [c.name for c in clusterings]
+    preferred = next(
+        (n for n in clust_names if "policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k15" in n),
+        None,
+    ) or next(
+        (n for n in clust_names if "policy_emb_bottleneck_plan_t0_w5_s1_seed0_kmeans_k5" in n),
+        None,
+    ) or clust_names[0]
+    clust_name = st.sidebar.selectbox(
+        "Clustering (legacy slug)", clust_names,
+        index=clust_names.index(preferred) if preferred in clust_names else 0,
+    )
+    clust_dir = next(c for c in clusterings if c.name == clust_name)
 
 labels_raw, metadata, manifest = load_clustering(str(clust_dir))
 level = manifest.get("level", "rollout")
@@ -467,6 +564,67 @@ m7.metric("MDL score (bits) ↓*", f"{metrics['mdl_score']:.1f}",
                "*BUT* this metric is biased toward aggressive merging (a 1-node "
                "graph trivially wins). Use Markov violation as the primary axis; "
                "MDL is a secondary diagnostic. See findings doc.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# K-sweep panel — only shown when K-sweep data is available on disk.
+# ---------------------------------------------------------------------------
+
+if rep is not None and ksweep_meta is not None:
+    import plotly.graph_objects as go  # noqa: E402
+
+    summary = load_ksweep_summary()
+    family = [
+        r for r in summary
+        if r["task"] == task and r["rep"] == rep and r["w"] == w_sel and r["s"] == s_sel
+    ]
+    family.sort(key=lambda r: r["K"])
+
+    with st.expander(
+        f"**K-sweep — MV vs K** for `{rep}`, w={w_sel}, s={s_sel} "
+        f"(100 rollouts, 100-rep bootstrap CI)",
+        expanded=True,
+    ):
+        fig = go.Figure()
+        for order, color, label in [
+            (1, "#60a5fa", "MV₁"),
+            (2, "#fbbf24", "MV₂"),
+            (3, "#10b981", "MV₃"),
+        ]:
+            Ks = [r["K"] for r in family]
+            pts = [r[f"mv{order}_point"] for r in family]
+            lo = [r[f"mv{order}_ci_lo"] for r in family]
+            hi = [r[f"mv{order}_ci_hi"] for r in family]
+            fig.add_trace(go.Scatter(
+                x=Ks + Ks[::-1], y=lo + hi[::-1],
+                fill="toself", fillcolor=color, opacity=0.13, line=dict(width=0),
+                hoverinfo="skip", showlegend=False,
+            ))
+            fig.add_trace(go.Scatter(
+                x=Ks, y=pts, mode="lines+markers", name=label,
+                line=dict(color=color, width=2), marker=dict(size=7, color=color),
+            ))
+        # Mark current K
+        fig.add_vline(
+            x=K_sel, line=dict(color="#f43f5e", width=1, dash="dash"),
+            annotation_text=f"current K = {K_sel}", annotation_position="top",
+            annotation_font_color="#f43f5e",
+        )
+        fig.update_layout(
+            xaxis_title="K", yaxis_title="Markov violation (bits)",
+            template="plotly_dark", height=350,
+            margin=dict(l=40, r=10, t=30, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        st.plotly_chart(fig, use_container_width=True, key="ksweep_elbow")
+        st.caption(
+            "Each (rep, w, s) gives a distinct MV-vs-K trajectory. The vertical "
+            "dashed line marks the K selected above. Note: at small K (≤4) MV "
+            "is *trivially* zero — the run-length-collapsed graph is too short "
+            "for the conditional MI to be measurable. The interesting K is the "
+            "largest where MV₁ is still within an acceptable band."
+        )
 
 st.divider()
 

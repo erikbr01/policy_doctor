@@ -531,6 +531,95 @@ def markov_violation_against_original_bits(
     return total, per_node
 
 
+def markov_violation_coverage(
+    original_labels: np.ndarray,
+    metadata: List[Dict],
+    node_mapping: Optional[Dict[int, int]] = None,
+    level: str = "rollout",
+    order: int = 1,
+    current_labels: Optional[np.ndarray] = None,
+) -> Dict[str, float]:
+    """Fraction of (prev, curr, next) triplet *pairs* that contribute to MV.
+
+    The `markov_violation_against_original_bits` function applies two gates
+    per merged state: (a) at least `min_pairs = max(4, 4*order**2)` triplets,
+    and (b) at least 2 unique predecessors AND 2 unique successors. States
+    that fail either gate contribute 0 to the visitation-weighted mean,
+    which can make the metric drop to 0 either at very small K (chain too
+    short / deterministic) or very large K (each state too rare to estimate).
+
+    Returns:
+      total_pairs       : total triplets across all merged states
+      gated_pairs       : triplets in states that passed both gates
+      coverage_fraction : gated_pairs / total_pairs  (1.0 = no filtering)
+      n_states_total    : number of distinct merged states observed
+      n_states_passing  : merged states that passed both gates
+    """
+    from collections import defaultdict
+
+    ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+    nm = node_mapping or {}
+    use_current = current_labels is not None
+
+    def _map(x: int) -> int:
+        cur = x
+        seen = set()
+        while cur in nm:
+            if cur in seen:
+                return cur
+            seen.add(cur)
+            cur = nm[cur]
+        return cur
+
+    eps: Dict[int, List[Tuple[int, int, int]]] = defaultdict(list)
+    for i, m in enumerate(metadata):
+        lbl = int(original_labels[i])
+        if lbl == -1:
+            continue
+        sort_key = m.get("timestep", m.get("window_start", 0))
+        eps[m[ep_key]].append((sort_key, i, lbl))
+
+    min_seq_len = order + 2
+    pairs_per_merged: Dict[int, List[Tuple[Tuple[int, ...], int]]] = defaultdict(list)
+    for seq in eps.values():
+        if len(seq) < min_seq_len:
+            continue
+        seq.sort(key=lambda x: x[0])
+        collapsed: List[Tuple[int, int]] = [(seq[0][2], seq[0][1])]
+        for _, idx, lbl in seq[1:]:
+            if lbl != collapsed[-1][0]:
+                collapsed.append((lbl, idx))
+        for i in range(order, len(collapsed) - 1):
+            composite_prev = tuple(collapsed[i - k][0] for k in range(1, order + 1))
+            o_cur, idx_cur = collapsed[i]
+            o_next = collapsed[i + 1][0]
+            m_cur = int(current_labels[idx_cur]) if use_current else _map(o_cur)
+            pairs_per_merged[m_cur].append((composite_prev, o_next))
+
+    min_pairs = max(4, 4 * order * order)
+    total_pairs = sum(len(p) for p in pairs_per_merged.values())
+    n_states_total = len(pairs_per_merged)
+    gated_pairs = 0
+    n_states_passing = 0
+    for pairs in pairs_per_merged.values():
+        if len(pairs) < min_pairs:
+            continue
+        prev_unique = {p for p, _ in pairs}
+        next_unique = {n for _, n in pairs}
+        if len(prev_unique) < 2 or len(next_unique) < 2:
+            continue
+        gated_pairs += len(pairs)
+        n_states_passing += 1
+    coverage = float(gated_pairs / total_pairs) if total_pairs > 0 else 0.0
+    return {
+        "total_pairs": int(total_pairs),
+        "gated_pairs": int(gated_pairs),
+        "coverage_fraction": coverage,
+        "n_states_total": int(n_states_total),
+        "n_states_passing": int(n_states_passing),
+    }
+
+
 def free_params_count(graph: BehaviorGraph) -> int:
     """Number of free transition probabilities in graph (each row has k-1 free)."""
     n = 0
