@@ -67,6 +67,41 @@ Listed for completeness only. The `K_knee_with_cov` column frequently picks K=10
 | `lift_mh_jan26` | `policy_emb` | 5 | 1 | **10** | 0.024 | 10 | 0.024 | 0.000 (cov=0.00) |
 | `lift_mh_jan26` | `policy_emb` | 8 | 1 | **—** | — | — | — | 0.000 (cov=0.00) |
 
+## Silhouette score as a K-selection criterion
+
+### Observation
+
+When silhouette score (cluster separation in the 50D UMAP embedding space, subsampled to 2 000 points) is plotted against K for all (task, rep, w, s) settings (see `scripts/plot_silhouette_sweep.py` and the K selection overview page in the Streamlit demo), a clear asymmetry emerges between the two representations:
+
+- **`infembed`**: silhouette is monotone decreasing in K across all tasks and window settings. The score is highest at K=3–4 and falls continuously. There is no interior peak — infembed always prefers the smallest K, so silhouette cannot be used as a standalone K-selection criterion for this representation.
+- **`policy_emb`**: silhouette has a non-trivial interior maximum, typically around K=6–12 depending on task and window width. The score rises from K=3 to a peak, then falls. This peak is a meaningful signal: it identifies the K at which the 50D embedding space is best partitioned, corresponding to the natural number of behavioral modes the policy has learned.
+
+### Hypothesis: infembed's low intrinsic dimensionality
+
+The asymmetry likely traces to the structure of the raw embeddings before UMAP.
+
+Both representations follow the same pipeline:
+1. Compute raw per-timestep embeddings (rep-specific)
+2. Standardize + UMAP → 50D → `trunks/<task>__<rep>/timestep_embeddings.npy`
+3. Sliding-window aggregation (W, S, mean)
+4. KMeans with K clusters
+
+For **`infembed`**, the raw input to UMAP is a 100D Arnoldi projection — a projection of gradient vectors onto the dominant eigenvectors of the Gauss-Newton Hessian (`arnoldi_dim=200`, `projection_dim=100`). The Arnoldi method selects eigenvectors ordered by eigenvalue magnitude, so the first few eigenvectors dominate and the remainder carry negligible variance. The 100D infembed space therefore already has low intrinsic dimensionality — it effectively lives near a ~3–5 dimensional manifold defined by the dominant Hessian directions. UMAP compressing 100D → 50D is nearly a no-op on this already-low-rank input: the output is a handful of tight, well-separated blobs (one per dominant Hessian direction). Adding more KMeans clusters beyond that just fragments within those blobs, which is why silhouette monotonically decreases.
+
+For **`policy_emb`**, the raw input is the diffusion policy's bottleneck activations — a high-dimensional representation (~256–512D) of the current observation. Different behavioral phases (reach, grasp, place, recover, etc.) activate genuinely distinct subspaces of this representation. UMAP to 50D preserves that richer local structure, so the 50D embedding has multiple distinct clusters corresponding to behavioral phases. At small K, behaviorally different timesteps are forced together (silhouette low); at the natural K, clusters align with behavioral phases (silhouette peaks); beyond that, within-phase fragmentation reduces separation (silhouette falls).
+
+A corollary: **`policy_emb` silhouette peak K is a principled automatic selection criterion** for this representation. For `infembed`, a different criterion is needed (e.g. coverage-gated MV or an embedding-space elbow on the raw Arnoldi features before UMAP).
+
+### Tests to run
+
+1. **Compute silhouette on raw pre-UMAP infembed embeddings.** The raw 100D Arnoldi `timestep_embeddings.npy` are on the SSD at `trunks_500/<task>__infembed/` (or compute them from the eval episodes + the saved `embedding_models.pkl`). If silhouette is *still* monotone decreasing on 100D, the issue is the Arnoldi embedding itself, not the UMAP. If silhouette shows a peak on 100D but not on 50D UMAP, then UMAP is flattening cluster structure — suggesting a larger `umap_n_components` or skipping UMAP entirely for infembed.
+
+2. **Check effective rank of infembed vs policy_emb trunks.** Compute PCA of the 50D trunk embeddings and plot the explained-variance spectrum. If infembed has ~3–5 dominant PCA components and policy_emb has more, this confirms the intrinsic-dimensionality story directly. `numpy.linalg.svd` on the trunk `timestep_embeddings.npy` is sufficient.
+
+3. **Silhouette on policy_emb bottleneck activations before UMAP.** The raw high-dim bottleneck activations (from `embedding_models.pkl` or re-extracted) should show the same peak at roughly the same K. If the peak shifts or disappears, the UMAP is doing non-trivial structure modification for policy_emb too.
+
+4. **Try larger `umap_n_components` for infembed (e.g. 80 or 100).** If infembed's cluster structure is being collapsed by the 50D UMAP, a higher component count might reveal it. This is a quick ablation that only requires re-running the trunk computation.
+
 ## Per-task — n_nodes vs MV₁ (Pareto)
 ### lift_mh_jan26
 ![pareto](_plots/lift_mh_jan26__pareto.png)

@@ -61,8 +61,8 @@ _DATA_ROOTS = [
 ]
 # Flat K-sweep clusterings produced by scripts/run_simplification_model_selection.py.
 # Slug format: {task}__{rep}__w{w}_s{s}__K{K}
-_KSWEEP_FLAT_ROOT = Path("/mnt/ssdB/erik/cupid_data/graph_simplification/clusterings")
-_KSWEEP_RESULTS_DIR = Path("/mnt/ssdB/erik/cupid_data/graph_simplification/results/k_sweep")
+_KSWEEP_FLAT_ROOT = Path("/Users/erik/stanford/asl_rotation/data/graph_simplification/clusterings")
+_KSWEEP_RESULTS_DIR = Path("/Users/erik/stanford/asl_rotation/data/graph_simplification/results/k_sweep")
 _RESULTS_DIR = _WORKTREE / "docs" / "simplification_results"
 _MP4_ROOT = Path("/tmp/study_mp4s")
 
@@ -224,6 +224,42 @@ def k_sweep_baseline(task: str, family_prefix: str) -> List[Dict]:
         })
         by_k[k] = d
     return sorted(by_k.values(), key=lambda p: p["n_nodes"])
+
+
+@st.cache_data(show_spinner=False)
+def compute_silhouette_family(task: str, rep: str, w: int, s: int) -> List[Dict]:
+    """Silhouette score for every K in the (task, rep, w, s) family."""
+    from sklearn.metrics import silhouette_score
+
+    results = []
+    for t, r, ww, ss, K in sorted(_list_ksweep_clusterings(), key=lambda x: x[4]):
+        if t != task or r != rep or ww != w or ss != s:
+            continue
+        cdir = _ksweep_clust_dir(task, rep, w, s, K)
+        if cdir is None:
+            continue
+        emb_path = cdir / "embeddings_reduced.npy"
+        lbl_path = cdir / "cluster_labels.npy"
+        if not emb_path.exists() or not lbl_path.exists():
+            continue
+        try:
+            emb = np.load(emb_path)
+            lbl = np.load(lbl_path).astype(np.int64)
+        except Exception:
+            continue
+        if len(emb) > 2000:
+            rng = np.random.RandomState(0)
+            idx = rng.choice(len(emb), size=2000, replace=False)
+            emb, lbl = emb[idx], lbl[idx]
+        mask = lbl >= 0
+        if mask.sum() < 2 or len(np.unique(lbl[mask])) < 2:
+            continue
+        try:
+            sil = float(silhouette_score(emb[mask], lbl[mask]))
+        except Exception:
+            continue
+        results.append({"K": K, "silhouette": sil})
+    return results
 
 
 @st.cache_data(show_spinner=False)
@@ -625,6 +661,54 @@ if rep is not None and ksweep_meta is not None:
             "for the conditional MI to be measurable. The interesting K is the "
             "largest where MV₁ is still within an acceptable band."
         )
+
+    # ---------------------------------------------------------------------
+    # Silhouette score vs K panel.
+    # ---------------------------------------------------------------------
+    with st.expander(
+        f"**Silhouette score vs K** for `{rep}`, w={w_sel}, s={s_sel} "
+        f"(cluster separation in embedding space)",
+        expanded=False,
+    ):
+        with st.spinner("Computing silhouette scores…"):
+            sil_data = compute_silhouette_family(task, rep, w_sel, s_sel)
+        if not sil_data:
+            st.info("No silhouette data found for this (rep, w, s).")
+        else:
+            sil_Ks = [r["K"] for r in sil_data]
+            sil_vals = [r["silhouette"] for r in sil_data]
+            fig_sil = go.Figure()
+            fig_sil.add_trace(go.Scatter(
+                x=sil_Ks, y=sil_vals, mode="lines+markers",
+                name="Silhouette",
+                line=dict(color="#60a5fa", width=2.2),
+                marker=dict(size=9, color="#60a5fa",
+                            line=dict(color="#0f172a", width=1)),
+                hovertemplate="K=%{x}<br>silhouette=%{y:.4f}<extra></extra>",
+            ))
+            fig_sil.add_vline(
+                x=K_sel, line=dict(color="#f43f5e", width=1, dash="dash"),
+                annotation_text=f"current K = {K_sel}",
+                annotation_position="top",
+                annotation_font_color="#f43f5e",
+            )
+            fig_sil.update_layout(
+                xaxis_title="K", yaxis_title="Silhouette score",
+                template="plotly_dark", height=350,
+                margin=dict(l=40, r=10, t=30, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0),
+            )
+            st.plotly_chart(fig_sil, use_container_width=True,
+                            key="silhouette_plot")
+            st.caption(
+                "Silhouette score measures cluster separation in the 50-D "
+                "embedding space (subsampled to 2 000 points). "
+                "**Monotone decreasing with K** — lower K always wins, so this "
+                "cannot be used as a standalone K-selection criterion. "
+                "Use it as a sanity check: a sharp drop between two consecutive "
+                "K values indicates those clusters are no longer well-separated."
+            )
 
     # ---------------------------------------------------------------------
     # γ-selection panel: auto-pick K from the MV-vs-K curve via a γ knob.
