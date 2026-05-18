@@ -886,140 +886,106 @@ if rep is not None and ksweep_meta is not None:
             max_sil = max(sil_vals)
             peak_K = K_sil[sil_vals.index(max_sil)]
 
-            gamma_sil = st.slider(
-                "γ — fraction of peak silhouette to accept on the ascending side",
-                min_value=0.05, max_value=1.0, value=0.9, step=0.05,
-                key="sil_gamma_slider",
-                help=(
-                    "K* = largest K < K_peak with silhouette ≥ γ · max_silhouette. "
-                    "High γ → K just below the peak (maximum structure, most clusters). "
-                    "Low γ → smaller K (simpler graph, looser threshold). "
-                    "Returns None when the peak is at the smallest K (monotone curve)."
-                ),
-            )
-            K_star_sil = select_K_by_silhouette_gamma(K_sil, sil_vals, gamma=gamma_sil)
-            target_sil = gamma_sil * max_sil
-
-            col_sil_curve, col_sil_stair = st.columns(2)
-
-            # ---- LEFT: silhouette vs K with γ-line ----
-            fig_sil = go.Figure()
-            fig_sil.add_trace(go.Scatter(
-                x=K_sil, y=sil_vals, mode="lines+markers",
-                name="silhouette",
-                line=dict(color="#f9fafb", width=2.2),
-                marker=dict(size=10, color="#f9fafb",
-                            line=dict(color="#0f172a", width=1)),
-            ))
-            # Peak marker
-            fig_sil.add_trace(go.Scatter(
-                x=[peak_K], y=[max_sil], mode="markers",
-                marker=dict(size=16, color="#f59e0b", symbol="diamond",
-                            line=dict(color="#78350f", width=1.5)),
-                name=f"peak K = {peak_K}  (sil = {max_sil:.3f})",
-            ))
-            # γ·max_sil horizontal line
-            fig_sil.add_hline(
-                y=target_sil,
-                line=dict(color="#22c55e", width=1.6, dash="dash"),
-                annotation_text=f"γ·max_sil = {target_sil:.3f}",
-                annotation_position="top right",
-                annotation_font_color="#22c55e",
-            )
-            # max_sil dotted reference
-            fig_sil.add_hline(
-                y=max_sil,
-                line=dict(color="#a78bfa", width=1, dash="dot"),
-                annotation_text=f"max_sil = {max_sil:.3f}",
-                annotation_position="bottom right",
-                annotation_font_color="#a78bfa",
-            )
-            if K_star_sil is not None:
-                sil_at_star = sil_vals[K_sil.index(K_star_sil)]
-                fig_sil.add_trace(go.Scatter(
-                    x=[K_star_sil, K_star_sil], y=[0, sil_at_star],
-                    mode="lines", line=dict(color="#22c55e", width=1.6),
-                    hoverinfo="skip", showlegend=False,
-                ))
-                fig_sil.add_trace(go.Scatter(
-                    x=[K_star_sil], y=[sil_at_star], mode="markers",
-                    marker=dict(size=18, color="#22c55e", symbol="star",
-                                line=dict(color="#052e16", width=1.5)),
-                    name=f"K* = {K_star_sil}",
-                ))
-            fig_sil.update_layout(
-                xaxis_title="K", yaxis_title="silhouette score",
-                template="plotly_dark", height=380,
-                margin=dict(l=40, r=10, t=20, b=40),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                            xanchor="left", x=0),
-                yaxis=dict(rangemode="tozero"),
-            )
-            col_sil_curve.plotly_chart(fig_sil, use_container_width=True,
-                                       key="sil_gamma_curve")
-
-            # ---- RIGHT: K*(γ) staircase ----
-            g_fine_sil = np.linspace(0.05, 1.0, 96)
-            K_fine_sil = [
-                select_K_by_silhouette_gamma(K_sil, sil_vals, gamma=float(g))
-                for g in g_fine_sil
-            ]
-            fig_ss = go.Figure()
-            fig_ss.add_trace(go.Scatter(
-                x=list(g_fine_sil),
-                y=[k if k is not None else float("nan") for k in K_fine_sil],
-                mode="lines", line=dict(color="#f9fafb", width=2.4, shape="hv"),
-                name="K*(γ)",
-            ))
-            if K_star_sil is not None:
-                fig_ss.add_trace(go.Scatter(
-                    x=[gamma_sil], y=[K_star_sil], mode="markers",
-                    marker=dict(size=18, color="#22c55e", symbol="star",
-                                line=dict(color="#052e16", width=1.5)),
-                    name=f"current γ = {gamma_sil:.2f}",
-                ))
-            fig_ss.update_layout(
-                xaxis_title="γ (fraction of peak silhouette)",
-                yaxis_title="K*",
-                template="plotly_dark", height=380,
-                margin=dict(l=40, r=10, t=20, b=40),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                            xanchor="left", x=0),
-                yaxis=dict(rangemode="tozero"),
-            )
-            col_sil_stair.plotly_chart(fig_ss, use_container_width=True,
-                                       key="sil_gamma_stair")
-
-            # Metric strip
-            ms1, ms2, ms3, ms4 = st.columns(4)
-            ms1.metric("Peak silhouette", f"{max_sil:.3f}")
-            ms2.metric("Peak K", f"{peak_K}")
-            ms3.metric("γ · max_sil (target)", f"{target_sil:.3f}")
-            ms4.metric(
-                "K* (selected)",
-                str(K_star_sil) if K_star_sil is not None else "none",
-                help=(
-                    "None = peak is at the smallest K — the curve is "
-                    "monotone decreasing, so silhouette gives no K signal."
-                    if K_star_sil is None else
-                    f"Largest K < {peak_K} with silhouette ≥ {target_sil:.3f}."
-                ),
-            )
-            if K_star_sil is None:
-                st.warning(
-                    "⚠ Silhouette peak is at the smallest K — the curve is monotone "
-                    "decreasing. This typically means the embedding's intrinsic "
-                    "dimensionality is very low (e.g. infembed on transport), and "
-                    "K-means fragmentation starts immediately beyond K=3. "
-                    "Use the MV γ-selection instead."
+            @st.fragment
+            def _sil_gamma_interactive(K_sil=K_sil, sil_vals=sil_vals,
+                                       max_sil=max_sil, peak_K=peak_K):
+                import plotly.graph_objects as go
+                from policy_doctor.behaviors.select_K import select_K_by_silhouette_gamma
+                gamma_sil = st.slider(
+                    "γ — fraction of peak silhouette to accept on the ascending side",
+                    min_value=0.05, max_value=1.0, value=0.9, step=0.05,
+                    key="sil_gamma_slider",
+                    help=(
+                        "K* = largest K < K_peak with silhouette ≥ γ · max_silhouette. "
+                        "High γ → K just below the peak (maximum structure, most clusters). "
+                        "Low γ → smaller K (simpler graph, looser threshold). "
+                        "Returns None when the peak is at the smallest K (monotone curve)."
+                    ),
                 )
-            st.caption(
-                "**Selection rule**: largest K strictly below the silhouette peak "
-                "where silhouette ≥ γ · max_silhouette. High γ → K just below "
-                "the peak (most structure, most clusters). Low γ → smaller K. "
-                "When the peak is at the largest K or the curve is monotone "
-                "decreasing, K* is undefined and the panel shows a warning."
-            )
+                K_star_sil = select_K_by_silhouette_gamma(K_sil, sil_vals, gamma=gamma_sil)
+                target_sil = gamma_sil * max_sil
+                col_sil_curve, col_sil_stair = st.columns(2)
+                fig_sil = go.Figure()
+                fig_sil.add_trace(go.Scatter(
+                    x=K_sil, y=sil_vals, mode="lines+markers", name="silhouette",
+                    line=dict(color="#f9fafb", width=2.2),
+                    marker=dict(size=10, color="#f9fafb", line=dict(color="#0f172a", width=1)),
+                ))
+                fig_sil.add_trace(go.Scatter(
+                    x=[peak_K], y=[max_sil], mode="markers",
+                    marker=dict(size=16, color="#f59e0b", symbol="diamond",
+                                line=dict(color="#78350f", width=1.5)),
+                    name=f"peak K = {peak_K}  (sil = {max_sil:.3f})",
+                ))
+                fig_sil.add_hline(y=target_sil, line=dict(color="#22c55e", width=1.6, dash="dash"),
+                    annotation_text=f"γ·max_sil = {target_sil:.3f}",
+                    annotation_position="top right", annotation_font_color="#22c55e")
+                fig_sil.add_hline(y=max_sil, line=dict(color="#a78bfa", width=1, dash="dot"),
+                    annotation_text=f"max_sil = {max_sil:.3f}",
+                    annotation_position="bottom right", annotation_font_color="#a78bfa")
+                if K_star_sil is not None:
+                    sil_at_star = sil_vals[K_sil.index(K_star_sil)]
+                    fig_sil.add_trace(go.Scatter(
+                        x=[K_star_sil, K_star_sil], y=[0, sil_at_star], mode="lines",
+                        line=dict(color="#22c55e", width=1.6), hoverinfo="skip", showlegend=False,
+                    ))
+                    fig_sil.add_trace(go.Scatter(
+                        x=[K_star_sil], y=[sil_at_star], mode="markers",
+                        marker=dict(size=18, color="#22c55e", symbol="star",
+                                    line=dict(color="#052e16", width=1.5)),
+                        name=f"K* = {K_star_sil}",
+                    ))
+                fig_sil.update_layout(xaxis_title="K", yaxis_title="silhouette score",
+                    template="plotly_dark", height=380, margin=dict(l=40, r=10, t=20, b=40),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    yaxis=dict(rangemode="tozero"))
+                col_sil_curve.plotly_chart(fig_sil, use_container_width=True, key="sil_gamma_curve")
+                g_fine_sil = np.linspace(0.05, 1.0, 96)
+                K_fine_sil = [select_K_by_silhouette_gamma(K_sil, sil_vals, gamma=float(g))
+                               for g in g_fine_sil]
+                fig_ss = go.Figure()
+                fig_ss.add_trace(go.Scatter(
+                    x=list(g_fine_sil),
+                    y=[k if k is not None else float("nan") for k in K_fine_sil],
+                    mode="lines", line=dict(color="#f9fafb", width=2.4, shape="hv"), name="K*(γ)",
+                ))
+                if K_star_sil is not None:
+                    fig_ss.add_trace(go.Scatter(
+                        x=[gamma_sil], y=[K_star_sil], mode="markers",
+                        marker=dict(size=18, color="#22c55e", symbol="star",
+                                    line=dict(color="#052e16", width=1.5)),
+                        name=f"current γ = {gamma_sil:.2f}",
+                    ))
+                fig_ss.update_layout(xaxis_title="γ (fraction of peak silhouette)", yaxis_title="K*",
+                    template="plotly_dark", height=380, margin=dict(l=40, r=10, t=20, b=40),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    yaxis=dict(rangemode="tozero"))
+                col_sil_stair.plotly_chart(fig_ss, use_container_width=True, key="sil_gamma_stair")
+                ms1, ms2, ms3, ms4 = st.columns(4)
+                ms1.metric("Peak silhouette", f"{max_sil:.3f}")
+                ms2.metric("Peak K", f"{peak_K}")
+                ms3.metric("γ · max_sil (target)", f"{target_sil:.3f}")
+                ms4.metric("K* (selected)",
+                    str(K_star_sil) if K_star_sil is not None else "none",
+                    help=("None = peak is at the smallest K — monotone decreasing, no K signal."
+                          if K_star_sil is None else
+                          f"Largest K < {peak_K} with silhouette ≥ {target_sil:.3f}."))
+                if K_star_sil is None:
+                    st.warning(
+                        "⚠ Silhouette peak is at the smallest K — the curve is monotone "
+                        "decreasing. This typically means the embedding's intrinsic "
+                        "dimensionality is very low (e.g. infembed on transport). "
+                        "Use the MV γ-selection instead."
+                    )
+                st.caption(
+                    "**Selection rule**: largest K strictly below the silhouette peak "
+                    "where silhouette ≥ γ · max_silhouette. High γ → K just below "
+                    "the peak (most structure, most clusters). Low γ → smaller K. "
+                    "When the peak is at the largest K or the curve is monotone "
+                    "decreasing, K* is undefined and the panel shows a warning."
+                )
+
+            _sil_gamma_interactive()
 
 st.divider()
 
