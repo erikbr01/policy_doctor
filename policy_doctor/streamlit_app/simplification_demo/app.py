@@ -626,6 +626,159 @@ if rep is not None and ksweep_meta is not None:
             "largest where MV₁ is still within an acceptable band."
         )
 
+    # ---------------------------------------------------------------------
+    # γ-selection panel: auto-pick K from the MV-vs-K curve via a γ knob.
+    # ---------------------------------------------------------------------
+    with st.expander(
+        f"**γ-selection — auto-pick K** for `{rep}`, w={w_sel}, s={s_sel}",
+        expanded=False,
+    ):
+        gated = [
+            r for r in family
+            if r.get("mv1_coverage_fraction", 1.0) >= 0.80 and r["K"] >= 5
+        ]
+        if len(gated) < 2:
+            st.warning(
+                f"Not enough gated K cells for γ-selection at this (rep, w, s) — "
+                f"only {len(gated)} cell(s) with cov₁ ≥ 0.80 and K ≥ 5. "
+                "Try a different (w, s) setting."
+            )
+        else:
+            MV_asymp = max(r["mv1_point"] for r in gated)
+            converged = gated[-1]["mv1_point"] >= 0.9 * MV_asymp
+            gamma_v = st.slider(
+                "γ — fraction of MV_asymp at which to land the knee K",
+                min_value=0.05, max_value=1.0, value=0.5, step=0.05,
+                key="gamma_slider",
+                help=(
+                    "K* = smallest K (≥5, cov ≥ 0.80) with MV₁ ≥ γ · MV_asymp. "
+                    "Low γ → small graph, very Markov. High γ → expressive "
+                    "graph, more memory exposed. γ=0.5 = elbow."
+                ),
+            )
+            target = gamma_v * MV_asymp
+            knee = next((r for r in gated if r["mv1_point"] >= target), gated[-1])
+            K_star = knee["K"]
+
+            # Two columns: left = MV curve with γ-line; right = K*(γ) staircase.
+            col_curve, col_stair = st.columns(2)
+
+            # ---- LEFT: MV-vs-K with γ-line ----
+            fig_g = go.Figure()
+            # Ungated cells (hollow markers)
+            ung = [r for r in family
+                   if r.get("mv1_coverage_fraction", 1.0) < 0.80 or r["K"] < 5]
+            if ung:
+                fig_g.add_trace(go.Scatter(
+                    x=[r["K"] for r in ung], y=[r["mv1_point"] for r in ung],
+                    mode="markers", name="ungated (cov<0.80 or K<5)",
+                    marker=dict(size=10, color="rgba(255,255,255,0)",
+                                line=dict(color="#9ca3af", width=1.5),
+                                symbol="circle-open"),
+                ))
+            # Gated cells
+            fig_g.add_trace(go.Scatter(
+                x=[r["K"] for r in gated], y=[r["mv1_point"] for r in gated],
+                mode="lines+markers", name="MV₁ (gated)",
+                line=dict(color="#f9fafb", width=2.2),
+                marker=dict(size=10, color="#f9fafb",
+                            line=dict(color="#0f172a", width=1)),
+            ))
+            # γ·MV_asymp horizontal line
+            fig_g.add_hline(
+                y=target,
+                line=dict(color="#22c55e", width=1.6, dash="dash"),
+                annotation_text=f"γ·MV_asymp = {target:.3f}",
+                annotation_position="top right",
+                annotation_font_color="#22c55e",
+            )
+            # MV_asymp dotted reference
+            fig_g.add_hline(
+                y=MV_asymp,
+                line=dict(color="#a78bfa", width=1, dash="dot"),
+                annotation_text=f"MV_asymp = {MV_asymp:.3f}",
+                annotation_position="bottom right",
+                annotation_font_color="#a78bfa",
+            )
+            # Vertical drop + star at K*
+            fig_g.add_trace(go.Scatter(
+                x=[K_star, K_star], y=[0, knee["mv1_point"]],
+                mode="lines", line=dict(color="#22c55e", width=1.6),
+                hoverinfo="skip", showlegend=False,
+            ))
+            fig_g.add_trace(go.Scatter(
+                x=[K_star], y=[knee["mv1_point"]], mode="markers",
+                marker=dict(size=18, color="#22c55e", symbol="star",
+                            line=dict(color="#052e16", width=1.5)),
+                name=f"K* = {K_star}",
+            ))
+            fig_g.update_layout(
+                xaxis_title="K", yaxis_title="MV₁ (bits)",
+                template="plotly_dark", height=380,
+                margin=dict(l=40, r=10, t=20, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0),
+                yaxis=dict(rangemode="tozero"),
+            )
+            col_curve.plotly_chart(fig_g, use_container_width=True,
+                                   key="gamma_curve")
+
+            # ---- RIGHT: K*(γ) staircase ----
+            g_fine = np.linspace(0.05, 1.0, 96)
+            K_fine = []
+            for g in g_fine:
+                tgt = float(g) * MV_asymp
+                kn = next((r for r in gated if r["mv1_point"] >= tgt), gated[-1])
+                K_fine.append(kn["K"])
+            fig_s = go.Figure()
+            fig_s.add_trace(go.Scatter(
+                x=list(g_fine), y=K_fine, mode="lines",
+                line=dict(color="#f9fafb", width=2.4, shape="hv"),
+                name="K*(γ)",
+            ))
+            # Mark the current γ
+            fig_s.add_trace(go.Scatter(
+                x=[gamma_v], y=[K_star], mode="markers",
+                marker=dict(size=18, color="#22c55e", symbol="star",
+                            line=dict(color="#052e16", width=1.5)),
+                name=f"current γ = {gamma_v:.2f}",
+            ))
+            fig_s.update_layout(
+                xaxis_title="γ (fraction of MV_asymp)",
+                yaxis_title="K*",
+                template="plotly_dark", height=380,
+                margin=dict(l=40, r=10, t=20, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0),
+                yaxis=dict(rangemode="tozero"),
+            )
+            col_stair.plotly_chart(fig_s, use_container_width=True,
+                                   key="gamma_stair")
+
+            # Metric strip + notes
+            mg1, mg2, mg3, mg4 = st.columns(4)
+            mg1.metric("MV_asymp (bits)", f"{MV_asymp:.3f}")
+            mg2.metric("γ × MV_asymp (target)", f"{target:.3f}")
+            mg3.metric("K* (knee)", f"{K_star}")
+            mg4.metric("MV₁ at K*", f"{knee['mv1_point']:.3f}",
+                       help=f"cov₁ = {knee.get('mv1_coverage_fraction', 1.0):.2f}")
+            if not converged:
+                peak = max(gated, key=lambda r: r["mv1_point"])
+                st.warning(
+                    "⚠ Asymptote NOT converged: MV peaks "
+                    f"{MV_asymp:.3f} at K={peak['K']} but drops to "
+                    f"{gated[-1]['mv1_point']:.3f} at K_max={gated[-1]['K']} "
+                    "(min-pairs gate likely firing at high K). γ-knee may be biased."
+                )
+            st.caption(
+                "**Knee rule**: pick the smallest K (≥5, cov₁ ≥ 0.80) with "
+                "MV₁(K) ≥ γ · MV_asymp. Lower γ → smaller K & lower MV (more "
+                "Markov, less expressive); higher γ → larger K (more expressive, "
+                "more memory exposed). The K*(γ) staircase on the right is "
+                "typically flat in [0.4, 0.6], so γ=0.5 (the auto-pipeline "
+                "default in `policy_doctor.behaviors.select_K`) is robust."
+            )
+
 st.divider()
 
 # ---------------------------------------------------------------------------
