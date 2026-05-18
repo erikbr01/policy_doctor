@@ -114,7 +114,8 @@ def _plot_task_overlay(task: str, grouped: Dict, out_path: pathlib.Path) -> None
 
 
 def _best_K_table(grouped: Dict, mv_threshold: float = 0.15,
-                  coverage_min: float = 0.80) -> List[Dict]:
+                  coverage_min: float = 0.80,
+                  sil_gamma: float = 0.9) -> List[Dict]:
     """For each (task, rep, w, s), compute several K-selection criteria.
 
     The naive argmin(MV) is misleading: at very small K the
@@ -130,7 +131,12 @@ def _best_K_table(grouped: Dict, mv_threshold: float = 0.15,
     Columns reported (all gated):
       - K_largest_below_eps_with_cov : largest K with MV₁ ≤ ε AND coverage ≥ coverage_min
       - K_knee_with_cov              : argmin(MV₁) within {K : coverage ≥ coverage_min, K ≥ 5}
+      - K_sil_gamma                  : largest K < K_peak_sil with sil ≥ sil_gamma * max_sil
     """
+    import sys
+    sys.path.insert(0, str(_REPO_ROOT))
+    from policy_doctor.behaviors.select_K import select_K_by_silhouette_gamma
+
     rows = []
     for key, group in sorted(grouped.items()):
         if not group:
@@ -143,6 +149,8 @@ def _best_K_table(grouped: Dict, mv_threshold: float = 0.15,
         cov1 = np.array([r.get("mv1_coverage_fraction", 1.0) for r in group])
         cov2 = np.array([r.get("mv2_coverage_fraction", 1.0) for r in group])
         cov3 = np.array([r.get("mv3_coverage_fraction", 1.0) for r in group])
+        sil = np.array([r.get("silhouette") if r.get("silhouette") is not None else float("nan")
+                        for r in group])
 
         # Coverage-gated mask for order=1.
         good = (cov1 >= coverage_min) & (Ks >= 5)
@@ -164,12 +172,30 @@ def _best_K_table(grouped: Dict, mv_threshold: float = 0.15,
         else:
             K_below_eps, mv1_at_below, K_knee, mv1_at_knee = None, None, None, None
 
+        # Silhouette γ-selection.
+        sil_valid = ~np.isnan(sil)
+        if sil_valid.sum() >= 3:
+            K_sil = [int(Ks[i]) for i in range(len(Ks)) if sil_valid[i]]
+            sil_list = [float(sil[i]) for i in range(len(sil)) if sil_valid[i]]
+            K_sil_star = select_K_by_silhouette_gamma(K_sil, sil_list, gamma=sil_gamma)
+            sil_at_star = (float(sil[list(Ks).index(K_sil_star)])
+                           if K_sil_star is not None else None)
+            max_sil = float(np.nanmax(sil))
+            peak_K_sil = int(Ks[int(np.nanargmax(sil))])
+        else:
+            K_sil_star, sil_at_star, max_sil, peak_K_sil = None, None, None, None
+
         rows.append({
             "task": task, "rep": rep, "w": w, "s": s,
             "K_largest_below_eps_with_cov": K_below_eps,
             "mv1_at_K_largest_below_eps": mv1_at_below,
             "K_knee_with_cov": K_knee,
             "mv1_at_K_knee": mv1_at_knee,
+            "K_sil_gamma": K_sil_star,
+            "sil_at_K_sil_gamma": sil_at_star,
+            "sil_gamma_used": sil_gamma,
+            "max_sil": max_sil,
+            "peak_K_sil": peak_K_sil,
             "coverage_threshold": coverage_min,
             "mv_threshold": mv_threshold,
             "n_K_with_cov_ge_min": int(good.sum()),
@@ -180,6 +206,7 @@ def _best_K_table(grouped: Dict, mv_threshold: float = 0.15,
             "cov1_curve": cov1.tolist(),
             "cov2_curve": cov2.tolist(),
             "cov3_curve": cov3.tolist(),
+            "sil_curve": [float(v) if not np.isnan(v) else None for v in sil],
         })
     return rows
 
@@ -367,11 +394,16 @@ def _write_summary_md(grouped: Dict, best_table: List[Dict], n_clusterings: int,
     )
 
     headline_tasks = {"transport_mh_jan28", "square_mh_feb5"}
+    sil_gamma_used = best_table[0]["sil_gamma_used"] if best_table else 0.9
+
     def _format_row(r: Dict) -> str:
         kbe = r["K_largest_below_eps_with_cov"]
         mvbe = r["mv1_at_K_largest_below_eps"]
         kk = r["K_knee_with_cov"]
         mvk = r["mv1_at_K_knee"]
+        ks = r.get("K_sil_gamma")
+        sil_s_val = r.get("sil_at_K_sil_gamma")
+        peak_k = r.get("peak_K_sil")
         mv1_curve = r["mv1_curve"]
         cov1_curve = r["cov1_curve"]
         Ks_swept = r["Ks_swept"]
@@ -384,14 +416,24 @@ def _write_summary_md(grouped: Dict, best_table: List[Dict], n_clusterings: int,
         mvbe_s = f"{mvbe:.3f}" if mvbe is not None else "—"
         kk_s = str(kk) if kk is not None else "—"
         mvk_s = f"{mvk:.3f}" if mvk is not None else "—"
+        ks_s = str(ks) if ks is not None else "—"
+        sil_s = f"{sil_s_val:.3f}" if sil_s_val is not None else "—"
+        pk_s = str(peak_k) if peak_k is not None else "—"
         return (
             f"| `{r['task']}` | `{r['rep']}` | {r['w']} | {r['s']} | "
-            f"**{kbe_s}** | {mvbe_s} | {kk_s} | {mvk_s} | {mv15_s} |\n"
+            f"**{kbe_s}** | {mvbe_s} | {kk_s} | {mvk_s} | {mv15_s} | "
+            f"{pk_s} | {ks_s} | {sil_s} |\n"
         )
 
+    _hdr = (
+        "| task | rep | w | s | K_max | MV₁ at K_max | knee K (gated) | MV₁ at knee"
+        f" | MV₁ at K=15 (cov₁) | sil peak K | K_sil (γ={sil_gamma_used}) | sil at K_sil |\n"
+    )
+    _sep = "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+
     out.append("### Headline tasks: transport + square\n\n")
-    out.append("| task | rep | w | s | K_max | MV₁ at K_max | knee K (gated) | MV₁ at knee | MV₁ at K=15 (cov₁) |\n")
-    out.append("|---|---|---:|---:|---:|---:|---:|---:|---:|\n")
+    out.append(_hdr)
+    out.append(_sep)
     for r in best_table:
         if r["task"] in headline_tasks:
             out.append(_format_row(r))
@@ -405,8 +447,8 @@ def _write_summary_md(grouped: Dict, best_table: List[Dict], n_clusterings: int,
         "not draw model-selection conclusions from this section without "
         "more rollouts.**\n\n"
     )
-    out.append("| task | rep | w | s | K_max | MV₁ at K_max | knee K (gated) | MV₁ at knee | MV₁ at K=15 (cov₁) |\n")
-    out.append("|---|---|---:|---:|---:|---:|---:|---:|---:|\n")
+    out.append(_hdr)
+    out.append(_sep)
     for r in best_table:
         if r["task"] not in headline_tasks:
             out.append(_format_row(r))
@@ -471,10 +513,12 @@ def main() -> int:
         _plot_rep_compare(grouped, task, plot_dir / f"{task}__rep_compare.png")
     print(f"  wrote {len(tasks)} per-task overlays + Pareto + rep-compare")
 
-    # Best-K table with coverage gate.
+    # Best-K table with coverage gate + silhouette γ-selection.
     MV_THRESHOLD = 0.15
     COVERAGE_MIN = 0.80
-    best = _best_K_table(grouped, mv_threshold=MV_THRESHOLD, coverage_min=COVERAGE_MIN)
+    SIL_GAMMA = 0.9
+    best = _best_K_table(grouped, mv_threshold=MV_THRESHOLD, coverage_min=COVERAGE_MIN,
+                         sil_gamma=SIL_GAMMA)
     (out_dir / "best_K_table.json").write_text(json.dumps(best, indent=2))
 
     # Markdown summary.

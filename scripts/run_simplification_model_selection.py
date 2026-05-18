@@ -343,7 +343,75 @@ def phase_eval(parallel: int = 8, n_bootstrap: int = 100, force: bool = False) -
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: aggregate
+# Phase 4: patch silhouette scores into existing result JSONs
+# ---------------------------------------------------------------------------
+
+_SIL_SAMPLE = 5000  # subsample for silhouette (exact is O(N²))
+
+
+def _patch_sil_one(unit: Tuple[str, str, int, int, int]) -> Tuple[Tuple, str]:
+    import numpy as np
+    from sklearn.metrics import silhouette_score as _sil_score
+
+    task, rep, w, s, K = unit
+    rp = result_path(task, rep, w, s, K)
+    cdir = clustering_dir(task, rep, w, s, K)
+    if not rp.exists():
+        return unit, "missing_json"
+    if not (cdir / "embeddings_reduced.npy").exists():
+        return unit, "missing_emb"
+    try:
+        row = json.loads(rp.read_text())
+        if "silhouette" in row and row["silhouette"] is not None:
+            return unit, "already_done"
+        emb = np.load(cdir / "embeddings_reduced.npy").astype(np.float32)
+        labels = np.load(cdir / "cluster_labels.npy")
+        if len(set(labels.tolist())) < 2:
+            row["silhouette"] = None
+        else:
+            rng = np.random.default_rng(42)
+            n = len(emb)
+            idx = rng.choice(n, min(_SIL_SAMPLE, n), replace=False)
+            row["silhouette"] = float(_sil_score(emb[idx], labels[idx]))
+        rp.write_text(json.dumps(row, indent=2))
+        return unit, "ok"
+    except Exception as e:  # noqa: BLE001
+        return unit, f"error:{type(e).__name__}:{e}"
+
+
+def phase_patch_silhouette(parallel: int = 8, force: bool = False) -> None:
+    units = []
+    for task in EVAL_DIRS:
+        for rep in REPRESENTATIONS:
+            for (w, s) in WINDOW_STRIDES:
+                for K in K_VALUES:
+                    rp = result_path(task, rep, w, s, K)
+                    if not rp.exists():
+                        continue
+                    if not force:
+                        try:
+                            row = json.loads(rp.read_text())
+                            if "silhouette" in row and row["silhouette"] is not None:
+                                continue
+                        except Exception:  # noqa: BLE001
+                            pass
+                    units.append((task, rep, w, s, K))
+
+    print(f"=== Phase patch_silhouette: {len(units)} units, parallel={parallel} ===",
+          flush=True)
+    if not units:
+        return
+
+    done = 0
+    with concurrent.futures.ProcessPoolExecutor(max_workers=parallel) as ex:
+        for u, status in ex.map(_patch_sil_one, units):
+            done += 1
+            tag = f"{u[0]}__{u[1]}__w{u[2]}_s{u[3]}__K{u[4]}"
+            print(f"  [{done}/{len(units)}] {status:14s} {tag}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: aggregate
 # ---------------------------------------------------------------------------
 
 def phase_aggregate() -> None:
@@ -363,7 +431,7 @@ def phase_aggregate() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", default="all",
-                    choices=["trunks", "cluster", "eval", "aggregate", "all"])
+                    choices=["trunks", "cluster", "eval", "patch_silhouette", "aggregate", "all"])
     ap.add_argument("--n_jobs", type=int, default=8,
                     help="Worker pool size for cluster/eval phases.")
     ap.add_argument("--n_jobs_trunks", type=int, default=2,
@@ -381,6 +449,8 @@ def main() -> int:
         phase_cluster(parallel=args.n_jobs, force=args.force)
     if args.phase in ("eval", "all"):
         phase_eval(parallel=args.n_jobs, n_bootstrap=args.n_bootstrap, force=args.force)
+    if args.phase in ("patch_silhouette", "all"):
+        phase_patch_silhouette(parallel=args.n_jobs, force=args.force)
     if args.phase in ("aggregate", "all"):
         phase_aggregate()
     return 0

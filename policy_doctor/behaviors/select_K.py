@@ -273,10 +273,49 @@ def rank_candidates(
     return knees
 
 
+def select_K_by_silhouette_gamma(
+    K_list: List[int],
+    sil_list: List[float],
+    gamma: float = 0.9,
+    K_min: int = 3,
+) -> Optional[int]:
+    """Select K from a silhouette-vs-K curve using a gamma fraction of the peak.
+
+    Algorithm:
+      1. Find K_peak = argmax(silhouette).
+      2. Compute target = gamma * sil[K_peak].
+      3. Among K < K_peak with sil[K] >= target and K >= K_min,
+         return the largest such K.
+
+    Returns None if no K satisfies the constraints (e.g. the curve is
+    monotone decreasing — no useful peak exists to the right).
+
+    The gamma parameter controls how close to the peak you must be on the
+    ascending side.  gamma=1.0 selects K just below the peak; gamma=0.9
+    accepts any K that achieves 90% of max silhouette.
+    """
+    if not K_list or not sil_list or len(K_list) != len(sil_list):
+        return None
+    pairs = sorted(zip(K_list, sil_list), key=lambda x: x[0])
+    sorted_K = [p[0] for p in pairs]
+    sorted_sil = [p[1] for p in pairs]
+    max_sil = max(sorted_sil)
+    peak_idx = sorted_sil.index(max_sil)
+    if peak_idx == 0:
+        return None  # monotone decreasing — peak is at smallest K, no ascending left side
+    target = gamma * max_sil
+    candidates = [
+        sorted_K[i] for i in range(peak_idx)
+        if sorted_K[i] >= K_min and sorted_sil[i] >= target
+    ]
+    return max(candidates) if candidates else None
+
+
 __all__ = [
     "Cell",
     "Pick",
     "select_hyperparams",
     "select_K_from_results_dir",
     "rank_candidates",
+    "select_K_by_silhouette_gamma",
 ]
