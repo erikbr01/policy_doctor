@@ -5,6 +5,60 @@ Total clusterings analysed: **306** (= 6 trunks × 3 (w,s) × 11 K).
 
 > **Lift_mh_jan26 is dropped from the headline analysis.** Lift episodes are ~10 timesteps on average, and after sliding-window aggregation + run-length collapse most rollouts contribute fewer than `min_pairs = 4` triplets per merged state. At every (w, s) with stride-1 windows, the order-1 coverage drops below 0.50 at K∈{5..15} for at least one rep, so the argmin / largest-below-ε criteria are dominated by gate artefacts. Lift's MV-vs-K table is still in the appendix, but the cross-rep / model-selection story below is reported on **transport_mh_jan28 and square_mh_feb5 only**.
 
+## Follow-up: infembed embedding geometry — UMAP vs raw, silhouette signal
+
+> **Note**: this section is manually maintained. The tables below are auto-generated.
+
+### Hypothesis tested
+
+The sweep found that `infembed` silhouette is monotone decreasing on transport — no interior peak, no usable K-selection signal. The hypothesis was that this is caused by double dimensionality reduction: Arnoldi first collapses gradients to 100D, then UMAP reduces further to 50D. We tested whether the lack of peak is an artifact of the UMAP step or already present in the 100D Arnoldi space.
+
+**Script**: `scripts/test_infembed_umap_hypothesis.py`  
+**Results**: `/mnt/ssdB/erik/cupid_data/graph_simplification/results/infembed_umap_hypothesis/`
+
+### Results summary
+
+Silhouette at K ∈ {3,4,6,8,10,12,15,18,20,25,30}, windowed (w=3,5,8, s=1), for two variants:
+- **infembed_raw**: raw 100D Arnoldi embeddings, prescaled with StandardScaler, windowed
+- **infembed+UMAP**: same data after UMAP 100→50D (the existing trunks), windowed
+
+**Transport (`transport_mh_jan28`)** — both variants are monotone decreasing:
+
+| (w, s) | infembed_raw peak K | infembed+UMAP peak K | infembed+UMAP max sil |
+|---|---:|---:|---:|
+| (3, 1) | K=4 (edge) | K=4 (edge) | 0.617 |
+| (5, 1) | K=4 (edge) | K=4 (edge) | 0.591 |
+| (8, 1) | K=4 (edge) | K=4 (edge) | 0.554 |
+
+**Square (`square_mh_feb5`)** — UMAP reveals a genuine peak; raw is flat:
+
+| (w, s) | infembed_raw peak K | infembed+UMAP peak K | infembed+UMAP max sil |
+|---|---:|---:|---:|
+| (3, 1) | K=4 (flat, ~0.21) | K=8–12 | ~0.51 |
+| (5, 1) | K=4 (flat, ~0.23) | K=6 | ~0.51 |
+| (8, 1) | K=4 (flat, ~0.24) | K=6–12 | ~0.51 |
+
+### Interpretation
+
+The issue is **task-dependent, not purely a UMAP artifact**:
+
+- **Transport**: the Arnoldi space already has no K-structure beyond K=3–4. The raw 100D features are dominated by 2–3 directions (confirmed by PCA: first 10 PCs explain only 64% of variance, yet K-means in 100D can't find more than 2–3 well-separated blobs). UMAP amplifies blob separation (silhouette 0.16→0.62) but preserves the monotone shape. The intrinsic cluster structure is absent in the Arnoldi space itself.
+
+- **Square**: UMAP *reveals* structure that K-means can't find in the raw 100D space (curse of dimensionality: pairwise distances uninformative in 100D). The UMAP-reduced 50D shows a genuine interior peak at K=6–8, consistent with an underlying cluster structure of ~6–8 behavioral modes. The raw 100D infembed is flat — the structure exists but is not findable by K-means in 100D without UMAP.
+
+- **PCA variance**: raw 100D first 10 PCs = 64% (transport), 72% (square). UMAP 50D first 10 PCs ≈ 100% for both — UMAP compresses all variance into very few dimensions.
+
+### Silhouette usability for K selection
+
+| task | infembed raw | infembed+UMAP | policy_emb+UMAP |
+|---|---|---|---|
+| transport | ✗ monotone | ✗ monotone | ≈ non-monotone, peak K=20 (edge) |
+| square | ✗ flat | ✓ peak K=6–8 | ✓ **clear peak K=12** (all w) |
+
+- **Square policy_emb**: silhouette is the most reliable automatic K selector — consistent K=12 peak across all window widths, well above γ=0.9 threshold → K*=10 via `select_K_by_silhouette_gamma`.
+- **Square infembed+UMAP**: usable (K=6–8 peak), but the peak is at smaller K than the MV-optimal range (K=12–20). The silhouette and MV criteria give different answers.
+- **Transport**: silhouette is uninformative for both reps. Use MV γ-selection instead.
+
 ## Headline observations (transport + square)
 1. **`policy_emb_bottleneck_plan_t0` beats `infembed` by ≈3× MV at K=6 on transport.** Across all three (w, s) settings:
 
