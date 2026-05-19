@@ -104,7 +104,7 @@ alloc_step = st.session_state.get("ga_alloc_step", 25)
 st.header("1. Explore Rollout Videos")
 st.markdown("Review the robot's current behavior. Use these videos to inform your strategy.")
 
-render_video_browser(mp4_dir, index, page_size=5, key_prefix="vbrow")
+render_video_browser(mp4_dir, index, page_size=9, key_prefix="vbrow")
 
 st.divider()
 

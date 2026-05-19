@@ -394,13 +394,7 @@ def _render_node_panel(
                     status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
                     ts_range = ep_slices_by_idx.get(ep_idx)
                     total_frames = ep_entry.get("frame_count")
-                    # For failure episodes, extend orange bar to end of video:
-                    # the node is the last behaviour before failure, so the bar
-                    # should run from the behaviour's start to the episode's end.
-                    if ts_range and success is False and total_frames:
-                        effective_end = total_frames
-                    else:
-                        effective_end = ts_range[1] if ts_range else None
+                    effective_end = ts_range[1] if ts_range else None
                     with col:
                         st.caption(f"Episode {ep_idx} — {status}")
                         mp4_player(
