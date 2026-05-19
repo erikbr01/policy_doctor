@@ -1,0 +1,6 @@
+task: pi05_libero_object
+name: "pi0.5 Libero Object"
+# eval_dir: /absolute/path/to/pi05_libero_object/eval_output
+# No train_dir needed — clustering uses pre-computed pi05 policy embeddings.
+# After running eval_save_with_embeddings.py, set eval_dir above.
+obs_key: agentview_image

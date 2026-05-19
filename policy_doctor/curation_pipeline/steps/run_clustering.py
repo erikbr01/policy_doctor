@@ -36,6 +36,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
             fit_reduce_dimensions,
         )
         from policy_doctor.data.clustering_loader import save_clustering_models
+        from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
         from influence_visualizer.clustering_results import save_clustering_result
         from influence_visualizer.data_loader import get_eval_dir_for_seed
 
@@ -123,6 +124,15 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                     window_width, stride, aggregation, demo_split, level,
                     train_ckpt=train_ckpt, exp_date=exp_date,
                 )
+            elif influence_source in ("policy_emb", "pi05_activations"):
+                if level == "demo":
+                    raise ValueError(
+                        "level='demo' not supported for policy_emb/pi05_activations source"
+                    )
+                layer = OmegaConf.select(cfg, "clustering_policy_emb_layer") or "pi05"
+                rep = PolicyEmbeddingRepresentation()
+                params_rep = SliceWindowParams(window_width=window_width, stride=stride, aggregation=aggregation)
+                embeddings_arr, all_metadata = rep.extract(eval_dir_abs, params_rep, layer=layer)
             else:
                 if level == "demo":
                     raise ValueError(

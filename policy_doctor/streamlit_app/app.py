@@ -178,8 +178,14 @@ def _render_config_selector() -> tuple[Optional[str], Optional[VisualizerConfig]
     if config.use_mock:
         st.sidebar.info("Using mock data")
         return selected, config
-    if not config.eval_dir or not config.train_dir:
-        st.sidebar.warning("Set eval_dir and train_dir in the task config YAML to load data.")
+    if not config.eval_dir:
+        st.sidebar.warning("Set eval_dir in the task config YAML to load data.")
+        return selected, config
+    if not config.train_dir:
+        st.sidebar.info(
+            "No train_dir set — TRAK / attribution tabs unavailable. "
+            "Clustering with pre-computed embeddings (e.g. pi05) works without it."
+        )
         return selected, config
     return selected, config
 
