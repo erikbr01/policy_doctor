@@ -230,7 +230,14 @@ def _render_native_svg(
         if cid == FAILURE_NODE_ID: return -1.0
         if cid in (END_NODE_ID, START_NODE_ID): return 0.0
         return float(node_values.get(int(cid), 0.0))
-    _BINS = ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    _cb = st.session_state.get("colorblind_mode", False)
+    _BINS = (
+        ["#D55E00", "#E69F00", "#F0E442", "#009E73", "#0072B2"]  # Okabe-Ito
+        if _cb else
+        ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    )
+    _SUCCESS_COL = "#0072B2" if _cb else "#2ca02c"
+    _FAILURE_COL = "#D55E00" if _cb else "#d62728"
     def _diverging(t: float) -> str:
         return _BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
     # Pre-compute V range for value mode. Exclude SUCCESS / FAILURE /
@@ -265,8 +272,8 @@ def _render_native_svg(
             elif color_mode == "value" and not is_special:
                 v = _v_for_cluster(cid, nd["n_success"], nd["n_episodes"])
                 color_override[next_id] = _diverging(0.5 + v / (2 * v_range))
-            elif cid == SUCCESS_NODE_ID: color_override[next_id] = "#2ca02c"
-            elif cid == FAILURE_NODE_ID: color_override[next_id] = "#d62728"
+            elif cid == SUCCESS_NODE_ID: color_override[next_id] = _SUCCESS_COL
+            elif cid == FAILURE_NODE_ID: color_override[next_id] = _FAILURE_COL
             elif cid == END_NODE_ID:     color_override[next_id] = "#888888"
             else:
                 # id mode
