@@ -405,6 +405,11 @@ def _render_native_svg(
     st.session_state[f"{key_prefix}_path_to_id"] = {
         tuple(p): nid for p, nid in path_to_id.items()
     }
+    # Reverse map: synth_id → path tuple (cluster IDs), used by terminal-node handler
+    st.session_state[f"{key_prefix}_id_to_path"] = {
+        nid: tuple(p) for p, nid in path_to_id.items()
+    }
+    st.session_state[f"{key_prefix}_cluster_names"] = dict(cluster_names)
     # Also save synth_id → "START → A → B → …" string so the click
     # panels can show the full prefix in their header.
     _id_to_prefix: Dict[int, str] = {}
@@ -692,16 +697,48 @@ def _render_right_video_panel(
         all_eps = sorted(ep_slices_by_idx.keys())
         # Terminal nodes (SUCCESS/FAILURE) are never assigned synth_labels so
         # ep_slices will be empty — fall back to the graph node's episode list.
+        ep_segs_by_idx_node: Optional[Dict[int, List]] = None
         if not all_eps and graph is not None:
             gnode = graph.nodes.get(int(selected_node))
             if gnode is not None:
                 all_eps = sorted(gnode.episode_indices)
+                # Build full-path segment annotations (same as path button)
+                _id_to_path = st.session_state.get(f"{key_prefix}_id_to_path", {})
+                _cnames = st.session_state.get(f"{key_prefix}_cluster_names", {})
+                _p2id = st.session_state.get(f"{key_prefix}_path_to_id", {})
+                _term_path = _id_to_path.get(int(selected_node), ())
+                _term = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+                _path_synth_ids = []
+                for _d in range(1, len(_term_path) + 1):
+                    _cid = _term_path[_d - 1]
+                    if _cid in _term:
+                        continue
+                    _nid = _p2id.get(_term_path[:_d])
+                    if _nid is not None:
+                        _lbl = _cnames.get(int(_cid), f"B{_cid}")
+                        _path_synth_ids.append((_nid, _lbl))
+                if _path_synth_ids:
+                    ep_segs_by_idx_node = {}
+                    _ep_set = set(all_eps)
+                    _sc = _seg_colors()
+                    for _i, (_nid, _lbl) in enumerate(_path_synth_ids):
+                        _col = _sc[_i % len(_sc)]
+                        for _ep, _ts_s, _ts_e in _episodes_for_node(_nid, labels, metadata):
+                            if _ep in _ep_set:
+                                ep_segs_by_idx_node.setdefault(_ep, []).append((_ts_s, _ts_e, _lbl, _col))
+                    for _ep, _segs in ep_segs_by_idx_node.items():
+                        if len(_segs) > 1:
+                            _segs.sort(key=lambda s: s[0])
+                            _closed = [(_segs[j][0], _segs[j+1][0], _segs[j][2], _segs[j][3]) for j in range(len(_segs)-1)]
+                            _closed.append(_segs[-1])
+                            ep_segs_by_idx_node[_ep] = _closed
         _id_to_prefix = st.session_state.get(f"{key_prefix}_id_to_prefix", {})
         title = _id_to_prefix.get(int(selected_node), f"Node {selected_node}")
         st.caption(f"**{title}**")
         _show_one_video_panel(
             all_eps, ep_slices_by_idx, mp4_dir, mp4_index,
             f"{key_prefix}_node_{selected_node}", fps,
+            ep_segs_by_idx=ep_segs_by_idx_node,
         )
     elif path_eps:
         st.caption(f"**{path_label}**" if path_label else "**Selected path**")
