@@ -34,22 +34,52 @@ K selection connects geometric quality to hyperparameter selection.
 ### 2.1 Geometric Separability: Silhouette Score
 
 The silhouette score measures how much better each sample fits its own cluster than the
-nearest competing cluster. For sample $i$ with cluster assignment $c_i$:
+nearest competing cluster.
+
+**Setup.** Each window $i$ lives at a point $\mathbf{z}_i \in \mathbb{R}^D$ in the UMAP
+embedding space ($D = 50$ for jan28, $D = 100$ for mar27). The distance between two windows
+is the Euclidean distance $d(i, j) = \|\mathbf{z}_i - \mathbf{z}_j\|_2$. Each window is
+assigned a cluster $c_i \in \{0, \ldots, K-1\}$; $C_c$ denotes the set of windows in cluster $c$.
+
+**Per-sample score.** For sample $i$:
+
+$$
+a_i = \frac{1}{|C_{c_i}| - 1} \sum_{\substack{j \in C_{c_i} \\ j \neq i}} d(i, j)
+$$
+
+$a_i$ is the mean distance from $i$ to all other members of its own cluster — a measure of
+how tightly $i$ is packed within its cluster. Small $a_i$ means $i$ is close to its cluster
+centre.
+
+$$
+b_i = \min_{c \neq c_i} \;\frac{1}{|C_c|} \sum_{j \in C_c} d(i, j)
+$$
+
+$b_i$ is the mean distance from $i$ to every member of the nearest competing cluster,
+minimised over all clusters $c \neq c_i$. It measures how far $i$ is from the cluster it
+fits into second-best.
+
+The per-sample silhouette is then:
 
 $$
 s_i = \frac{b_i - a_i}{\max(a_i,\; b_i)}
 $$
 
-where
-- $a_i = \frac{1}{|C_{c_i}| - 1} \sum_{j \in C_{c_i},\, j \neq i} d(i, j)$ is the mean
-  intra-cluster distance, and
-- $b_i = \min_{c \neq c_i} \frac{1}{|C_c|} \sum_{j \in C_c} d(i, j)$ is the mean distance
-  to the nearest other cluster.
+The $\max$ in the denominator normalises $s_i$ to the interval $[-1, 1]$:
+- When $b_i > a_i$ (i closer to own cluster): denominator $= b_i$, so $s_i = 1 - a_i / b_i \in (0, 1]$. Near $+1$ when $a_i \ll b_i$ (tight cluster, far from neighbours).
+- When $a_i = b_i$: $s_i = 0$ (borderline case — equally close to own cluster and nearest other).
+- When $a_i > b_i$ (i closer to a foreign cluster): denominator $= a_i$, so $s_i = b_i / a_i - 1 \in [-1, 0)$. Near $-1$ when $b_i \ll a_i$ (likely misassigned).
+- Singleton clusters ($|C_{c_i}| = 1$): $a_i$ is undefined; $s_i = 0$ by convention.
 
-The dataset-level silhouette score is $\bar{s} = \frac{1}{N} \sum_i s_i$, taking values
-in $[-1, 1]$. Values near $+1$ mean samples are tightly grouped and far from neighboring
-clusters; values near $0$ indicate borderline cases; negative values indicate likely
-misassignment.
+**Dataset-level score:**
+
+$$
+\bar{s} = \frac{1}{N} \sum_{i=1}^{N} s_i \;\in\; [-1, 1]
+$$
+
+Values near $+1$ mean clusters are compact and well-separated; near $0$ indicates clusters
+that overlap or are barely distinguishable; negative values indicate a systematically
+mis-specified number of clusters.
 
 **Computational note.** Computing $a_i$ and $b_i$ naively requires $O(N^2)$ distance
 evaluations. In practice, the score is computed on a random subsample of 3,000 points
@@ -77,8 +107,20 @@ at the right resolution. They operate on the run-length-collapsed episode sequen
 
 #### 2.2.1 Mean Distinct Clusters per Episode
 
-For each episode $e$, let $D_e$ be the number of unique cluster labels in its
-run-length-collapsed sequence. The coverage metric is:
+**Setup.** For episode $e$, let $(\hat{\ell}_1, \hat{\ell}_2, \ldots, \hat{\ell}_{N_e})$ be the
+sequence of cluster labels for its $N_e$ windows in temporal order. Run-length encoding (RLE)
+collapses consecutive identical labels into a single entry, giving the visit sequence
+$\text{RLE}(e) = (c_1, c_2, \ldots, c_{T_e})$ where $c_k \neq c_{k+1}$ for all $k$ and
+$T_e \leq N_e$. The number of distinct behavioral phases visited by episode $e$ is:
+
+$$
+D_e = \bigl|\{c : c \in \text{RLE}(e)\}\bigr|
+$$
+
+Note that $D_e$ counts unique labels, not transitions — if the episode revisits a cluster after
+leaving it ($c_1 \to c_2 \to c_1$), that cluster is counted once.
+
+**Metric:**
 
 $$
 \overline{D} = \frac{1}{|E|} \sum_{e \in E} D_e
@@ -98,18 +140,47 @@ the cost of high swap rate.
 
 #### 2.2.2 Swap Rate (Per-Frame)
 
-The per-frame swap rate measures temporal coherence: what fraction of adjacent frame pairs
-disagree on cluster assignment. Let $\ell_t$ be the cluster label of the window containing
-frame $t$. The swap rate is:
+The per-frame swap rate measures temporal coherence: how often the clustering changes label
+between adjacent windows, expressed relative to total observation frames rather than total
+windows, making the metric independent of the stride parameter.
+
+**Setup.** With window width $W$ and stride $S$, episode $e$ of length $F_e$ frames yields
+$N_e = \lfloor(F_e - W)/S\rfloor + 1$ windows. Window $k$ spans frames $[kS,\, kS + W - 1]$
+and carries label $\hat{\ell}_k$. Adjacent windows $k$ and $k+1$ overlap in $W - S$ frames
+(or share no frames when $S = W$).
+
+The number of label changes (swaps) within episode $e$ is:
 
 $$
-\text{swap rate} = \frac{\#\{t : \ell_t \neq \ell_{t-1}\}}{\text{total frames}}
+\text{swaps}(e) = \sum_{k=0}^{N_e - 2} \mathbf{1}\bigl[\hat{\ell}_{k+1} \neq \hat{\ell}_k\bigr]
 $$
 
-Raw swap rate (per-window) is stride-dependent: at stride $S$, adjacent window pairs
-overlap in $W - S$ frames, so stride inflates the rate mechanically. The per-frame version
-uses total covered frames as the denominator (total frames = total windows $\times W / S$
-for uniform stride) and is stride-fair.
+**Per-window swap rate** (not stride-fair):
+
+$$
+\text{swap}_{w} = \frac{\displaystyle\sum_e \text{swaps}(e)}{\displaystyle\sum_e (N_e - 1)}
+$$
+
+At stride $S$, the denominator $\sum_e (N_e - 1) \approx \sum_e F_e / S$, so
+$\text{swap}_w$ scales as $S \times \text{swap}_f$. Larger stride mechanically deflates the
+rate because there are fewer window pairs, even though each window jump crosses more frames.
+
+**Per-frame swap rate** (stride-fair):
+
+$$
+\text{swap}_{f} = \frac{\displaystyle\sum_e \text{swaps}(e)}{\displaystyle\sum_e F_e}
+$$
+
+The denominator is the total number of observation frames across all episodes. Because
+$\sum_e F_e$ does not depend on stride, this rate compares fairly across $(W, S)$
+configurations. Equivalently, since $\sum_e N_e \approx \sum_e F_e / S$:
+
+$$
+\text{swap}_{f} \approx \text{swap}_{w} \cdot \frac{1}{S}
+$$
+
+so the per-frame rate undoes the stride deflation and reflects the true label-change density
+per observation frame.
 
 A low per-frame swap rate indicates stable cluster assignments — the policy stays in one
 behavioral mode across many consecutive frames before transitioning. A high swap rate
@@ -133,20 +204,81 @@ best outcome-predictiveness while maintaining reasonable swap rate.
 
 #### 2.2.3 Mutual Information with Episode Outcome
 
-The mutual information between a window's cluster label and its episode's outcome bit
-(success/failure) quantifies how predictive the clustering is of task success:
+**Setup.** Let $\mathcal{W} = \{w_1, \ldots, w_N\}$ be the set of all $N$ windows across all
+rollout episodes. Each window $w_i$ carries two attributes:
+- $\ell_i \in \{0, \ldots, K-1\}$: its cluster assignment.
+- $o_i \in \{0, 1\}$: the binary success/failure outcome of the episode it belongs to ($1$ =
+  success, $0$ = failure), broadcast uniformly to every window of the same episode.
+
+**Empirical probability estimates.** Define counts:
+- $n_{c,o} = |\{i : \ell_i = c,\, o_i = o\}|$ — windows in cluster $c$ from episodes with outcome $o$.
+- $n_c = \sum_o n_{c,o} = |\{i : \ell_i = c\}|$ — all windows in cluster $c$.
+- $n_o = \sum_c n_{c,o} = |\{i : o_i = o\}|$ — all windows from episodes with outcome $o$.
+
+The empirical joint and marginal probabilities are:
 
 $$
-\text{MI}(\ell, \text{succ}) = \sum_{c, o} P(\ell = c, \text{succ} = o) \log \frac{P(\ell=c, \text{succ}=o)}{P(\ell=c)\,P(\text{succ}=o)}
+\hat{P}(\ell = c,\; \text{succ} = o) = \frac{n_{c,o}}{N}, \qquad
+\hat{P}(\ell = c) = \frac{n_c}{N}, \qquad
+\hat{P}(\text{succ} = o) = \frac{n_o}{N}
 $$
 
-where the outcome bit is broadcast to every window of the same episode. MI rewards
-clusterings where some clusters reliably co-occur with successful outcomes and others
-with failures — i.e., where the behavioral state is predictive of the eventual result.
+**The MI formula.** Mutual information is the expectation (under the joint distribution) of
+the log-ratio of the joint to the product of marginals:
 
-Importantly, MI is neutral to "free-passenger" clusters that appear in both successful and
-failed episodes (they contribute ~0 MI regardless of window or stride parameters), so it
-fairly ranks configurations that differ only in how they handle discriminative phases.
+$$
+\text{MI}(\ell,\, \text{succ}) = \sum_{c=0}^{K-1} \sum_{o \in \{0,1\}} \hat{P}(\ell = c,\; \text{succ} = o)\;\log \frac{\hat{P}(\ell = c,\; \text{succ} = o)}{\hat{P}(\ell = c)\;\hat{P}(\text{succ} = o)}
+$$
+
+Substituting the counts:
+
+$$
+= \sum_{c,\,o} \frac{n_{c,o}}{N} \log \frac{n_{c,o} \cdot N}{n_c \cdot n_o}
+$$
+
+**Interpretation of the log-ratio.** The term $\log \dfrac{n_{c,o} \cdot N}{n_c \cdot n_o}$
+is the log of the observed co-occurrence count $n_{c,o}$ relative to the count expected
+under independence, $n_c \cdot n_o / N$:
+
+- **Positive** ($n_{c,o} > n_c n_o / N$): cluster $c$ is enriched in outcome $o$ — windows in
+  this cluster come disproportionately from episodes with that outcome. The clustering predicts
+  this outcome.
+- **Zero** ($n_{c,o} = n_c n_o / N$): cluster $c$ and outcome $o$ co-occur exactly as often as
+  statistical independence predicts. This cluster carries no information about this outcome.
+- **Negative** ($n_{c,o} < n_c n_o / N$): cluster $c$ is depleted in outcome $o$ — also
+  predictive, but in the opposite direction (the cluster predicts the *other* outcome).
+
+The outer weight $\hat{P}(\ell=c, \text{succ}=o)$ means the sum is dominated by the most
+common (cluster, outcome) pairs; rare combinations contribute little regardless of their
+log-ratio.
+
+**MI as reduction in outcome uncertainty.** Equivalently:
+
+$$
+\text{MI}(\ell,\, \text{succ}) = H(\text{succ}) - H(\text{succ} \mid \ell)
+$$
+
+where the marginal entropy $H(\text{succ}) = -\sum_o \hat{P}(\text{succ}=o)\log\hat{P}(\text{succ}=o)$
+is the a priori uncertainty about episode outcome, and the conditional entropy
+
+$$
+H(\text{succ} \mid \ell) = -\sum_{c} \hat{P}(\ell=c) \sum_{o} \hat{P}(\text{succ}=o \mid \ell=c) \log \hat{P}(\text{succ}=o \mid \ell=c)
+$$
+
+is the average remaining uncertainty about outcome after observing the cluster label. MI is
+therefore the average reduction in outcome uncertainty provided by knowing the cluster.
+
+**Non-negativity.** MI $\geq 0$ always, with equality iff the joint factorises:
+$\hat{P}(\ell=c, \text{succ}=o) = \hat{P}(\ell=c)\hat{P}(\text{succ}=o)$ for all $(c, o)$.
+This follows from the log-sum inequality (equivalently, from the KL divergence
+$D_\text{KL}(\hat{P}(\ell, \text{succ}) \| \hat{P}(\ell)\hat{P}(\text{succ})) \geq 0$).
+
+**Free-passenger clusters.** A cluster that appears equally in successful and failed episodes
+has $n_{c,0}/n_c = n_0/N$ and $n_{c,1}/n_c = n_1/N$ — the within-cluster outcome mix equals
+the dataset-level mix. Both log-ratios are then zero, so the cluster contributes zero to MI
+regardless of how many windows it contains. This makes MI neutral to task-structure clusters
+(e.g., the "reaching" phase) that must be traversed in every episode, rewarding only the
+clusters that discriminate between outcomes.
 
 **Key result.** On jan28 policy_emb at K=10, W=5,S=1 achieves MI=0.188 nats — nearly 2×
 the W=10,S=2 value (0.150), despite having comparable swap rates. The large-window
@@ -375,17 +507,58 @@ Three tests are implemented, selected via the `method` parameter.
 
 #### 3.5.1 Asymptotic Chi-Squared Test (`method="chi2"`)
 
-The Pearson chi-squared statistic:
+**Deriving the expected counts $E_{ij}$.** Under the null hypothesis $H_0$, predecessor and
+successor are conditionally independent given the current state $s$:
 
 $$
-\chi^2 = \sum_{i=1}^{r} \sum_{j=1}^{c} \frac{(T_s[i,j] - E_{ij})^2}{E_{ij}},
-\qquad E_{ij} = \frac{\bigl(\sum_j T_s[i,j]\bigr)\bigl(\sum_i T_s[i,j]\bigr)}{\sum_{i,j} T_s[i,j]}
+P(\text{prev}=p_i,\; \text{next}=n_j \mid \text{current}=s) = P(\text{prev}=p_i \mid s)\;\cdot\;P(\text{next}=n_j \mid s)
 $$
 
-Under the null hypothesis, this statistic follows a chi-squared distribution with
-$(r-1)(c-1)$ degrees of freedom. The p-value is the right-tail probability:
-$p = P(\chi^2_{(r-1)(c-1)} \geq \chi^2_\text{obs})$. Scipy's `chi2_contingency`
-handles cells with zero expected counts by skipping them in the sum.
+The maximum-likelihood estimates of these conditional marginals from the table are:
+
+$$
+\hat{P}(\text{prev}=p_i \mid s) = \frac{R_i}{N_s}, \quad R_i = \sum_{j=1}^{c} T_s[i,j] \quad\text{(row sum)}
+$$
+
+$$
+\hat{P}(\text{next}=n_j \mid s) = \frac{C_j}{N_s}, \quad C_j = \sum_{i=1}^{r} T_s[i,j] \quad\text{(column sum)}
+$$
+
+$$
+N_s = \sum_{i=1}^{r}\sum_{j=1}^{c} T_s[i,j] \quad\text{(table total)}
+$$
+
+The expected count in cell $(i,j)$ under $H_0$ is therefore:
+
+$$
+E_{ij} = N_s \cdot \hat{P}(\text{prev}=p_i \mid s) \cdot \hat{P}(\text{next}=n_j \mid s) = N_s \cdot \frac{R_i}{N_s} \cdot \frac{C_j}{N_s} = \frac{R_i\, C_j}{N_s}
+$$
+
+**The Pearson statistic.** The chi-squared statistic measures the total squared deviation of
+observed counts from expected counts, standardised by the expected count:
+
+$$
+\chi^2 = \sum_{i=1}^{r} \sum_{j=1}^{c} \frac{\bigl(T_s[i,j] - E_{ij}\bigr)^2}{E_{ij}}
+$$
+
+Each term $(T_s[i,j] - E_{ij})^2 / E_{ij}$ is a standardised squared residual for cell $(i,j)$:
+large when the observed count deviates substantially from independence, weighted by $1/E_{ij}$
+so that deviations in rare cells (small $E_{ij}$) contribute proportionally more.
+
+Under $H_0$, the statistic follows asymptotically a chi-squared distribution with
+$(r-1)(c-1)$ degrees of freedom. The df count comes from the number of free parameters in
+the interaction: the full table has $rc - 1$ free cell probabilities; under independence,
+these are parameterised by $(r-1) + (c-1)$ free marginals, leaving $(rc - 1) - (r - 1) -
+(c - 1) = (r-1)(c-1)$ interaction degrees of freedom.
+
+The p-value is the right-tail probability:
+
+$$
+p = P\!\left(\chi^2_{(r-1)(c-1)} \geq \chi^2_\text{obs}\right)
+$$
+
+Scipy's `chi2_contingency` skips cells with $E_{ij} = 0$ (structurally zero expected count
+when a row sum or column sum is zero) rather than treating them as $0/0$.
 
 **Validity condition.** The asymptotic approximation is reliable only when all expected
 cell counts $E_{ij} \geq 5$. In practice, with 100 rollout episodes spread across
