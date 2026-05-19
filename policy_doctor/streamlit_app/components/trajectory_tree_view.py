@@ -535,6 +535,22 @@ def _render_stats(
                     nd.get("episode_indices", [])
                 )
                 st.session_state[f"{key_prefix}_path_label"] = _format_path(nd)
+                # Store (synth_node_id, label) pairs for multi-segment annotation.
+                # We use synth node IDs (not raw cluster IDs) because the right
+                # panel receives synth_labels, not the original labels array.
+                _term = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+                _path_to_id = st.session_state.get(f"{key_prefix}_path_to_id", {})
+                _path_synth_ids = []
+                for _depth in range(1, len(nd["path"]) + 1):
+                    _prefix = nd["path"][:_depth]
+                    _cid = _prefix[-1]
+                    if _cid in _term:
+                        continue
+                    _nid = _path_to_id.get(tuple(_prefix))
+                    if _nid is not None:
+                        _lbl = cluster_names.get(int(_cid), f"B{_cid}")
+                        _path_synth_ids.append((_nid, _lbl))
+                st.session_state[f"{key_prefix}_path_synth_ids"] = _path_synth_ids
                 # Clear any node selection so the right panel shows path videos
                 st.session_state.pop(f"{key_prefix}_graph_selected", None)
             st.rerun()
@@ -555,6 +571,12 @@ def _render_stats(
 
 
 # ── Right-column single-video panel ──────────────────────────────────────────
+
+_SEG_COLORS = [
+    "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
+    "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
+]
+
 
 def _render_right_video_panel(
     labels: np.ndarray,
@@ -587,9 +609,20 @@ def _render_right_video_panel(
         )
     elif path_eps:
         st.caption(f"**{path_label}**" if path_label else "**Selected path**")
+        # Build per-episode multi-segment data using synth node IDs (which
+        # match the synth_labels array passed as `labels` to this panel).
+        path_synth_ids: List = st.session_state.get(f"{key_prefix}_path_synth_ids", [])
+        ep_segs_by_idx: Dict[int, List] = {}
+        path_eps_set = set(path_eps)
+        for i, (nid, lbl) in enumerate(path_synth_ids):
+            col = _SEG_COLORS[i % len(_SEG_COLORS)]
+            for ep_idx, ts_s, ts_e in _episodes_for_node(nid, labels, metadata):
+                if ep_idx in path_eps_set:
+                    ep_segs_by_idx.setdefault(ep_idx, []).append((ts_s, ts_e, lbl, col))
         _show_one_video_panel(
             path_eps, {}, mp4_dir, mp4_index,
             f"{key_prefix}_path", fps,
+            ep_segs_by_idx=ep_segs_by_idx,
         )
     else:
         st.info("Click a node or a path button to see videos here.")
@@ -602,6 +635,7 @@ def _show_one_video_panel(
     mp4_index: Dict,
     key_prefix: str,
     fps: int,
+    ep_segs_by_idx: Optional[Dict[int, List]] = None,
 ) -> None:
     """Render one episode video with prev / next controls below."""
     from policy_doctor.streamlit_app.user_study.graph_explorer import _find_mp4_episode
@@ -619,6 +653,7 @@ def _show_one_video_panel(
 
     if ep_entry and mp4_dir:
         ts_range = ep_slices_by_idx.get(ep_idx)
+        segs = (ep_segs_by_idx or {}).get(ep_idx)
         success = ep_entry.get("success")
         status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
         st.caption(f"Episode {ep_idx} — {status}")
@@ -630,6 +665,7 @@ def _show_one_video_panel(
             slice_end=ts_range[1] if ts_range else None,
             total_frames=ep_entry.get("frame_count"),
             fps=fps,
+            segments=segs,
         )
     else:
         st.warning(f"No video found for episode {ep_idx}.")
