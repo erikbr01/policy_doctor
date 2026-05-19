@@ -16,6 +16,10 @@ Usage:
     python scripts/aggregate_sweep_results.py --run-dir /path/to/run_dir
     python scripts/aggregate_sweep_results.py --per-arm
     python scripts/aggregate_sweep_results.py --gen-stats
+    # K-robustness sweep (run dirs must end in _k{N}):
+    python scripts/aggregate_sweep_results.py --k-sweep \
+      --run-dir .../tight_k5 --run-dir .../tight_k10 --run-dir .../tight_k15 \
+      --run-dir .../tight_k20 --run-dir .../tight_k25
 """
 
 import argparse
@@ -312,6 +316,72 @@ def print_gen_table(run_dir_name: str, all_results: list[dict]) -> None:
         print()
 
 
+def extract_k_from_run_dir(run_dir_name: str) -> int | None:
+    """Extract K value from a run dir name ending in _k{N}."""
+    m = re.search(r"_k(\d+)$", run_dir_name)
+    return int(m.group(1)) if m else None
+
+
+def print_k_sweep_table(all_results: list[dict]) -> None:
+    """Print a K-vs-heuristic comparison table across K-sweep run dirs."""
+    # Attach K to each result
+    k_tagged = []
+    for r in all_results:
+        k = extract_k_from_run_dir(r["run_dir"])
+        if k is not None:
+            k_tagged.append({**r, "k": k})
+
+    if not k_tagged:
+        print("[k-sweep] No run dirs with _k{N} suffix found.")
+        return
+
+    k_values = sorted({r["k"] for r in k_tagged})
+    budgets = sorted({r["budget"] for r in k_tagged})
+    heuristics = sorted({r["heuristic"] for r in k_tagged})
+
+    for budget in budgets:
+        print(f"\n{'='*72}")
+        print(f"K Robustness Sweep  [budget={budget}, top5_mean success rate, n=3 reps per K]")
+        print(f"{'='*72}")
+
+        k_header = "  ".join(f"K={k:<4}" for k in k_values)
+        print(f"  {'heuristic':<18}  {k_header}")
+        print(f"  {'-'*18}  {'  '.join('-'*6 for _ in k_values)}")
+
+        for heuristic in heuristics:
+            cells = []
+            for k in k_values:
+                rows = [r for r in k_tagged
+                        if r["k"] == k and r["budget"] == budget and r["heuristic"] == heuristic]
+                scores = [r["topk_mean"] for r in rows if not np.isnan(r["topk_mean"])]
+                if scores:
+                    mean = float(np.mean(scores))
+                    std = float(np.std(scores, ddof=1)) if len(scores) > 1 else 0.0
+                    cells.append(f"{mean:.3f}±{std:.3f}")
+                else:
+                    cells.append("  —   ")
+            print(f"  {heuristic:<18}  {'  '.join(f'{c:<10}' for c in cells)}")
+
+        # Also show best (peak checkpoint) for completeness
+        print()
+        print(f"  [best checkpoint]")
+        print(f"  {'heuristic':<18}  {k_header}")
+        print(f"  {'-'*18}  {'  '.join('-'*6 for _ in k_values)}")
+        for heuristic in heuristics:
+            cells = []
+            for k in k_values:
+                rows = [r for r in k_tagged
+                        if r["k"] == k and r["budget"] == budget and r["heuristic"] == heuristic]
+                scores = [r["best"] for r in rows if not np.isnan(r["best"])]
+                if scores:
+                    mean = float(np.mean(scores))
+                    std = float(np.std(scores, ddof=1)) if len(scores) > 1 else 0.0
+                    cells.append(f"{mean:.3f}±{std:.3f}")
+                else:
+                    cells.append("  —   ")
+            print(f"  {heuristic:<18}  {'  '.join(f'{c:<10}' for c in cells)}")
+
+
 def print_per_arm_table(run_dir_name: str, all_results: list[dict]) -> None:
     run_results = sorted(
         [r for r in all_results if r["run_dir"] == run_dir_name],
@@ -350,6 +420,11 @@ def main() -> None:
     )
     parser.add_argument("--per-arm", action="store_true", help="Print per-arm detail table")
     parser.add_argument("--gen-stats", action="store_true", help="Print generation stats tables")
+    parser.add_argument(
+        "--k-sweep",
+        action="store_true",
+        help="Print K-robustness comparison table (run dirs must end in _k{N})",
+    )
     args = parser.parse_args()
 
     run_dirs = args.run_dirs or DEFAULT_RUN_DIRS
@@ -367,13 +442,16 @@ def main() -> None:
         print("No results found.")
         return
 
-    run_dir_names = list(dict.fromkeys(r["run_dir"] for r in all_results))
-    for name in run_dir_names:
-        if args.per_arm:
-            print_per_arm_table(name, all_results)
-        print_eval_table(name, all_results)
-        if args.gen_stats:
-            print_gen_table(name, all_results)
+    if args.k_sweep:
+        print_k_sweep_table(all_results)
+    else:
+        run_dir_names = list(dict.fromkeys(r["run_dir"] for r in all_results))
+        for name in run_dir_names:
+            if args.per_arm:
+                print_per_arm_table(name, all_results)
+            print_eval_table(name, all_results)
+            if args.gen_stats:
+                print_gen_table(name, all_results)
 
 
 if __name__ == "__main__":

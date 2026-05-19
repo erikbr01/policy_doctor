@@ -263,7 +263,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
     Dispatch model:
       1. Load seed trajectory (h5py only, runs in policy_doctor env).
       2. Materialize to ``step_dir/seed_demo.hdf5`` (h5py only).
-      3. Run ``conda run -n mimicgen python scripts/run_mimicgen_generate.py``
+      3. Run ``conda run -n mimicgen_torch2 python scripts/run_mimicgen_generate.py``
          which calls ``prepare_src_dataset`` and ``generate_dataset`` in the
          correct MuJoCo / robosuite environment.
       4. Load EEF trajectories from the generated HDF5 (h5py only).
@@ -497,7 +497,34 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             or _MIMICGEN_CONDA_ENV_DEFAULT
         )
 
-        def _build_cmd(s_hdf5: pathlib.Path, out_dir: pathlib.Path, n_trials: int) -> list:
+        # --- Read per-seed IC/subtask constraints from SelectMimicgenSeedStep result ---
+        # These are populated by failure analysis (AnalyzeFailureStatesStep).  When
+        # present, each sub-job gets its own object_pose_ranges and/or subtask_constraints
+        # instead of the globally-configured ones.
+        per_seed_opr: list | None = None
+        per_seed_sc: list | None = None
+        per_seed_cw: list | None = None     # path_based chained-warp constraints
+        per_seed_ic_ctr: list | None = None  # IC cluster center poses (nut only)
+        new_select_result_for_constraints: dict | None = None
+        from policy_doctor.curation_pipeline.steps.select_mimicgen_seed import SelectMimicgenSeedStep
+        _sel_step = SelectMimicgenSeedStep(self.cfg, self.run_dir)
+        if _sel_step.is_done():
+            _sel_result = _sel_step.load()
+            per_seed_opr = _sel_result.get("per_seed_object_pose_ranges")
+            per_seed_sc = _sel_result.get("per_seed_subtask_constraints")
+            per_seed_cw = _sel_result.get("per_seed_chained_warp_constraints")
+            per_seed_ic_ctr = _sel_result.get("per_seed_ic_center_poses")
+            new_select_result_for_constraints = _sel_result
+
+        # Read global subtask_constraints from config (overrides per-seed when set globally).
+        subtask_constraints_global = OmegaConf.select(cfg_mg, "subtask_constraints")
+
+        def _build_cmd(
+            s_hdf5: pathlib.Path,
+            out_dir: pathlib.Path,
+            n_trials: int,
+            seed_idx: int | None = None,
+        ) -> list:
             cmd = [
                 "conda", "run", "-n", mimicgen_env, "--no-capture-output",
                 "python", str(_GENERATE_SCRIPT),
@@ -519,17 +546,72 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             if transform_first:
                 cmd.append("--transform_first_robot_pose")
             if fix_initial_object_poses and seed_object_poses:
-                cmd += ["--seed_object_poses", json.dumps(seed_object_poses)]
-                if object_pose_ranges is not None:
-                    ranges_plain = OmegaConf.to_container(object_pose_ranges, resolve=True)
+                # When per-seed IC cluster centers are available, use the cluster
+                # center as the nut anchor so the ±slack range targets the failure
+                # cluster center.  The peg is merged from the global seed_object_poses
+                # so it stays pinned (avoiding RandomizationError in Square_D1 where
+                # the peg is also randomized and could land in the nut's IC zone).
+                effective_seed_poses = seed_object_poses
+                if per_seed_ic_ctr is not None and seed_idx is not None:
+                    ic_ctr = per_seed_ic_ctr[seed_idx] if seed_idx < len(per_seed_ic_ctr) else None
+                    if ic_ctr is not None:
+                        # Use only the nut IC center — do NOT pin the peg.
+                        # Pinning the peg at the seed HDF5's demo_0 position can cause
+                        # RandomizationError when the peg ends up inside the nut's IC range
+                        # (e.g. IC cluster 1 nut y≈-0.111 with peg pinned at y=-0.082).
+                        # With a free peg, _reset_internal's 5000-retry loop reliably
+                        # finds non-overlapping placements (~60% hit rate per retry).
+                        effective_seed_poses = dict(ic_ctr)  # {"nut": {x, y}}
+                cmd += ["--seed_object_poses", json.dumps(effective_seed_poses)]
+                # Prefer per-seed range (from failure analysis) if available for this seed.
+                effective_opr = object_pose_ranges
+                if per_seed_opr is not None and seed_idx is not None:
+                    opr_for_seed = per_seed_opr[seed_idx] if seed_idx < len(per_seed_opr) else None
+                    if opr_for_seed is not None:
+                        effective_opr = opr_for_seed
+                if effective_opr is not None:
+                    ranges_plain = (
+                        OmegaConf.to_container(effective_opr, resolve=True)
+                        if hasattr(effective_opr, "_metadata")
+                        else effective_opr
+                    )
                     cmd += ["--object_pose_ranges", json.dumps(ranges_plain)]
+            # Constraint priority: per-seed chained_warp > per-seed legacy
+            # subtask_constraints > global subtask_constraints > nothing.
+            # chained_warp and legacy subtask_constraints are mutually exclusive
+            # in run_mimicgen_generate.py — chained_warp wins when set.
+            effective_cw = None
+            if per_seed_cw is not None and seed_idx is not None:
+                cw_for_seed = per_seed_cw[seed_idx] if seed_idx < len(per_seed_cw) else None
+                if cw_for_seed is not None:
+                    effective_cw = cw_for_seed
+
+            if effective_cw is not None:
+                cw_plain = (
+                    OmegaConf.to_container(effective_cw, resolve=True)
+                    if hasattr(effective_cw, "_metadata")
+                    else effective_cw
+                )
+                cmd += ["--chained_warp_constraint", json.dumps(cw_plain)]
+            else:
+                effective_sc = None
+                if subtask_constraints_global is not None:
+                    effective_sc = OmegaConf.to_container(subtask_constraints_global, resolve=True)
+                if per_seed_sc is not None and seed_idx is not None:
+                    sc_for_seed = per_seed_sc[seed_idx] if seed_idx < len(per_seed_sc) else None
+                    if sc_for_seed is not None:
+                        effective_sc = sc_for_seed
+                if effective_sc:
+                    cmd += ["--subtask_constraints", json.dumps(effective_sc)]
             return cmd
 
         print(f"    action_noise={action_noise}  offset=({offset_lo},{offset_hi})  nn_k={nn_k}")
         print(f"    interp_from_last={interp_from_last}  transform_first={transform_first}")
         print(f"    num_interp={num_interp_steps}  num_fixed={num_fixed_steps}")
         print(f"    fix_initial_object_poses={fix_initial_object_poses}  "
-              f"object_pose_ranges={object_pose_ranges}")
+              f"object_pose_ranges={object_pose_ranges}  "
+              f"per_seed_constraints={'yes' if per_seed_opr else 'no'}  "
+              f"subtask_constraints_global={subtask_constraints_global}")
 
         # --- Count seeds in seed HDF5 ---
         import h5py as _h5py
@@ -607,7 +689,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                         f"seed {seed_i + 1}/{n_seeds_in_hdf5} pass {pass_num} ..."
                     )
                     res = subprocess.run(
-                        _build_cmd(seed_i_hdf5, pass_out_dir, trials_per_seed)
+                        _build_cmd(seed_i_hdf5, pass_out_dir, trials_per_seed, seed_idx=seed_i)
                     )
                     if res.returncode != 0:
                         # Count only actual attempts, not the requested budget, so that
@@ -706,7 +788,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         else:
             # Single-run path (no success_budget, or only one seed)
             print(f"  [generate_mimicgen_demos] running generation (single run, {num_trials} trials) ...")
-            result = subprocess.run(_build_cmd(seed_hdf5, gen_output_dir, num_trials))
+            result = subprocess.run(_build_cmd(seed_hdf5, gen_output_dir, num_trials, seed_idx=0))
             if result.returncode != 0:
                 raise RuntimeError(
                     f"[generate_mimicgen_demos] mimicgen subprocess failed "

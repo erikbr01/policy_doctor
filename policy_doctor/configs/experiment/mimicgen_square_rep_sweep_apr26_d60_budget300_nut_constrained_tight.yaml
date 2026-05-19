@@ -78,7 +78,7 @@ mimicgen_datagen:
 mimicgen_budget_sweep:
   heuristics: [random, behavior_graph, diversity]
   budgets: [300]
-  devices: [cuda:0, cuda:0]
+  devices: [cuda:0, cuda:0, cuda:0]
 
 # ---------------------------------------------------------------------------
 # Rep-2/3: replicate sweep (fixed upstream, varying draw seed)
@@ -87,6 +87,6 @@ mimicgen_budget_rep_sweep:
   heuristics: [random, behavior_graph, diversity]
   budgets: [300]
   rep_seeds: [1, 2]
-  devices: [cuda:0, cuda:0]
+  devices: [cuda:0, cuda:0, cuda:0]
 
 steps: [mimicgen_budget_sweep, mimicgen_budget_rep_sweep]

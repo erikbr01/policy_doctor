@@ -54,7 +54,7 @@ conda activate policy_doctor && python scripts/plot_mimicgen_eef_from_result.py 
 python -m policy_doctor.scripts.run_pipeline steps=[train_attribution] \
   attribution.tf32=false attribution.compile=false train_date=jan18 eval_date=jan28
 
-# Runtime monitoring — classify policy behavior per-timestep (cupid_torch2 env)
+# Runtime monitoring — classify policy behavior per-timestep (policy_doctor env)
 # Run from third_party/cupid/ (diffusion_policy must be on PYTHONPATH)
 python ../../scripts/monitor_online.py \
   --output_dir /tmp/out --train_dir <dir> --train_ckpt best \
@@ -74,16 +74,15 @@ conda activate policy_doctor && streamlit run policy_doctor/streamlit_app/app.py
 
 ### Conda environment split
 
-The codebase is split across four conda environments because `cupid` requires PyTorch 1.12 + old robosuite/robomimic pinned for MuJoCo compatibility:
+The codebase uses two torch-2 conda environments. The legacy `cupid` / `cupid_torch2` / `mimicgen` envs (PyTorch 1.12, MuJoCo 2.3) have been retired.
 
 | Env | Use for |
 |-----|---------|
-| `policy_doctor` | Analysis, clustering, pipeline orchestration, Streamlit, most unit tests |
-| `cupid` | Training, eval rollouts, TRAK attribution — anything that imports `diffusion_policy` |
-| `cupid_torch2` | InfEmbed attribution, runtime monitoring scripts (requires `torch.func` — absent in `cupid`'s torch 1.12); also `--compile` / `torch.compile` |
-| `cupid_torch25` | **torch 2.5.1+cu124** upgrade of `cupid_torch2`; fixes the torch 2.4.x TensorAlias AOT-autograd bug so `obs_encoder` can be compiled — full `torch.compile` gives **1.19× fwd+bwd** vs eager on the droid image policy. See `scripts/create_cupid_torch25.sh` to recreate. |
-| `mimicgen` | Legacy MimicGen env (Py 3.8, MuJoCo 2.3.2, cpu-only torch 1.12) — superseded by `mimicgen_torch2` |
-| `mimicgen_torch2` | **Primary training/eval/MimicGen env**: clone of `cupid_torch2` with robosuite 1.4.1 + robomimic 0.3.0 + mimicgen (all compatible, correct `is_success()`) |
+| `policy_doctor` | Analysis, clustering, pipeline orchestration, Streamlit, InfEmbed attribution, runtime monitoring, TRAK featurization. The default analysis env — anything that doesn't touch the simulator. |
+| `mimicgen_torch2` | **Primary training/eval/sim env**: clone of `policy_doctor` + robosuite 1.4.1 + robomimic 0.3.0 + mimicgen 1.0.0. Use for `train.py`, `eval_save_episodes.py`, and all MimicGen generation. |
+| `cupid_torch25` | **torch 2.5.1+cu124** upgrade; fixes the torch 2.4.x TensorAlias AOT-autograd bug so `obs_encoder` can be compiled — full `torch.compile` gives **1.19× fwd+bwd** vs eager. See `scripts/create_cupid_torch25.sh`. |
+
+Bootstrap with `./scripts/setup_torch2_envs.sh` (creates `policy_doctor` from `environment_policy_doctor.yaml`, clones to `mimicgen_torch2`, adds sim deps).
 
 ### Three-package layout
 
@@ -200,11 +199,11 @@ Strict separation (enforced in `third_party/cupid/CLAUDE.md` and followed throug
 
 Assigns each policy timestep to a behavior graph node in real time. Full documentation in `docs/monitoring.md`.
 
-Component layers: `InfEmbedStreamScorer` → `FittedModelAssigner` / `NearestCentroidAssigner` → `StreamMonitor` → `TrajectoryClassifier` → `MonitoredPolicy`. The scorer requires `cupid_torch2`; the assigner and graph are pure numpy and run in `policy_doctor`.
+Component layers: `InfEmbedStreamScorer` → `FittedModelAssigner` / `NearestCentroidAssigner` → `StreamMonitor` → `TrajectoryClassifier` → `MonitoredPolicy`. The scorer, assigner and graph all run in `policy_doctor`.
 
 `FittedModelAssigner` requires `clustering_models.pkl` in the clustering directory (saved by `run_clustering` step). If absent, `NearestCentroidAssigner` is used as a fallback (nearest centroid in raw embedding space). When clustering level is `"rollout"` (the default), pass `--episodes_dir` to both online/offline scripts so window-mean embeddings can be computed from `metadata.yaml`.
 
-`infembed` is installed as a package in `cupid_torch2` via `pip install -e third_party/cupid/third_party/infembed`.
+`infembed` is installed as a package in `policy_doctor` via `pip install -e third_party/cupid/third_party/infembed`.
 
 ### Hydra config layout
 

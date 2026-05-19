@@ -62,11 +62,17 @@ ALL_STEPS: List[str] = [
     "mimicgen_budget_sweep",
     # Rep-2/3 arms for budget sweep (fixed upstream, varying draw — controlled heuristic comparison):
     "mimicgen_budget_rep_sweep",
+    # Failure-targeting arm (graph-guided IC + intermediate state constraints):
+    "mimicgen_failure_targeting",
+    # Ablation: failure-state IC targeting only (no intermediate chained-warp constraint):
+    "mimicgen_failure_ic_only",
     # Flat steps (standalone / legacy runs):
     "select_mimicgen_seed_from_graph",
     "select_mimicgen_seed",
     "generate_mimicgen_demos",
     "train_on_combined_data",
+    # Standalone failure analysis:
+    "analyze_failure_states",
 ]
 
 
@@ -119,6 +125,11 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         MimicgenBehaviorGraph20Rep3ArmStep,
         MimicgenDiversity20Rep2ArmStep,
         MimicgenDiversity20Rep3ArmStep,
+        MimicgenFailureTargetingArmStep,
+        MimicgenFailureICOnlyArmStep,
+    )
+    from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
+        AnalyzeFailureStatesStep,
     )
     from policy_doctor.curation_pipeline.steps.eval_baseline import EvalBaselineStep
     from policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep import (
@@ -170,6 +181,9 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "select_mimicgen_seed": SelectMimicgenSeedStep,
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,
         "train_on_combined_data": TrainOnCombinedDataStep,
+        "mimicgen_failure_targeting": MimicgenFailureTargetingArmStep,
+        "mimicgen_failure_ic_only": MimicgenFailureICOnlyArmStep,
+        "analyze_failure_states": AnalyzeFailureStatesStep,
     }
     return registry
 

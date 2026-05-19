@@ -1,7 +1,7 @@
 """Quick test script: generate MimicGen demos from source/square.hdf5 and plot EEF trajectories.
 
-Run in the mimicgen conda env:
-    conda run -n mimicgen python scripts/test_mimicgen_eef_plots.py
+Run in the mimicgen_torch2 conda env:
+    conda run -n mimicgen_torch2 python scripts/test_mimicgen_eef_plots.py
 
 Produces:
     /tmp/mimicgen_eef_test/eef_3d.html

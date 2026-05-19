@@ -1,0 +1,130 @@
+# @package _global_
+# MimicGen failure-targeting experiment — Square D1, May 10 2026.
+#
+# Three-condition experiment:
+#   1. Baseline: random seed selection (mimicgen_random)
+#   2. Failure targeting: NearFailurePathHeuristic + per-cluster IC constraints
+#      derived from behavior graph failure analysis (mimicgen_failure_targeting)
+#
+# The failure_targeting arm uses AnalyzeFailureStatesStep to:
+#   - Identify pre-failure graph nodes (transitions into low-value nodes)
+#   - Cluster initial states of failed episodes AND intermediate states at
+#     those pre-failure nodes
+#   - Allocate seeds per cluster, each constrained to its cluster center
+#   - Optionally reject trials that miss a subtask pose constraint
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_failure_targeting_may10
+#
+# To run only the new arm against an existing run_clustering result:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_square \
+#     experiment=mimicgen_square_failure_targeting_may10 \
+#     run_dir=<existing_run_dir> \
+#     steps=[mimicgen_failure_targeting]
+
+task_config: square_mh_apr23_mimicgen_pipeline
+experiment_name: mimicgen_square_failure_targeting_may10
+seeds: [0]
+reference_seed: 0
+
+train_date: apr23_mimicgen_pipeline_v2
+device: cuda:0
+project: mimicgen_square
+wandb_tags: [square, mimicgen, failure_targeting, may10]
+
+baseline:
+  max_train_episodes: 60
+
+evaluation:
+  train_date: apr23_mimicgen_pipeline_v2
+  eval_date: apr23_mimicgen_pipeline_v2
+  overwrite: true
+  num_episodes: 500
+
+attribution:
+  train_date: apr23_mimicgen_pipeline_v2
+  eval_date: apr23_mimicgen_pipeline_v2
+  dataset_path: data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5
+
+clustering_influence_source: infembed
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# ---------------------------------------------------------------------------
+# MimicGen generation — shared baseline params
+# ---------------------------------------------------------------------------
+mimicgen_datagen:
+  success_budget: 200
+  num_seeds: 20              # more seeds since we allocate budget_per_cluster × n_clusters
+  original_dataset_path: data/mimicgen/square_d1_60.hdf5
+  output_dir: data/outputs/mimicgen_datagen
+  task_name: square
+  env_interface_name: MG_Square
+  env_interface_type: robosuite
+  policy_seed: 0
+  success_only: true
+  top_k_paths: 30
+  min_path_probability: 0.0
+
+  # Square D1 generation params
+  action_noise: 0.05
+  subtask_term_offset_range: [10, 20]
+  nn_k: 3
+  interpolate_from_last_target_pose: true
+  transform_first_robot_pose: false
+  num_interpolation_steps: 5
+  num_fixed_steps: 0
+
+  # IC constraints — enabled by failure_targeting arm via cfg_overrides.
+  # object_pose_ranges is set per-seed automatically from cluster centers.
+  # Set manually here only to override the cluster-derived values.
+  fix_initial_object_poses: false   # overridden to true by failure_targeting arm
+  object_pose_ranges: null
+
+  # Global subtask constraints (null = disabled).
+  # Set to target a specific subtask boundary across ALL seeds in an arm.
+  # Per-seed constraints derived from failure analysis take precedence.
+  subtask_constraints: null
+
+  # ---------------------------------------------------------------------------
+  # Failure analysis config (used by MimicgenFailureTargetingArmStep only)
+  # ---------------------------------------------------------------------------
+  failure_analysis:
+    enabled: false              # overridden to true by failure_targeting arm
+
+    # Graph analysis
+    value_threshold: 0.0        # nodes with V < 0 are failure-prone
+    min_transition_prob: 0.05   # ignore rare edges
+
+    # State clustering
+    n_clusters: 5               # number of target-state clusters
+    budget_per_cluster: 4       # seeds per cluster (total = n_clusters × budget)
+    targeting_mode: both        # initial_state | intermediate_state | both
+    cluster_target_mode: centroid  # centroid | sample
+
+    # State representation — Square task defaults (nut x/y/quat in qpos)
+    # Override for other tasks by specifying state_schema explicitly.
+    state_schema: null          # null → use DEFAULT_SQUARE_STATE_SCHEMA
+
+    # IC constraint slack (applied around cluster center)
+    slack_x: 0.03               # ±30 mm in world-frame x
+    slack_y: 0.03               # ±30 mm in world-frame y
+    slack_z_rot: 0.5            # ±0.5 rad (≈ ±29°) in z rotation
+
+    # Subtask constraint (null = disabled)
+    subtask_constraint_idx: null    # integer subtask index, e.g. 0
+    subtask_constraint_slack: 1.5  # multiplier on IC slack for subtask check
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+steps: [run_clustering, mimicgen_random, mimicgen_failure_targeting, eval_baseline]

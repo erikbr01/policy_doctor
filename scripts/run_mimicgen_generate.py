@@ -3,7 +3,7 @@
 This script is called by :class:`~policy_doctor.curation_pipeline.steps
 .generate_mimicgen_demos.GenerateMimicgenDemosStep` via::
 
-    conda run -n mimicgen python scripts/run_mimicgen_generate.py \\
+    conda run -n mimicgen_torch2 python scripts/run_mimicgen_generate.py \\
         --seed_hdf5   /path/to/seed_demo.hdf5 \\
         --output_dir  /path/to/generation_output \\
         --task_name   square \\
@@ -73,6 +73,21 @@ def _apply_robomimic_base_env_shim() -> None:
     except Exception:
         pass
 
+    # 3. EnvRobosuite.rollout_exceptions: robomimic 0.3.0 references
+    #    `mujoco_py.builder.MujocoException`, but mimicgen_torch2 has
+    #    `free-mujoco-py==2.1.6` which doesn't expose `.builder`. Returning
+    #    an empty tuple disables that one rollout-recoverable-exception
+    #    branch in generate_dataset(); errors then surface normally.
+    try:
+        import mujoco_py
+        if not hasattr(mujoco_py, "builder") or not hasattr(
+            getattr(mujoco_py, "builder", object()), "MujocoException"
+        ):
+            er.EnvRobosuite.rollout_exceptions = property(lambda self: ())  # type: ignore[attr-defined]
+    except ImportError:
+        # No mujoco_py at all — same fix.
+        er.EnvRobosuite.rollout_exceptions = property(lambda self: ())  # type: ignore[attr-defined]
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
@@ -113,8 +128,32 @@ def main(argv: list[str] | None = None) -> None:
                              'z_rot: [lo,hi]|null}}. null per-axis = leave that axis with '
                              'its original env random range. null overall object entry = '
                              'pin all axes exactly ([0,0] offsets).')
+    parser.add_argument("--subtask_constraints", type=str, default=None,
+                        help='JSON dict of per-subtask object-pose constraints. '
+                             'Schema: {"<subtask_idx>": {object_name: {x:[lo,hi], y:[lo,hi], '
+                             'z_rot:[lo,hi]}}}. After subtask <subtask_idx> executes, any '
+                             'trial whose object pose falls outside the constraint is aborted '
+                             '(rejected). Uses same world→relative coordinate conversion as '
+                             '--object_pose_ranges. Disabled when null (default).')
+
+    # --- Phase-2 chained-warp constraint ---------------------------------
+    # When set, swaps in policy_doctor's ChainedWarpDataGenerator: the trial
+    # is *early-aborted* the moment subtask <subtask_idx> ends outside the
+    # slack box. Later subtasks then warp naturally around the achieved
+    # (within-slack) end pose — that's the chained-warp behaviour.
+    parser.add_argument("--chained_warp_constraint", type=str, default=None,
+                        help='JSON dict for the new constraint-aware generator. '
+                             'Schema: {"subtask_idx": int, '
+                             '         "target_pose": {obj: {x, y, z_rot}}, '
+                             '         "slack":       {obj: {x, y, z_rot}}}. '
+                             'Mutually exclusive with --subtask_constraints. '
+                             'When set, slack values are world-absolute (NOT relative to seed).')
 
     args = parser.parse_args(argv)
+    if args.chained_warp_constraint and args.subtask_constraints:
+        parser.error(
+            "--chained_warp_constraint and --subtask_constraints are mutually exclusive"
+        )
 
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
@@ -193,6 +232,8 @@ def main(argv: list[str] | None = None) -> None:
                 _orig=_orig_bounds,
             ):
                 bounds = _orig(self)
+                # --- Step 1: apply IC constraint to the nut ---
+                nut_world_y_lo = nut_world_y_hi = None
                 for bounds_key in bounds:
                     # Match bounds_key to a seed object: exact match or substring
                     matched_seed = next(
@@ -232,6 +273,41 @@ def main(argv: list[str] | None = None) -> None:
                         else:
                             seed_rel = matched_seed[axis]
                         bounds[bounds_key][axis] = (seed_rel + lo_offset, seed_rel + hi_offset)
+                        # Track world-frame nut y range for peg exclusion below.
+                        if axis == "y" and "nut" in bounds_key.lower():
+                            ref_val_y = float(bounds[bounds_key]["reference"][1])
+                            nut_world_y_lo = bounds[bounds_key]["y"][0] + ref_val_y
+                            nut_world_y_hi = bounds[bounds_key]["y"][1] + ref_val_y
+
+                # --- Step 2: keep peg away from the nut IC zone ---
+                # In Square_D1 the peg is randomised ONCE at _load_model time via
+                # _get_initial_placement_bounds(). If the peg lands inside the nut IC
+                # range, _reset_internal's collision check rejects every nut sample and
+                # raises RandomizationError after 5000 retries. We prevent this by
+                # restricting the peg y to the "safe" half of its original range.
+                # Clearance buffer beyond nut IC range boundary.
+                # Must exceed peg_radius + nut_radius ≈ 0.023 + 0.11 = 0.133m in Square.
+                _peg_buf = 0.15
+                for bounds_key in bounds:
+                    if "peg" not in bounds_key.lower():
+                        continue
+                    if nut_world_y_lo is None:
+                        continue
+                    peg_ref_y = float(bounds[bounds_key]["reference"][1])
+                    peg_y_orig = bounds[bounds_key].get("y", (-0.2, 0.2))
+                    excl_lo = nut_world_y_lo - peg_ref_y - _peg_buf
+                    excl_hi = nut_world_y_hi - peg_ref_y + _peg_buf
+                    # Pick the wider safe half of peg y that avoids [excl_lo, excl_hi].
+                    safe_neg = (peg_y_orig[0], min(excl_lo, peg_y_orig[1]))
+                    safe_pos = (max(excl_hi, peg_y_orig[0]), peg_y_orig[1])
+                    width_neg = max(0.0, safe_neg[1] - safe_neg[0])
+                    width_pos = max(0.0, safe_pos[1] - safe_pos[0])
+                    if width_neg >= width_pos and width_neg > 0:
+                        bounds[bounds_key]["y"] = safe_neg
+                    elif width_pos > 0:
+                        bounds[bounds_key]["y"] = safe_pos
+                    # else: can't avoid — leave peg bounds unchanged (last resort)
+
                 return bounds
 
             env_cls._get_initial_placement_bounds = _constrained_bounds
@@ -303,6 +379,205 @@ def main(argv: list[str] | None = None) -> None:
         num_fixed_steps=args.num_fixed_steps,
         apply_noise_during_interpolation=False,
     )
+
+    # --- Optional: subtask pose constraints (reject trials that miss the target) ---
+    if args.subtask_constraints:
+        import json as _json2
+        from mimicgen.datagen.data_generator import DataGenerator
+
+        subtask_constraints: dict[str, dict] = _json2.loads(args.subtask_constraints)
+
+        # Build a helper that checks whether current object poses satisfy the constraint.
+        # Re-uses the same world→relative coordinate transform as the IC constraint above.
+        def _poses_satisfy_constraint(
+            cur_poses: dict,
+            constraint: dict,
+            env_cls,
+            seed_poses_for_sc: dict,
+        ) -> bool:
+            """Return True if all constrained objects are within the allowed range."""
+            try:
+                bounds = env_cls._get_initial_placement_bounds(None)  # type: ignore
+            except Exception:
+                return True  # Can't check — don't reject
+            for obj_name, axes in constraint.items():
+                matched_cur = next(
+                    (v for k, v in cur_poses.items()
+                     if k == obj_name or k in obj_name or obj_name in k),
+                    None,
+                )
+                if matched_cur is None:
+                    continue
+                bounds_key = next(
+                    (bk for bk in bounds
+                     if bk == obj_name or bk in obj_name or obj_name in bk),
+                    None,
+                )
+                if bounds_key is None:
+                    continue
+                seed_for_obj = next(
+                    (s for sk, s in seed_poses_for_sc.items()
+                     if sk == obj_name or sk in obj_name or obj_name in sk),
+                    None,
+                ) or {}
+
+                for axis, allowed_range in axes.items():
+                    if allowed_range is None:
+                        continue
+                    if axis not in ("x", "y", "z_rot"):
+                        continue
+                    if axis in ("x", "y"):
+                        ref_idx = 0 if axis == "x" else 1
+                        ref_val = float(bounds[bounds_key]["reference"][ref_idx])
+                        cur_rel = matched_cur.get(axis, 0.0) - ref_val
+                        seed_rel = seed_for_obj.get(axis, 0.0) - ref_val
+                    else:
+                        cur_rel = matched_cur.get(axis, 0.0)
+                        seed_rel = seed_for_obj.get(axis, 0.0)
+                    lo = seed_rel + allowed_range[0]
+                    hi = seed_rel + allowed_range[1]
+                    if not (lo <= cur_rel <= hi):
+                        return False
+            return True
+
+        # Resolve env class (same logic as IC constraint above).
+        import h5py as _h5py2
+        with _h5py2.File(str(seed_hdf5), "r") as _f2:
+            _env_meta2 = _json2.loads(_f2["data"].attrs["env_args"])
+        _env_name2 = _env_meta2.get("env_name", "")
+        import robosuite.environments as _renv2
+        _env_cls2 = _renv2.REGISTERED_ENVS.get(_env_name2)
+
+        # Seed poses to use as reference for constraint offsets: from IC constraint
+        # block above when available, otherwise read fresh.
+        if args.seed_object_poses:
+            _sc_seed_poses = _json2.loads(args.seed_object_poses)
+        else:
+            _sc_seed_poses = {}
+
+        if _env_cls2 is not None and subtask_constraints:
+            _orig_dg_generate = DataGenerator.generate
+
+            def _constrained_generate(self, env, env_interface, **kw):  # type: ignore[misc]
+                """Wrap DataGenerator.generate to reject trials missing subtask constraints."""
+                # Build an instrumented version: after each subtask executes, check.
+                # We achieve this by counting subtask iterations with a mutable counter.
+                subtask_counter = [0]
+                _orig_exec = env_interface.__class__.get_datagen_info
+
+                # We can't easily hook into the subtask loop from outside the method,
+                # so we temporarily patch get_datagen_info to intercept calls made
+                # from data_generator.py line 267 (cur_datagen_info = ...) which
+                # happens BEFORE each subtask.  We check the PREVIOUS subtask's
+                # constraint on the NEXT call (i.e., after execution completes).
+                check_results = [True]  # [constraint_satisfied]
+                prev_poses: dict = {}
+
+                _orig_gdi = env_interface.__class__.get_datagen_info
+
+                def _patched_gdi(iface):
+                    info = _orig_gdi(iface)
+                    si = subtask_counter[0]
+                    # On subtask si > 0, check the constraint for subtask si-1
+                    # (which just finished).
+                    if si > 0 and check_results[0]:
+                        constraint_key = str(si - 1)
+                        if constraint_key in subtask_constraints:
+                            ok = _poses_satisfy_constraint(
+                                prev_poses,
+                                subtask_constraints[constraint_key],
+                                _env_cls2,
+                                _sc_seed_poses,
+                            )
+                            if not ok:
+                                check_results[0] = False
+                    # Record current poses for the next check.
+                    prev_poses.clear()
+                    prev_poses.update({k: {"x": v[0], "y": v[1], "z_rot": v[2]}
+                                       for k, v in (
+                                           info.object_poses.items()
+                                           if hasattr(info.object_poses, "items")
+                                           else {}
+                                       )})
+                    subtask_counter[0] += 1
+                    return info
+
+                env_interface.__class__.get_datagen_info = _patched_gdi
+                try:
+                    result = _orig_dg_generate(self, env, env_interface, **kw)
+                finally:
+                    env_interface.__class__.get_datagen_info = _orig_gdi
+
+                # If constraint was violated, mark the trial as failed.
+                if not check_results[0]:
+                    return {
+                        "initial_state": result.get("initial_state"),
+                        "states": [],
+                        "observations": [],
+                        "datagen_infos": [],
+                        "actions": [],
+                        "success": False,
+                        "src_demo_inds": [],
+                        "src_demo_labels": [],
+                    }
+                return result
+
+            DataGenerator.generate = _constrained_generate  # type: ignore[method-assign]
+            print(
+                f"[run_mimicgen_generate] subtask constraints active: "
+                + "; ".join(
+                    f"after subtask {si}: {list(c.keys())}"
+                    for si, c in subtask_constraints.items()
+                )
+            )
+
+    # --- Optional: install the chained-warp data generator -----------------
+    # Replaces the default mimicgen DataGenerator with a subclass that aborts
+    # the trial early if the constrained subtask's object pose lands outside
+    # the slack box. Outer trial-budget loop in generate_dataset() handles the
+    # retry.
+    if args.chained_warp_constraint:
+        import json as _json3
+        from policy_doctor.mimicgen.chained_warp_generator import (
+            IntermediateConstraint,
+            make_chained_warp_generator_class,
+        )
+        import mimicgen.datagen.data_generator as _dg_mod
+        import mimicgen.scripts.generate_dataset as _gd_mod
+
+        _cw = _json3.loads(args.chained_warp_constraint)
+        constraint = IntermediateConstraint(
+            subtask_idx=int(_cw["subtask_idx"]),
+            target_pose=_cw["target_pose"],
+            slack=_cw["slack"],
+            slack_widen_factor=float(_cw.get("slack_widen_factor", 2.0)),
+            objects=_cw.get("objects"),
+        )
+        _BaseDG = _dg_mod.DataGenerator
+        _ChainedWarpClass = make_chained_warp_generator_class()
+        # Pre-bind the constraint via a thin factory so the rest of MimicGen
+        # can instantiate it just like the base DataGenerator.
+
+        class _BoundCW(_ChainedWarpClass):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, constraint=constraint, **kw)
+
+        # Swap in both spots that import DataGenerator by name.
+        _dg_mod.DataGenerator = _BoundCW  # type: ignore[assignment]
+        if hasattr(_gd_mod, "DataGenerator"):
+            _gd_mod.DataGenerator = _BoundCW  # type: ignore[assignment]
+
+        # Early-aborted trials return states=[] / actions=zeros((0,)). MimicGen's
+        # file_utils.write_demo_to_hdf5 crashes on `states[0]` when states is empty,
+        # so don't persist failed trials — we don't need them either way (they're
+        # just retries on the way to success).
+        cfg.experiment.generation.keep_failed = False
+
+        print(
+            f"[run_mimicgen_generate] chained-warp constraint installed: "
+            f"subtask={constraint.subtask_idx}  "
+            f"objects={list(constraint.target_pose.keys())}"
+        )
 
     print(f"[run_mimicgen_generate] generate_dataset: num_trials={args.num_trials}")
     stats = generate_dataset(cfg, auto_remove_exp=True, render=False, video_path=None)
