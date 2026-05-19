@@ -428,9 +428,7 @@ _success_rate = (_n_success / _n_rollouts) if _n_rollouts else 0.0
 
 _m1, _m2, _m3, _m4 = st.columns(4)
 _m1.metric("Task", _task_display or task)
-_m2.metric("Demos used", _TASK_DEMOS.get(task, "—"),
-           help="Demos in the policy's training set (64% of the 300-demo "
-                "MH dataset; the remaining 36% is held out for attribution).")
+_m2.metric("Demos used", _TASK_DEMOS.get(task, "—"))
 _m3.metric("Rollouts", _n_rollouts)
 _m4.metric("Success rate", f"{_success_rate:.0%}" if _n_rollouts else "—")
 st.divider()
