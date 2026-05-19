@@ -764,3 +764,18 @@ def _show_one_video_panel(
         if new_vp != vp:
             st.session_state[vp_key] = new_vp
             st.rerun()
+
+    c1, c2, c3 = st.columns([1, 4, 1])
+    with c1:
+        if st.button("←", key=f"{key_prefix}_prev", disabled=(vp == 0)):
+            st.session_state[vp_key] = vp - 1
+            st.rerun()
+    c2.markdown(
+        f"<div style='text-align:center;padding-top:4px;color:#888;font-size:0.82em;'>"
+        f"{vp + 1} / {n}</div>",
+        unsafe_allow_html=True,
+    )
+    with c3:
+        if st.button("→", key=f"{key_prefix}_next", disabled=(vp >= n - 1)):
+            st.session_state[vp_key] = vp + 1
+            st.rerun()

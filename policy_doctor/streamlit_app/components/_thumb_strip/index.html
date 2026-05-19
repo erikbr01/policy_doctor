@@ -81,9 +81,10 @@
       strip.appendChild(div);
     });
 
-    // Scroll selected into view
+    // Center selected thumbnail in the strip
     if (selected !== null && strip.children[selected]) {
-      strip.children[selected].scrollIntoView({ inline: "nearest", block: "nearest" });
+      const el = strip.children[selected];
+      strip.scrollLeft = el.offsetLeft - strip.clientWidth / 2 + el.offsetWidth / 2;
     }
 
     setHeight(document.body.scrollHeight);
