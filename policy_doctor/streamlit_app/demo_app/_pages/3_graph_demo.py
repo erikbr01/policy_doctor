@@ -59,38 +59,27 @@ st.caption(
 
 _REPO = _WORKTREE
 _IV_CFG = _REPO / "third_party" / "influence_visualizer" / "configs"
-# Allow falling back to the main repo too (for development outside the bundle)
-_IV_CFG_FALLBACK = Path("/Users/erik/stanford/asl_rotation/policy_doctor/third_party/influence_visualizer/configs")
 
 
 @st.cache_data(show_spinner=False)
 def _list_tasks() -> List[str]:
     tasks: set = set()
-    for root in (_IV_CFG, _IV_CFG_FALLBACK):
-        if root.is_dir():
-            for d in root.iterdir():
-                if (d / "clustering").is_dir() and any((d / "clustering").iterdir()):
-                    tasks.add(d.name)
+    if _IV_CFG.is_dir():
+        for d in _IV_CFG.iterdir():
+            if (d / "clustering").is_dir() and any((d / "clustering").iterdir()):
+                tasks.add(d.name)
     return sorted(tasks)
 
 
 @st.cache_data(show_spinner=False)
 def _clusterings_for_task(task: str) -> List[Path]:
     out: List[Path] = []
-    for root in (_IV_CFG, _IV_CFG_FALLBACK):
-        clu_dir = root / task / "clustering"
-        if clu_dir.is_dir():
-            for d in sorted(clu_dir.iterdir()):
-                if (d / "cluster_labels.npy").exists():
-                    out.append(d)
-    # Dedupe by resolved absolute path
-    seen, unique = set(), []
-    for p in out:
-        key = str(p.resolve())
-        if key not in seen:
-            seen.add(key)
-            unique.append(p)
-    return unique
+    clu_dir = _IV_CFG / task / "clustering"
+    if clu_dir.is_dir():
+        for d in sorted(clu_dir.iterdir()):
+            if (d / "cluster_labels.npy").exists():
+                out.append(d)
+    return out
 
 
 @st.cache_data(show_spinner=False)
@@ -414,15 +403,27 @@ _MP4_INDEX = json.load(open(_MP4_DIR / "index.json")) if _MP4_DIR else {"episode
 # dataset_mask_kwargs.train_ratio=0.64 (uniform_quality=True), so 192
 # demos go into training and 108 are held out for attribution / OOD.
 _TASK_DEMOS = {
-    "transport_mh_jan28": 192,
-    "square_mh_feb5":     192,
-    "lift_mh_jan26":      192,
+    "transport_mh_jan28":   192,
+    "square_mh_feb5":       192,
+    "lift_mh_jan26":        192,
+    # pi0.5-LIBERO tasks — demos come from the full LIBERO benchmark (10 tasks × 50 demos each)
+    "pi05_libero_spatial":  500,
+    "pi05_libero_object":   500,
+    "pi05_libero_goal":     500,
 }
 _task_pretty = task.split("_")
 _task_display = " ".join(w.capitalize() if w not in ("mh",) else w.upper() for w in _task_pretty[:-1])
 _n_rollouts_meta = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
 _n_rollouts = len(_MP4_INDEX.get("episodes", [])) or _n_rollouts_meta
 _n_success = sum(1 for ep in _MP4_INDEX.get("episodes", []) if ep.get("success") is True)
+if _n_rollouts and not _n_success:
+    # Fall back to success info embedded in clustering metadata (works for all tasks,
+    # including pi05 which doesn't have an MP4 index).
+    _succ_rollouts = {m.get("rollout_idx") for m in meta if m.get("success") is True}
+    _all_rollouts  = {m.get("rollout_idx") for m in meta if m.get("rollout_idx") is not None}
+    _n_success = len(_succ_rollouts)
+    if _n_rollouts == 0:
+        _n_rollouts = len(_all_rollouts)
 _success_rate = (_n_success / _n_rollouts) if _n_rollouts else 0.0
 
 _m1, _m2, _m3, _m4 = st.columns(4)
