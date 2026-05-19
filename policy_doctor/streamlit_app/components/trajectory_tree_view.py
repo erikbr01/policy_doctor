@@ -759,11 +759,14 @@ def _show_one_video_panel(
         selected=vp,
         key=f"{key_prefix}_thumb_strip",
     )
-    if clicked is not None:
-        new_vp = int(clicked[0])
-        if new_vp != vp:
-            st.session_state[vp_key] = new_vp
-            st.rerun()
+    _seq_key = f"{key_prefix}_thumb_seq"
+    if isinstance(clicked, list) and len(clicked) == 2:
+        new_vp, seq = int(clicked[0]), int(clicked[1])
+        if seq != st.session_state.get(_seq_key):
+            st.session_state[_seq_key] = seq
+            if new_vp != vp:
+                st.session_state[vp_key] = new_vp
+                st.rerun()
 
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
