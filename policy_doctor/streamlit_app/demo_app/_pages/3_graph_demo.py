@@ -122,6 +122,12 @@ light_mode = st.sidebar.toggle(
     value=st.session_state.get("light_mode", False),
     key="light_mode",
 )
+colorblind_mode = st.sidebar.toggle(
+    "Colorblind-friendly",
+    value=st.session_state.get("colorblind_mode", False),
+    key="colorblind_mode",
+    help="Swaps red–green bins for a blue–orange diverging palette (Okabe–Ito).",
+)
 if light_mode:
     # Streamlit's runtime theme is set in config.toml; we override the
     # surfaces that need to look right on white. The palette is
@@ -499,11 +505,6 @@ max_depth = 500
 # Hidden by default — these knobs tune the encoding (width ↔ probability,
 # radius ↔ visit count) and let users export the graph as paper-ready SVG.
 with st.expander("Advanced viz settings", expanded=False):
-    colorblind_mode = st.checkbox(
-        "Colorblind-friendly palette",
-        value=False,
-        help="Swaps red–green bins for a blue–orange diverging palette (Okabe–Ito).",
-    )
     _c_style, _c_w, _c_r = st.columns(3)
     with _c_style:
         edge_style = st.radio(
@@ -552,8 +553,6 @@ with st.expander("Advanced viz settings", expanded=False):
         disabled=not _captured,
         help="Saves the current graph state (no background) as behavior_graph.svg.",
     )
-
-st.session_state["colorblind_mode"] = colorblind_mode
 
 # Build the underlying Markov graph (used for value computation + Markov views).
 @st.cache_data(show_spinner=False)
