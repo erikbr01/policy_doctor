@@ -634,7 +634,10 @@ def _render_edge_panel_narrow(
     key_prefix: str,
     fps: int,
 ) -> None:
-    from policy_doctor.streamlit_app.user_study.graph_explorer import _episodes_for_edge
+    from policy_doctor.streamlit_app.user_study.graph_explorer import (
+        _episodes_for_edge,
+        _episodes_for_node,
+    )
 
     src_node = graph.nodes.get(src_id)
     tgt_node = graph.nodes.get(tgt_id)
@@ -650,17 +653,37 @@ def _render_edge_panel_narrow(
 
     _sc = _seg_colors()
     ep_list = [t[0] for t in triples]
+    ep_set = set(ep_list)
+    _term_cids = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+
+    def _is_terminal(nid: int) -> bool:
+        gn = graph.nodes.get(nid)
+        return gn is not None and gn.cluster_id in _term_cids
+
+    # Build full behavior ranges using _episodes_for_node (same as path/terminal)
     ep_segs: Dict[int, List] = {}
-    for ep_idx, ts_src, ts_tgt, ts_tgt_end in triples:
-        segs = [(ts_src, ts_tgt if ts_tgt is not None else ts_src, src_name, _sc[0])]
-        if ts_tgt is not None:
-            segs.append((ts_tgt, ts_tgt_end if ts_tgt_end is not None else ts_tgt, tgt_name, _sc[1]))
-        ep_segs[ep_idx] = segs
+    for i, (nid, name, col) in enumerate([
+        (src_id, src_name, _sc[0]),
+        (tgt_id, tgt_name, _sc[1 % len(_sc)]),
+    ]):
+        if _is_terminal(nid):
+            continue
+        for ep_idx, ts_s, ts_e in _episodes_for_node(nid, labels, metadata):
+            if ep_idx in ep_set:
+                ep_segs.setdefault(ep_idx, []).append((ts_s, ts_e, name, col))
+
+    # Close gaps between adjacent segments
+    for ep_idx, segs in ep_segs.items():
+        if len(segs) > 1:
+            segs.sort(key=lambda s: s[0])
+            closed = [(segs[j][0], segs[j+1][0], segs[j][2], segs[j][3]) for j in range(len(segs)-1)]
+            closed.append(segs[-1])
+            ep_segs[ep_idx] = closed
 
     _show_one_video_panel(
         ep_list, {}, mp4_dir, mp4_index,
         f"{key_prefix}_edge_{src_id}_{tgt_id}", fps,
-        ep_segs_by_idx=ep_segs,
+        ep_segs_by_idx=ep_segs if ep_segs else None,
     )
 
 
