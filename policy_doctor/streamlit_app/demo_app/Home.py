@@ -56,7 +56,7 @@ if not _gate_on_password():
     st.stop()
 
 
-_HERE = Path(__file__).parent
+_HERE = Path(__file__).resolve().parent
 
 pages = [
     st.Page(_HERE / "_pages" / "3_graph_demo.py",
