@@ -280,6 +280,7 @@ if not _cands:
 import re as _re
 _OFFICIAL_REPS = {
     "infembed",
+    "policy_emb",
     "trak",
     "policy_emb_bottleneck_plan_t0",
     "state_full_history",
@@ -337,6 +338,10 @@ _REP_DESCRIPTIONS = {
     "infembed":
         "**InfEmbed** — influence-based representation computed via a "
         "low-rank factorization of the Hessian.",
+    "policy_emb":
+        "**Policy embedding (bottleneck)** — diffusion U-Net bottleneck "
+        "(mid-block) activations extracted at the final denoising step, "
+        "aggregated over a sliding window and UMAP-reduced to 50D.",
     "trak":
         "**TRAK** — per-timestep features from the TRAK influence-score "
         "matrix (rollout × training demos), reduced to 200D with truncated "
@@ -379,6 +384,16 @@ clu_path = filt[0]["path"]
 
 labels, meta, emb, manifest = _load_clustering(str(clu_path))
 level = manifest.get("level", "rollout")
+
+# When the clustering changes, clear stale node/edge selection and bump the
+# render token so the Markov graph iframe fully re-renders with new data.
+_prev_clu = st.session_state.get("_demo_prev_clu")
+if _prev_clu != str(clu_path):
+    st.session_state["_demo_prev_clu"] = str(clu_path)
+    for _sfx in ("_selected", "_selected_edge", "_last_click"):
+        st.session_state.pop(f"demo_markov_graph{_sfx}", None)
+    _rt = "demo_markov_graph_render_token"
+    st.session_state[_rt] = st.session_state.get(_rt, 0) + 1
 
 # MP4 resolution is hard-coded — the bundle puts videos in a known
 # location. The metadata / debug block below the dropdowns was dev
