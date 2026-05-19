@@ -301,18 +301,20 @@ def mp4_player(
             f'pointer-events:none;border-radius:4px;border:3px solid transparent;'
             f'box-sizing:border-box;transition:border-color 0.1s,box-shadow 0.1s;"></div>'
             f'<div id="segbadge_{uid}" style="position:absolute;top:8px;right:8px;'
-            f'background:#f5a623;color:#000;font-size:10px;font-weight:700;'
+            f'font-size:10px;font-weight:700;color:#fff;background:#d62728;'
             f'padding:2px 8px;border-radius:10px;pointer-events:none;'
-            f'opacity:0;transition:opacity 0.15s;">SEGMENT</div>'
+            f'transition:background 0.1s;">behavior inactive</div>'
         )
         highlight_js = f"""
   var segb=document.getElementById('segb_{uid}');
   var segbadge=document.getElementById('segbadge_{uid}');
+  if(segb){{segb.style.borderColor='#d62728';segb.style.boxShadow='0 0 0 3px rgba(214,39,40,0.35)';}}
   function _hl(){{
     var ins=v.currentTime>={slice_start}/{fps}&&v.currentTime<={slice_end}/{fps};
-    if(segb){{segb.style.borderColor=ins?'#f5a623':'transparent';
-              segb.style.boxShadow=ins?'0 0 0 3px rgba(245,166,35,0.35)':'none';}}
-    if(segbadge) segbadge.style.opacity=ins?'1':'0';
+    if(segb){{segb.style.borderColor=ins?'#2ca02c':'#d62728';
+              segb.style.boxShadow=ins?'0 0 0 3px rgba(44,160,44,0.35)':'0 0 0 3px rgba(214,39,40,0.35)';}}
+    if(segbadge){{segbadge.style.background=ins?'#2ca02c':'#d62728';
+                  segbadge.textContent=ins?'behavior active':'behavior inactive';}}
   }}
   v.addEventListener('timeupdate',_hl);"""
 
@@ -325,13 +327,14 @@ def mp4_player(
             f'⟳ Loop segment</button></div>'
         )
         loop_js = f"""
-  var _lp_{uid}=false;
+  var _lp_{uid}=true;
   var lbtn=document.getElementById('lbtn_{uid}');
   if(lbtn){{
+    lbtn.style.color='#2ca02c';lbtn.style.borderColor='#2ca02c';
     lbtn.addEventListener('click',function(){{
       _lp_{uid}=!_lp_{uid};
-      lbtn.style.color=_lp_{uid}?'#f5a623':'#999';
-      lbtn.style.borderColor=_lp_{uid}?'#f5a623':'#555';
+      lbtn.style.color=_lp_{uid}?'#2ca02c':'#999';
+      lbtn.style.borderColor=_lp_{uid}?'#2ca02c':'#555';
       if(_lp_{uid}){{v.currentTime={slice_start}/{fps};v.play();}}
     }});
   }}
