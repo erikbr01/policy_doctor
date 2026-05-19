@@ -312,7 +312,7 @@ def _filter(rep=None, k=None, w=None, s=None, agg=None):
     return out
 
 
-_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 15}
+_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 8}
 
 def _pick(label, options, key, default=None):
     if not options:
@@ -489,9 +489,10 @@ with c_color:
     )
 
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
+_default_min_branch = max(2, int(n_total_eps * 0.02))  # ~2% of rollouts
 min_branch = st.slider(
     "Hide transitions where count(s, s′) < N",
-    1, 50, 2,
+    1, max(50, _default_min_branch + 10), _default_min_branch,
     help=(
         "count(s, s′) is the number of rollouts in which the transition s → s′ "
         "was observed. Edges with fewer than N observations are hidden, and "
