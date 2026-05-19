@@ -654,6 +654,11 @@ def _show_one_video_panel(
     if ep_entry and mp4_dir:
         ts_range = ep_slices_by_idx.get(ep_idx)
         segs = (ep_segs_by_idx or {}).get(ep_idx)
+        # Extend the last segment to the end of the video so there's no gap.
+        if segs:
+            _fc = ep_entry.get("frame_count")
+            if _fc:
+                segs = [*segs[:-1], (segs[-1][0], _fc, segs[-1][2], segs[-1][3])]
         success = ep_entry.get("success")
         status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
         st.caption(f"Episode {ep_idx} — {status}")
