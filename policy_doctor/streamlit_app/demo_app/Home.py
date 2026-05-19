@@ -59,11 +59,11 @@ if not _gate_on_password():
 _HERE = Path(__file__).parent
 
 pages = [
-    st.Page(str(_HERE / "_pages" / "3_graph_demo.py"),
+    st.Page(_HERE / "_pages" / "3_graph_demo.py",
             title="Graph Demo", url_path="graph_demo", default=True),
-    st.Page(str(_HERE / "_pages" / "1_user_study_a.py"),
+    st.Page(_HERE / "_pages" / "1_user_study_a.py",
             title="User Study A", url_path="user_study_a"),
-    st.Page(str(_HERE / "_pages" / "2_user_study_b.py"),
+    st.Page(_HERE / "_pages" / "2_user_study_b.py",
             title="User Study B", url_path="user_study_b"),
 ]
 
