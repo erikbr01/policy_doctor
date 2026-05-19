@@ -123,10 +123,9 @@ light_mode = st.sidebar.toggle(
     key="light_mode",
 )
 colorblind_mode = st.sidebar.toggle(
-    "Colorblind-friendly",
+    "Colorblind",
     value=st.session_state.get("colorblind_mode", False),
     key="colorblind_mode",
-    help="Swaps red–green bins for a blue–orange diverging palette (Okabe–Ito).",
 )
 if light_mode:
     # Streamlit's runtime theme is set in config.toml; we override the
