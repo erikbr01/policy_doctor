@@ -675,6 +675,16 @@ def _render_right_video_panel(
             for ep_idx, ts_s, ts_e in _episodes_for_node(nid, labels, metadata):
                 if ep_idx in path_eps_set:
                     ep_segs_by_idx.setdefault(ep_idx, []).append((ts_s, ts_e, lbl, col))
+        # Close gaps between adjacent segments: extend each segment's end to
+        # the start of the next so transition frames are always covered.
+        for ep_idx, segs in ep_segs_by_idx.items():
+            if len(segs) > 1:
+                segs.sort(key=lambda s: s[0])
+                closed = []
+                for j in range(len(segs) - 1):
+                    closed.append((segs[j][0], segs[j + 1][0], segs[j][2], segs[j][3]))
+                closed.append(segs[-1])
+                ep_segs_by_idx[ep_idx] = closed
         _show_one_video_panel(
             path_eps, {}, mp4_dir, mp4_index,
             f"{key_prefix}_path", fps,
