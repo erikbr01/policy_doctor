@@ -618,6 +618,47 @@ def _seg_colors() -> List[str]:
     )
 
 
+def _render_edge_panel_narrow(
+    src_id: int,
+    tgt_id: int,
+    graph,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    mp4_dir: Path,
+    mp4_index: Dict,
+    key_prefix: str,
+    fps: int,
+) -> None:
+    from policy_doctor.streamlit_app.user_study.graph_explorer import _episodes_for_edge
+
+    src_node = graph.nodes.get(src_id)
+    tgt_node = graph.nodes.get(tgt_id)
+    src_name = src_node.name if src_node else str(src_id)
+    tgt_name = tgt_node.name if tgt_node else str(tgt_id)
+    prob = graph.transition_probs.get(src_id, {}).get(tgt_id, 0.0)
+    st.caption(f"**{src_name} → {tgt_name}** · {prob:.0%}")
+
+    triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)
+    if not triples:
+        st.info("No episodes found for this transition.")
+        return
+
+    _sc = _seg_colors()
+    ep_list = [t[0] for t in triples]
+    ep_segs: Dict[int, List] = {}
+    for ep_idx, ts_src, ts_tgt, ts_tgt_end in triples:
+        segs = [(ts_src, ts_tgt if ts_tgt is not None else ts_src, src_name, _sc[0])]
+        if ts_tgt is not None:
+            segs.append((ts_tgt, ts_tgt_end if ts_tgt_end is not None else ts_tgt, tgt_name, _sc[1]))
+        ep_segs[ep_idx] = segs
+
+    _show_one_video_panel(
+        ep_list, {}, mp4_dir, mp4_index,
+        f"{key_prefix}_edge_{src_id}_{tgt_id}", fps,
+        ep_segs_by_idx=ep_segs,
+    )
+
+
 def _render_right_video_panel(
     labels: np.ndarray,
     metadata: List[Dict],
@@ -641,9 +682,9 @@ def _render_right_video_panel(
 
     if selected_edge is not None and graph is not None and mp4_dir is not None:
         src_id, tgt_id = selected_edge
-        _render_edge_panel(
+        _render_edge_panel_narrow(
             src_id, tgt_id, graph, labels, metadata,
-            mp4_dir, mp4_index, key_prefix,
+            mp4_dir, mp4_index, key_prefix, fps,
         )
     elif selected_node is not None:
         ep_slices = _episodes_for_node(int(selected_node), labels, metadata)
