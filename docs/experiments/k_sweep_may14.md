@@ -82,7 +82,7 @@ BG advantage peaks at K=10–15, disappears at K=5 and K=25. Prior tight-constra
 - **BG advantage is K-dependent and does not hold broadly.** BG leads at K=5 (+6.6 pp over random), K=10 (+3.8 pp), and K=20 (+10.6 pp, though K=20 random/diversity are OOM-degraded). BG *trails* random at K=15 (−5.8 pp) and K=25 (−14.4 pp).
 - **K=15 ordering fully reverses.** Noisy ordering was BG 0.540 > random 0.460 > diversity 0.360; real ordering is random **0.414** > BG 0.356 > diversity 0.316. The noisily dominant arm ends up in last place.
 - **K=25 BG is the weakest arm in the sweep** (0.200, worst across all 15 arms). All five K=25 BG checkpoints hit the 504-step rollout cap — the model barely completes the task. BG seed selection at K=25 appears to concentrate seeds in a narrow behavioural mode that does not generalize.
-- **K=20 OOM results are lower bounds.** diversity (0.262) and random (0.270) had OOM-interrupted training; their true performance is unknown. BG (0.376) is unaffected.
+- **K=20 diversity/random scores are genuine.** Both trained to completion: diversity ran ep0→ep1751 uninterrupted (only random crashed during the OOM event, while diversity was already past its compile spike); random crashed before saving any checkpoint, was restarted completely from scratch with compile=false, and ran ep0→ep1750 as a full fresh run. The low scores (0.262, 0.270) reflect true performance at K=20 for those heuristics, not a training artifact.
 - **All heuristics improve over the D60-only baseline** (25.9 ± 1.6%), confirming that MimicGen augmentation helps even under the tight constraint.
 - **LaTeX table**: `docs/experiments/k_sweep_may14_table.tex`
 

@@ -1,7 +1,8 @@
 % K-sweep results table: Square D1, D60 demos, tight nut constraint, budget=300.
 % n=1 replicate per (heuristic x K) cell; baseline is n=3.
 % Generated from real 500-episode evals (run_k_sweep_evals.py, May 17-19 2026).
-% OOM footnote: K=20 diversity and random had OOM-interrupted training.
+% All arms trained to completion (ep1700-1750 out of 1751); K=20 random restarted
+% from scratch after ep0 OOM but ran the full training.
 
 \begin{table}[t]
   \centering
@@ -10,8 +11,7 @@
   Policy success rate (\%) at the best checkpoint, evaluated over 500 episodes.
   $n{=}1$ replicate per heuristic\,$\times$\,$K$ cell.
   Baseline trains on original 60 demonstrations only ($n{=}3$, mean\,$\pm$\,std).
-  Best per $K$ in \textbf{bold}.
-  $^\dagger$OOM-interrupted training; results are a lower bound.}
+  Best per $K$ in \textbf{bold}.}
   \label{tab:k_sweep_tight}
   \setlength{\tabcolsep}{6pt}
   \begin{tabular}{lccccc}
@@ -22,9 +22,9 @@
   \midrule
   Baseline (D60 only) & \multicolumn{5}{c}{$25.9 \pm 1.6$} \\
   \midrule
-  random        & 32.4          & 34.0          & \textbf{41.4} & $27.0^\dagger$ & \textbf{34.4} \\
-  few modes     & \textbf{39.0} & \textbf{37.8} & 35.6          & \textbf{37.6}  & 20.0 \\
-  diverse modes & 32.6          & 35.6          & 31.6          & $26.2^\dagger$ & 32.2 \\
+  random        & 32.4          & 34.0          & \textbf{41.4} & 27.0          & \textbf{34.4} \\
+  few modes     & \textbf{39.0} & \textbf{37.8} & 35.6          & \textbf{37.6} & 20.0 \\
+  diverse modes & 32.6          & 35.6          & 31.6          & 26.2          & 32.2 \\
   \bottomrule
   \end{tabular}
 \end{table}
