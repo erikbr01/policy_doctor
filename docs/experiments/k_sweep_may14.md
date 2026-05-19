@@ -86,6 +86,28 @@ BG advantage peaks at K=10–15, disappears at K=5 and K=25. Prior tight-constra
 - **All heuristics improve over the D60-only baseline** (25.9 ± 1.6%), confirming that MimicGen augmentation helps even under the tight constraint.
 - **LaTeX table**: `docs/experiments/k_sweep_may14_table.tex`
 
+### Why the k-sweep underperforms the prior tight-constraint experiment
+
+The prior tight-constraint experiment (`mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight`, documented in `docs/constrained_generation_results.md`) achieved BG 50.7 ± 3.1% (n=3 best) / 48.6 ± 3.1% (n=3 top5_mean) at budget=300. The k-sweep's best BG result is 39.0% (K=5, n=1). The gap is ~10 pp even after confirming identical generation configs (same `fix_initial_object_poses: true`, same ±4cm/±30° constraint, same `square_d1_60.hdf5` dataset).
+
+**Root cause: different clustering.** The prior experiment's `run_clustering` is a broken symlink to `/mnt/ssdB/erik/cupid_data/pipeline_runs/mimicgen_square_apr26_sweep_seed1_demos60/run_clustering`, which in turn points to `/home/erbauer/refactor_cupid/...` — a path that no longer exists. That clustering was from a different UMAP run (different random seed). The k-sweep ran a fresh `run_clustering` on the same 500 baseline rollouts (101 successful) but with a different UMAP initialization.
+
+**The k-sweep's K=15 clustering has no cluster dominated by successful rollouts:**
+
+| cluster | windows | % from successful rollouts |
+|---------|---------|---------------------------|
+| 0 | 665 | 22% ← highest |
+| 3 | 621 | 16% |
+| 4 | 1476 | 15% |
+| 5 | 1426 | 12% |
+| 7, 12, 13, 14 | — | 0% |
+
+With success windows scattered across all clusters, the behavior graph's path probability distribution is flat — BG seed selection can't identify a clearly dominant path to SUCCESS and effectively degrades toward random.
+
+**Evidence:** random selection is comparable between experiments (prior 41.1%, k-sweep best 41.4% at K=15), while BG and diversity — both graph-dependent — are ~10 pp lower. The clustering quality is the differentiator, not the generation config or eval protocol.
+
+**Implication for paper:** the K-sweep may be confounding K sensitivity with UMAP variance. BG's advantage under the tight constraint is real (confirmed by the prior n=3 experiment) but depends on obtaining a clustering that cleanly separates successful from unsuccessful behavioral modes. This is not guaranteed by the UMAP random seed. A full replication would require either (a) reusing the prior clustering or (b) n≥3 clustering seeds per K value to separate the two sources of variance.
+
 ## Run log
 
 - **2026-05-14 22:26**: `run_k_sweep_tight.sh` launched (PID 14213).
