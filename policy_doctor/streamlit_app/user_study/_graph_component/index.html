@@ -582,6 +582,7 @@ function render(data, svgW, svgH) {
       document.getElementById("tooltip").style.display = "none";
     });
     g.addEventListener("click", (evt) => {
+      evt.stopPropagation();
       // The mouseup handler clears `dragging` and sets dragMovedRecently
       // if the drag actually moved. If so, suppress this click.
       if (dragMovedRecently) {
@@ -602,6 +603,15 @@ function render(data, svgW, svgH) {
     nodeGroup.appendChild(g);
   }
   svg.appendChild(nodeGroup);
+
+  // Background click → deselect everything
+  svg.onclick = function(evt) {
+    if (selectedNodeId === null && selectedEdge === null) return;
+    selectedNodeId = null;
+    selectedEdge = null;
+    sendValue([-1, ++clickSeq]);
+    render(graphData, svgW, svgH);
+  };
 }
 
 function nodeRadius(node, maxEpisodes) {

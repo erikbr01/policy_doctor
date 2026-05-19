@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTAINER_NAME="policy-doctor-demo"
 IMAGE_NAME="policy-doctor-demo"
-PORT=8501
+PORT=8502
 
 COLLECT=true
 BUILD=true
