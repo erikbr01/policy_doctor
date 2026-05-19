@@ -1,4 +1,4 @@
 task: pi05_libero_goal
 name: "pi0.5 Libero Goal"
-eval_dir: data/pi05_libero/libero_goal
+eval_dir: /home/erbauer/policy_doctor/data/pi05_libero/libero_goal
 obs_key: agentview_image
