@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: transparent; overflow: hidden; }
+  #strip {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 6px;
+    padding: 4px 2px 8px 2px;
+    height: 100%;
+  }
+  #strip::-webkit-scrollbar { height: 5px; }
+  #strip::-webkit-scrollbar-track { background: transparent; }
+  #strip::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+  .thumb {
+    flex: 0 0 auto;
+    cursor: pointer;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    overflow: hidden;
+    position: relative;
+    transition: border-color 0.1s;
+  }
+  .thumb.active { border-color: #f5a623; }
+  .thumb:hover:not(.active) { border-color: #888; }
+  .thumb img { display: block; width: 96px; height: 64px; object-fit: cover; }
+  .thumb .lbl {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.55);
+    color: #fff; font-size: 10px; text-align: center;
+    padding: 1px 2px; font-family: sans-serif;
+    white-space: nowrap; overflow: hidden;
+  }
+  .thumb.active .lbl { background: rgba(200,120,0,0.7); }
+</style>
+</head>
+<body>
+<div id="strip"></div>
+<script>
+  let _seq = 0;
+
+  function sendValue(v) {
+    window.parent.postMessage(
+      { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: v, dataType: "json" },
+      "*"
+    );
+  }
+  function setHeight(h) {
+    window.parent.postMessage(
+      { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h },
+      "*"
+    );
+  }
+
+  function render(args) {
+    const thumbs = args.thumbs || [];
+    const selected = args.selected ?? null;
+    const strip = document.getElementById("strip");
+    strip.innerHTML = "";
+
+    thumbs.forEach((t, i) => {
+      const div = document.createElement("div");
+      div.className = "thumb" + (i === selected ? " active" : "");
+
+      const img = document.createElement("img");
+      img.src = t.b64 ? "data:image/jpeg;base64," + t.b64 : "";
+      img.alt = t.label || String(i);
+
+      const lbl = document.createElement("div");
+      lbl.className = "lbl";
+      lbl.textContent = t.label || String(i);
+
+      div.appendChild(img);
+      div.appendChild(lbl);
+      div.addEventListener("click", () => sendValue([i, ++_seq]));
+      strip.appendChild(div);
+    });
+
+    // Scroll selected into view
+    if (selected !== null && strip.children[selected]) {
+      strip.children[selected].scrollIntoView({ inline: "nearest", block: "nearest" });
+    }
+
+    setHeight(document.body.scrollHeight);
+  }
+
+  window.addEventListener("message", (e) => {
+    if (e.data.type === "streamlit:render") render(e.data.args || {});
+  });
+
+  // Signal ready
+  window.parent.postMessage(
+    { isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 },
+    "*"
+  );
+</script>
+</body>
+</html>

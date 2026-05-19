@@ -14,8 +14,34 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import base64
+import io
+
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as _components
+
+_THUMB_STRIP = _components.declare_component(
+    "thumb_strip",
+    path=str(Path(__file__).parent / "_thumb_strip"),
+)
+
+
+@st.cache_data(show_spinner=False)
+def _thumbnail_b64(video_path_str: str) -> str:
+    """Extract first frame of a video as a base64 JPEG thumbnail."""
+    try:
+        import imageio
+        from PIL import Image
+        reader = imageio.get_reader(video_path_str)
+        frame = reader.get_data(0)
+        reader.close()
+        img = Image.fromarray(frame).resize((96, 64), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=70)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
 
 from policy_doctor.behaviors.behavior_graph import (
     BehaviorGraph,
@@ -677,6 +703,12 @@ def _show_one_video_panel(
         return
 
     vp_key = f"{key_prefix}_vid_page"
+    # Reset to 0 when the episode list changes (different path/node selected)
+    list_sig = (ep_list[0] if ep_list else -1, n)
+    sig_key = f"{key_prefix}_vid_list_sig"
+    if st.session_state.get(sig_key) != list_sig:
+        st.session_state[sig_key] = list_sig
+        st.session_state[vp_key] = 0
     vp = max(0, min(st.session_state.get(vp_key, 0), n - 1))
     ep_idx = ep_list[vp]
     ep_entry = _find_mp4_episode(ep_idx, mp4_index)
@@ -711,27 +743,24 @@ def _show_one_video_panel(
     else:
         st.warning(f"No video found for episode {ep_idx}.")
 
-    # Scrollable episode list — 3 compact buttons per row
-    st.markdown(
-        f"<div style='font-size:0.75em;color:#888;margin:6px 0 2px;'>"
-        f"{vp + 1} / {n} episodes</div>",
-        unsafe_allow_html=True,
+    # Horizontal thumbnail strip
+    thumbs = []
+    for i, ep in enumerate(ep_list):
+        ep_e = _find_mp4_episode(ep, mp4_index)
+        icon = ("✓" if ep_e and ep_e.get("success") is True
+                else "✗" if ep_e and ep_e.get("success") is False else "•")
+        b64 = ""
+        if ep_e and mp4_dir:
+            b64 = _thumbnail_b64(str(mp4_dir / ep_e["path"]))
+        thumbs.append({"b64": b64, "label": f"{icon} {ep}"})
+
+    clicked = _THUMB_STRIP(
+        thumbs=thumbs,
+        selected=vp,
+        key=f"{key_prefix}_thumb_strip",
     )
-    with st.container(height=min(200, max(60, ((n + 2) // 3) * 38)), border=False):
-        rows = [ep_list[i:i+3] for i in range(0, n, 3)]
-        for row_i, row in enumerate(rows):
-            cols = st.columns(3)
-            for col_j, ep in enumerate(row):
-                i = row_i * 3 + col_j
-                ep_e = _find_mp4_episode(ep, mp4_index)
-                icon = ("✓" if ep_e and ep_e.get("success") is True
-                        else "✗" if ep_e and ep_e.get("success") is False else "•")
-                with cols[col_j]:
-                    if st.button(
-                        f"{icon} {ep}",
-                        key=f"{key_prefix}_jump_{ep}",
-                        type="primary" if i == vp else "secondary",
-                        use_container_width=True,
-                    ):
-                        st.session_state[vp_key] = i
-                        st.rerun()
+    if clicked is not None:
+        new_vp = int(clicked[0])
+        if new_vp != vp:
+            st.session_state[vp_key] = new_vp
+            st.rerun()
