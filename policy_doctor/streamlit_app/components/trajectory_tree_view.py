@@ -421,6 +421,7 @@ def _render_native_svg(
             mp4_index=mp4_index or {"episodes": []},
             key_prefix=key_prefix,
             fps=_fps,
+            graph=synth_graph,
         )
 
 
@@ -572,10 +573,23 @@ def _render_stats(
 
 # ── Right-column single-video panel ──────────────────────────────────────────
 
-_SEG_COLORS = [
+_SEG_COLORS_DEFAULT = [
     "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
     "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
 ]
+# Okabe-Ito categorical — safe for deuteranopia/protanopia
+_SEG_COLORS_CB = [
+    "#E69F00", "#56B4E9", "#009E73", "#F0E442",
+    "#0072B2", "#D55E00", "#CC79A7", "#000000",
+]
+
+
+def _seg_colors() -> List[str]:
+    return (
+        _SEG_COLORS_CB
+        if st.session_state.get("colorblind_mode", False)
+        else _SEG_COLORS_DEFAULT
+    )
 
 
 def _render_right_video_panel(
@@ -585,21 +599,36 @@ def _render_right_video_panel(
     mp4_index: Dict,
     key_prefix: str,
     fps: int = 10,
+    graph=None,
 ) -> None:
     """One-video-at-a-time panel for the right column of the trajectory tree."""
     from policy_doctor.streamlit_app.user_study.graph_explorer import (
         _episodes_for_node,
         _find_mp4_episode,
+        _render_edge_panel,
     )
 
     selected_node = st.session_state.get(f"{key_prefix}_graph_selected")
+    selected_edge = st.session_state.get(f"{key_prefix}_graph_selected_edge")
     path_eps: Optional[List[int]] = st.session_state.get(f"{key_prefix}_path_ep_list")
     path_label: str = st.session_state.get(f"{key_prefix}_path_label", "")
 
-    if selected_node is not None:
+    if selected_edge is not None and graph is not None and mp4_dir is not None:
+        src_id, tgt_id = selected_edge
+        _render_edge_panel(
+            src_id, tgt_id, graph, labels, metadata,
+            mp4_dir, mp4_index, key_prefix,
+        )
+    elif selected_node is not None:
         ep_slices = _episodes_for_node(int(selected_node), labels, metadata)
         ep_slices_by_idx: Dict[int, Tuple[int, int]] = {e[0]: (e[1], e[2]) for e in ep_slices}
         all_eps = sorted(ep_slices_by_idx.keys())
+        # Terminal nodes (SUCCESS/FAILURE) are never assigned synth_labels so
+        # ep_slices will be empty — fall back to the graph node's episode list.
+        if not all_eps and graph is not None:
+            gnode = graph.nodes.get(int(selected_node))
+            if gnode is not None:
+                all_eps = sorted(gnode.episode_indices)
         _id_to_prefix = st.session_state.get(f"{key_prefix}_id_to_prefix", {})
         title = _id_to_prefix.get(int(selected_node), f"Node {selected_node}")
         st.caption(f"**{title}**")
@@ -615,7 +644,8 @@ def _render_right_video_panel(
         ep_segs_by_idx: Dict[int, List] = {}
         path_eps_set = set(path_eps)
         for i, (nid, lbl) in enumerate(path_synth_ids):
-            col = _SEG_COLORS[i % len(_SEG_COLORS)]
+            _sc = _seg_colors()
+            col = _sc[i % len(_sc)]
             for ep_idx, ts_s, ts_e in _episodes_for_node(nid, labels, metadata):
                 if ep_idx in path_eps_set:
                     ep_segs_by_idx.setdefault(ep_idx, []).append((ts_s, ts_e, lbl, col))

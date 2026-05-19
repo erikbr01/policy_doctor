@@ -499,6 +499,11 @@ max_depth = 500
 # Hidden by default — these knobs tune the encoding (width ↔ probability,
 # radius ↔ visit count) and let users export the graph as paper-ready SVG.
 with st.expander("Advanced viz settings", expanded=False):
+    colorblind_mode = st.checkbox(
+        "Colorblind-friendly palette",
+        value=False,
+        help="Swaps red–green bins for a blue–orange diverging palette (Okabe–Ito).",
+    )
     _c_style, _c_w, _c_r = st.columns(3)
     with _c_style:
         edge_style = st.radio(
@@ -547,6 +552,8 @@ with st.expander("Advanced viz settings", expanded=False):
         disabled=not _captured,
         help="Saves the current graph state (no background) as behavior_graph.svg.",
     )
+
+st.session_state["colorblind_mode"] = colorblind_mode
 
 # Build the underlying Markov graph (used for value computation + Markov views).
 @st.cache_data(show_spinner=False)
@@ -620,7 +627,12 @@ else:
             st.warning(f"Temporal layout failed ({e}); falling back to BFS-layered.")
     color_override: Optional[Dict[int, str]] = None
     _SPECIAL = {SUCCESS_NODE_ID, FAILURE_NODE_ID, START_NODE_ID, END_NODE_ID}
-    _OUTCOME_BINS = ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    _OUTCOME_BINS = (
+        # Okabe-Ito diverging: vermilion → orange → yellow → teal → blue
+        ["#D55E00", "#E69F00", "#F0E442", "#009E73", "#0072B2"]
+        if colorblind_mode else
+        ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    )
     def _div(t: float) -> str:
         return _OUTCOME_BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
     if color_by == "value" and node_values:
