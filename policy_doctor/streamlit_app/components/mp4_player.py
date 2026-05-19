@@ -258,9 +258,9 @@ def mp4_player(
         lbl1 = f" {bar1_label}" if bar1_label else ""
         timeline = f"""
         <div id="tl_{uid}" style="margin-top:6px;position:relative;height:10px;
-             background:#333;border-radius:5px;cursor:pointer;">
+             background:#333;border-radius:5px;overflow:hidden;cursor:pointer;">
           <div id="bar1_{uid}" style="position:absolute;left:0%;width:0%;height:100%;
-                      background:#f5a623;border-radius:5px;opacity:0.85;"></div>
+                      background:#f5a623;opacity:0.85;"></div>
           {bar2_div}
           <div id="ph_{uid}" style="position:absolute;top:-3px;left:0%;width:3px;height:16px;
                background:#fff;border-radius:2px;transition:left 0.1s linear;"></div>

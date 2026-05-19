@@ -662,12 +662,18 @@ def _show_one_video_panel(
         success = ep_entry.get("success")
         status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
         st.caption(f"Episode {ep_idx} — {status}")
+        # Extend single-behavior slice_end by a small buffer to cover the
+        # last window (max_ts is window_start, actual coverage is +W-1 frames).
+        _fc = ep_entry.get("frame_count")
+        _slice_end = ts_range[1] if ts_range else None
+        if _slice_end is not None and _fc:
+            _slice_end = min(_slice_end + fps, _fc)
         mp4_player(
             mp4_dir / ep_entry["path"],
             key=f"{key_prefix}_vid_{ep_idx}",
             max_height_px=300,
             slice_start=ts_range[0] if ts_range else None,
-            slice_end=ts_range[1] if ts_range else None,
+            slice_end=_slice_end,
             total_frames=ep_entry.get("frame_count"),
             fps=fps,
             segments=segs,
