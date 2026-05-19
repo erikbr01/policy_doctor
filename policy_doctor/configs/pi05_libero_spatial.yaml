@@ -1,6 +1,4 @@
 task: pi05_libero_spatial
 name: "pi0.5 Libero Spatial"
-# eval_dir: /absolute/path/to/pi05_libero_spatial/eval_output
-# No train_dir needed — clustering uses pre-computed pi05 policy embeddings.
-# After running eval_save_with_embeddings.py, set eval_dir above.
+eval_dir: data/pi05_libero/libero_spatial
 obs_key: agentview_image
