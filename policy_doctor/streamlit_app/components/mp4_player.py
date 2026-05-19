@@ -294,17 +294,70 @@ def mp4_player(
     v.currentTime=pct*dur;
   }});"""
         extra_h += 38
+
+        # ── Segment glow overlay (border + badge on the video wrapper) ────────
+        seg_overlay_html = (
+            f'<div id="segb_{uid}" style="position:absolute;top:0;left:0;width:100%;height:100%;'
+            f'pointer-events:none;border-radius:4px;border:3px solid transparent;'
+            f'box-sizing:border-box;transition:border-color 0.1s,box-shadow 0.1s;"></div>'
+            f'<div id="segbadge_{uid}" style="position:absolute;top:8px;right:8px;'
+            f'background:#f5a623;color:#000;font-size:10px;font-weight:700;'
+            f'padding:2px 8px;border-radius:10px;pointer-events:none;'
+            f'opacity:0;transition:opacity 0.15s;">SEGMENT</div>'
+        )
+        highlight_js = f"""
+  var segb=document.getElementById('segb_{uid}');
+  var segbadge=document.getElementById('segbadge_{uid}');
+  function _hl(){{
+    var ins=v.currentTime>={slice_start}/{fps}&&v.currentTime<={slice_end}/{fps};
+    if(segb){{segb.style.borderColor=ins?'#f5a623':'transparent';
+              segb.style.boxShadow=ins?'0 0 0 3px rgba(245,166,35,0.35)':'none';}}
+    if(segbadge) segbadge.style.opacity=ins?'1':'0';
+  }}
+  v.addEventListener('timeupdate',_hl);"""
+
+        # ── Loop-segment button ───────────────────────────────────────────────
+        loop_btn_html = (
+            f'<div style="margin-top:4px;">'
+            f'<button id="lbtn_{uid}" title="Loop over the annotated segment only" '
+            f'style="font-size:10px;padding:2px 8px;border-radius:4px;'
+            f'border:1px solid #555;background:#222;color:#999;cursor:pointer;">'
+            f'⟳ Loop segment</button></div>'
+        )
+        loop_js = f"""
+  var _lp_{uid}=false;
+  var lbtn=document.getElementById('lbtn_{uid}');
+  if(lbtn){{
+    lbtn.addEventListener('click',function(){{
+      _lp_{uid}=!_lp_{uid};
+      lbtn.style.color=_lp_{uid}?'#f5a623':'#999';
+      lbtn.style.borderColor=_lp_{uid}?'#f5a623':'#555';
+      if(_lp_{uid}){{v.currentTime={slice_start}/{fps};v.play();}}
+    }});
+  }}
+  v.addEventListener('timeupdate',function(){{
+    if(_lp_{uid}&&v.currentTime>={slice_end}/{fps}){{v.currentTime={slice_start}/{fps};}}
+  }});"""
+        extra_h += 28
     else:
         timeline = ""
         playhead_js = ""
+        seg_overlay_html = ""
+        highlight_js = ""
+        loop_btn_html = ""
+        loop_js = ""
 
     html = f"""
+<div style="position:relative;width:100%;">
 <video id="{uid}" controls preload="metadata"
   style="width:100%;max-height:{vid_h}px;border-radius:4px;background:#000;display:block;">
   <source src="data:video/mp4;base64,{b64}" type="video/mp4">
 </video>
+{seg_overlay_html}
+</div>
 {cluster_tl_html}
 {timeline}
+{loop_btn_html}
 <script>
 (function(){{
   var v=document.getElementById('{uid}');
@@ -313,6 +366,8 @@ def mp4_player(
   v.readyState>=1 ? seek() : v.addEventListener('loadedmetadata',seek,{{once:true}});
   {cluster_tl_js}
   {playhead_js}
+  {highlight_js}
+  {loop_js}
 }})();
 </script>"""
 

@@ -249,6 +249,7 @@ def render_graph_full_width(
     edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
+    suppress_video_panel: bool = False,
 ) -> None:
     """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
@@ -281,6 +282,9 @@ def render_graph_full_width(
     )
 
     selected_edge = st.session_state.get(f"{key_prefix}_graph_selected_edge")
+
+    if suppress_video_panel:
+        return
 
     if clicked_node_id is not None and clicked_node_id in graph.nodes:
         _render_node_panel(

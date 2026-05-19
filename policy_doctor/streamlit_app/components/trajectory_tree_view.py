@@ -136,6 +136,13 @@ def render_trajectory_tree(
         return
 
     if view_mode == "native_svg":
+        # Path buttons + episode summary at the TOP, then graph | video columns.
+        if show_stats:
+            _render_stats(
+                nodes, nodes_f, cluster_names,
+                key_prefix=key_prefix,
+                interactive=True,
+            )
         _render_native_svg(
             nodes_f, labels, metadata,
             cluster_names=cluster_names,
@@ -151,13 +158,12 @@ def render_trajectory_tree(
             nodes_f, view_mode, color_mode, node_values or {},
             height, key=f"{key_prefix}_plotly",
         )
-
-    if show_stats:
-        _render_stats(
-            nodes, nodes_f, cluster_names,
-            key_prefix=key_prefix,
-            interactive=(view_mode == "native_svg"),
-        )
+        if show_stats:
+            _render_stats(
+                nodes, nodes_f, cluster_names,
+                key_prefix=key_prefix,
+                interactive=False,
+            )
 
 
 # ── Native SVG branch ────────────────────────────────────────────────────────
@@ -198,12 +204,9 @@ def _render_native_svg(
         if cid == FAILURE_NODE_ID: return -1.0
         if cid in (END_NODE_ID, START_NODE_ID): return 0.0
         return float(node_values.get(int(cid), 0.0))
+    _BINS = ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
     def _diverging(t: float) -> str:
-        t = max(0.0, min(1.0, t))
-        r = int(214 + (44 - 214) * t)
-        g = int(39 + (160 - 39) * t)
-        b = int(40 + (44 - 40) * t)
-        return f"rgb({r},{g},{b})"
+        return _BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
     # Pre-compute V range for value mode. Exclude SUCCESS / FAILURE /
     # END / START terminals — their hardcoded ±1 values dominate the
     # range and squash every behavioral cluster into the grey middle.
@@ -388,24 +391,37 @@ def _render_native_svg(
         _id_to_prefix[nid] = " → ".join(chain)
     st.session_state[f"{key_prefix}_id_to_prefix"] = _id_to_prefix
     _highlighted_path = st.session_state.get(f"{key_prefix}_highlighted_path")
+    _fps = int((mp4_index or {}).get("fps", 10))
 
-    render_graph_full_width(
-        graph=synth_graph,
-        labels=synth_labels,
-        metadata=metadata,
-        mp4_dir=mp4_dir if mp4_dir is not None else Path("/tmp/_nonexistent"),
-        mp4_index=mp4_index or {"episodes": []},
-        key_prefix=key_prefix,
-        min_edge_prob=0.0,
-        pos=pos_final,
-        symbol_override=symbol_override,
-        color_override=color_override,
-        highlighted_path=_highlighted_path,
-        theme=theme,
-        edge_style=edge_style,
-        edge_width_slope=edge_width_slope,
-        node_size_slope=node_size_slope,
-    )
+    col_g, col_v = st.columns([2, 1])
+    with col_g:
+        render_graph_full_width(
+            graph=synth_graph,
+            labels=synth_labels,
+            metadata=metadata,
+            mp4_dir=mp4_dir if mp4_dir is not None else Path("/tmp/_nonexistent"),
+            mp4_index=mp4_index or {"episodes": []},
+            key_prefix=key_prefix,
+            min_edge_prob=0.0,
+            pos=pos_final,
+            symbol_override=symbol_override,
+            color_override=color_override,
+            highlighted_path=_highlighted_path,
+            theme=theme,
+            edge_style=edge_style,
+            edge_width_slope=edge_width_slope,
+            node_size_slope=node_size_slope,
+            suppress_video_panel=True,
+        )
+    with col_v:
+        _render_right_video_panel(
+            labels=synth_labels,
+            metadata=metadata,
+            mp4_dir=mp4_dir,
+            mp4_index=mp4_index or {"episodes": []},
+            key_prefix=key_prefix,
+            fps=_fps,
+        )
 
 
 # ── Plotly branches (sunburst / icicle / treemap) ────────────────────────────
@@ -486,18 +502,16 @@ def _render_stats(
 
     _current = st.session_state.get(f"{key_prefix}_highlighted_path")
 
-    def _maybe_button(label: str, key: str, leaf_path: tuple) -> None:
+    def _maybe_button(label: str, key: str, leaf_path: tuple, nd: dict) -> None:
         """Render a button when interactive, otherwise a markdown bullet.
 
-        Clicking a path highlights it; clicking the currently-highlighted
-        path again deselects it (toggle).
+        Clicking a path highlights it in the graph and reveals its videos in
+        the right panel; clicking the active path again deselects it.
         """
         if not interactive:
             st.markdown(f"- {label}")
             return
         path_to_id = st.session_state.get(f"{key_prefix}_path_to_id", {})
-        # Begin with the START node so the highlight covers the full
-        # START → ... → terminal arc, then walk the leaf's path prefixes.
         synth_path: list[int] = []
         start_nid = path_to_id.get(())
         if start_nid is not None:
@@ -513,8 +527,16 @@ def _render_stats(
         ):
             if is_active:
                 st.session_state.pop(f"{key_prefix}_highlighted_path", None)
+                st.session_state.pop(f"{key_prefix}_path_ep_list", None)
+                st.session_state.pop(f"{key_prefix}_path_label", None)
             elif synth_path:
                 st.session_state[f"{key_prefix}_highlighted_path"] = synth_path
+                st.session_state[f"{key_prefix}_path_ep_list"] = sorted(
+                    nd.get("episode_indices", [])
+                )
+                st.session_state[f"{key_prefix}_path_label"] = _format_path(nd)
+                # Clear any node selection so the right panel shows path videos
+                st.session_state.pop(f"{key_prefix}_graph_selected", None)
             st.rerun()
 
     c_s, c_f = st.columns(2)
@@ -523,10 +545,107 @@ def _render_stats(
         for i, nd in enumerate(succ_paths):
             pct = nd["n_episodes"] / total_eps * 100
             label = f"( {nd['n_episodes']:>3} eps · {pct:.0f}% )  {_format_path(nd)}"
-            _maybe_button(label, key=f"{key_prefix}_succ_path_{i}", leaf_path=tuple(nd["path"]))
+            _maybe_button(label, key=f"{key_prefix}_succ_path_{i}", leaf_path=tuple(nd["path"]), nd=nd)
     with c_f:
         st.markdown("**Top failure paths**" + ("  (click to highlight)" if interactive else ""))
         for i, nd in enumerate(fail_paths):
             pct = nd["n_episodes"] / total_eps * 100
             label = f"( {nd['n_episodes']:>3} eps · {pct:.0f}% )  {_format_path(nd)}"
-            _maybe_button(label, key=f"{key_prefix}_fail_path_{i}", leaf_path=tuple(nd["path"]))
+            _maybe_button(label, key=f"{key_prefix}_fail_path_{i}", leaf_path=tuple(nd["path"]), nd=nd)
+
+
+# ── Right-column single-video panel ──────────────────────────────────────────
+
+def _render_right_video_panel(
+    labels: np.ndarray,
+    metadata: List[Dict],
+    mp4_dir: Optional[Path],
+    mp4_index: Dict,
+    key_prefix: str,
+    fps: int = 10,
+) -> None:
+    """One-video-at-a-time panel for the right column of the trajectory tree."""
+    from policy_doctor.streamlit_app.user_study.graph_explorer import (
+        _episodes_for_node,
+        _find_mp4_episode,
+    )
+
+    selected_node = st.session_state.get(f"{key_prefix}_graph_selected")
+    path_eps: Optional[List[int]] = st.session_state.get(f"{key_prefix}_path_ep_list")
+    path_label: str = st.session_state.get(f"{key_prefix}_path_label", "")
+
+    if selected_node is not None:
+        ep_slices = _episodes_for_node(int(selected_node), labels, metadata)
+        ep_slices_by_idx: Dict[int, Tuple[int, int]] = {e[0]: (e[1], e[2]) for e in ep_slices}
+        all_eps = sorted(ep_slices_by_idx.keys())
+        _id_to_prefix = st.session_state.get(f"{key_prefix}_id_to_prefix", {})
+        title = _id_to_prefix.get(int(selected_node), f"Node {selected_node}")
+        st.caption(f"**{title}**")
+        _show_one_video_panel(
+            all_eps, ep_slices_by_idx, mp4_dir, mp4_index,
+            f"{key_prefix}_node_{selected_node}", fps,
+        )
+    elif path_eps:
+        st.caption(f"**{path_label}**" if path_label else "**Selected path**")
+        _show_one_video_panel(
+            path_eps, {}, mp4_dir, mp4_index,
+            f"{key_prefix}_path", fps,
+        )
+    else:
+        st.info("Click a node or a path button to see videos here.")
+
+
+def _show_one_video_panel(
+    ep_list: List[int],
+    ep_slices_by_idx: Dict[int, Tuple[int, int]],
+    mp4_dir: Optional[Path],
+    mp4_index: Dict,
+    key_prefix: str,
+    fps: int,
+) -> None:
+    """Render one episode video with prev / next controls below."""
+    from policy_doctor.streamlit_app.user_study.graph_explorer import _find_mp4_episode
+    from policy_doctor.streamlit_app.components.mp4_player import mp4_player
+
+    n = len(ep_list)
+    if n == 0:
+        st.info("No episodes for this selection.")
+        return
+
+    vp_key = f"{key_prefix}_vid_page"
+    vp = max(0, min(st.session_state.get(vp_key, 0), n - 1))
+    ep_idx = ep_list[vp]
+    ep_entry = _find_mp4_episode(ep_idx, mp4_index)
+
+    if ep_entry and mp4_dir:
+        ts_range = ep_slices_by_idx.get(ep_idx)
+        success = ep_entry.get("success")
+        status = "✓ Success" if success is True else "✗ Failure" if success is False else ""
+        st.caption(f"Episode {ep_idx} — {status}")
+        mp4_player(
+            mp4_dir / ep_entry["path"],
+            key=f"{key_prefix}_vid_{ep_idx}",
+            max_height_px=300,
+            slice_start=ts_range[0] if ts_range else None,
+            slice_end=ts_range[1] if ts_range else None,
+            total_frames=ep_entry.get("frame_count"),
+            fps=fps,
+        )
+    else:
+        st.warning(f"No video found for episode {ep_idx}.")
+
+    # Prev / Next controls below the video
+    c1, c2, c3 = st.columns([1, 4, 1])
+    with c1:
+        if st.button("←", key=f"{key_prefix}_prev", disabled=(vp == 0)):
+            st.session_state[vp_key] = vp - 1
+            st.rerun()
+    c2.markdown(
+        f"<div style='text-align:center;padding-top:4px;color:#888;font-size:0.82em;'>"
+        f"{vp + 1} / {n}</div>",
+        unsafe_allow_html=True,
+    )
+    with c3:
+        if st.button("→", key=f"{key_prefix}_next", disabled=(vp >= n - 1)):
+            st.session_state[vp_key] = vp + 1
+            st.rerun()

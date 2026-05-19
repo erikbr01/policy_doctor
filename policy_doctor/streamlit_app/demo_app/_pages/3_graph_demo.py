@@ -605,10 +605,10 @@ else:
             st.warning(f"Temporal layout failed ({e}); falling back to BFS-layered.")
     color_override: Optional[Dict[int, str]] = None
     _SPECIAL = {SUCCESS_NODE_ID, FAILURE_NODE_ID, START_NODE_ID, END_NODE_ID}
+    _OUTCOME_BINS = ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    def _div(t: float) -> str:
+        return _OUTCOME_BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
     if color_by == "value" and node_values:
-        def _div(t: float) -> str:
-            t = max(0.0, min(1.0, t))
-            return f"rgb({int(214+(44-214)*t)},{int(39+(160-39)*t)},{int(40+(44-40)*t)})"
         non_term = [v for cid, v in node_values.items() if cid not in _SPECIAL]
         vr = max((abs(v) for v in non_term), default=1.0) or 1.0
         color_override = {

@@ -463,45 +463,31 @@ function render(data, svgW, svgH) {
     // hit-area circles below stay invisible regardless of the canvas
     // colour; only the visible shape gets the dark outline.
     const nodeStroke = theme === "light" ? "#1a1a1a" : "white";
+    const _GLYPH = { star: "★", x: "✕", diamond: "▶", square: "■" };
+    const _isSpecial = node.symbol in _GLYPH;
     let shape;
-    if (node.symbol === "diamond") {
-      const s = r * 1.3;
-      shape = svgEl("polygon", {
-        points: `0,${-s} ${s},0 0,${s} ${-s},0`,
+    let _innerGlyph = null;
+    if (_isSpecial) {
+      // All special nodes → circle + inner glyph so radius is governed by
+      // nodeSizeSlope like any cluster node.
+      shape = svgEl("circle", {
+        r: r,
         fill: node.color,
         stroke: nodeStroke,
         "stroke-width": "2",
         class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
       });
-    } else if (node.symbol === "star") {
-      // Rendered glyph height ≈ 1.17 × font-size (measured via getBBox).
-      // Strict visual parity with a circle of the same r would be 1.71r;
-      // we use 2.0r so the terminal symbols are about 17% larger than
-      // an equally-frequent cluster — readable but still proportional.
-      shape = svgEl("text", {
+      _innerGlyph = svgEl("text", {
         "text-anchor": "middle",
         "dominant-baseline": "central",
-        "font-size": r * 2.0,
+        "font-size": String(Math.max(10, Math.round(r * 1.1))),
         "user-select": "none",
-        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
+        "pointer-events": "none",
+        fill: "#fff",
       });
-      shape.textContent = "★";
-      shape.style.fill = node.color;
-    } else if (node.symbol === "x") {
-      shape = svgEl("text", {
-        "text-anchor": "middle",
-        "dominant-baseline": "central",
-        "font-size": r * 2.0,
-        "user-select": "none",
-        "font-weight": "bold",
-        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
-      });
-      shape.textContent = "✕";
-      shape.style.fill = node.color;
+      _innerGlyph.textContent = _GLYPH[node.symbol];
     } else {
-      // Selection is conveyed by the cyan halo ring rendered above; the
-      // node itself keeps its theme-aware outline so light mode reads
-      // correctly on a white canvas.
+      // Regular cluster node — plain circle.
       shape = svgEl("circle", {
         r: r,
         fill: node.color,
@@ -528,6 +514,7 @@ function render(data, svgW, svgH) {
     const hit = svgEl("circle", { r: Math.max(r + 8, 18), fill: "transparent", class: "node-circle", cursor: "pointer" });
 
     g.appendChild(shape);
+    if (_innerGlyph) g.appendChild(_innerGlyph);
     g.appendChild(hit);
 
     // Label. Terminal nodes (★ SUCCESS, ✕ FAILURE, ■ END) get the
@@ -636,11 +623,8 @@ function nodeRadius(node, maxEpisodes) {
 // so their effective radius is ~1.17 r. Edges land at this distance plus
 // a tiny gap so the arrow tip just touches the visible node.
 function visualRadius(node, maxEpisodes) {
-  const r = nodeRadius(node, maxEpisodes);
-  if (!node) return r;
-  if (node.symbol === "star" || node.symbol === "x") return r * 1.17;
-  if (node.symbol === "diamond") return r * 1.3;
-  return r;
+  // All nodes are circles; edge endpoints land at the circle rim.
+  return nodeRadius(node, maxEpisodes);
 }
 
 function svgEl(tag, attrs = {}) {
