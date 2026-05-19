@@ -55,6 +55,13 @@ TASK_LAYER_OVERRIDE["pi05_libero_spatial"]="pi05"
 TASK_LAYER_OVERRIDE["pi05_libero_object"]="pi05"
 TASK_LAYER_OVERRIDE["pi05_libero_goal"]="pi05"
 
+# pi05 UMAP init: use 'random' to skip spectral embedding, which is very slow
+# for 100k+ samples with a disconnected k-NN graph (common in high-dim policy activations).
+declare -A TASK_UMAP_INIT_OVERRIDE
+TASK_UMAP_INIT_OVERRIDE["pi05_libero_spatial"]="random"
+TASK_UMAP_INIT_OVERRIDE["pi05_libero_object"]="random"
+TASK_UMAP_INIT_OVERRIDE["pi05_libero_goal"]="random"
+
 TRUNK_ROOT="/tmp/sweep_trunks"
 mkdir -p "$TRUNK_ROOT"
 
@@ -91,6 +98,7 @@ for entry in "${TASKS[@]}"; do
             continue
         fi
 
+        umap_init_override="${TASK_UMAP_INIT_OVERRIDE[$task]:-spectral}"
         rep_flags=()
         for ((i=1; i<${#parts[@]}; i++)); do
             flag="${parts[i]}"
@@ -105,14 +113,15 @@ for entry in "${TASKS[@]}"; do
 
         trunk_dir="$TRUNK_ROOT/${task}_${rep_id}"
         if [ ! -f "$trunk_dir/timestep_embeddings.npy" ]; then
-            echo "Building trunk for $task/$rep_id..."
+            echo "Building trunk for $task/$rep_id (umap_init=$umap_init_override)..."
             python scripts/build_alt_clustering.py \
                 "${rep_flags[@]}" \
                 --eval_dir "$eval_dir" \
                 --out_dir "$trunk_dir" \
                 --timestep_embed_only \
                 --normalize none --prescale standard --reducer umap \
-                --umap_n_components 50 --umap_n_jobs -1 || {
+                --umap_n_components 50 --umap_n_jobs -1 \
+                --umap_init "$umap_init_override" || {
                     echo "  [warn] trunk build failed for $task/$rep_id; skipping rep"
                     continue   # skip only this rep, not the whole task
                 }
