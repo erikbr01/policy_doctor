@@ -604,13 +604,14 @@ function render(data, svgW, svgH) {
   }
   svg.appendChild(nodeGroup);
 
-  // Background click → deselect everything
+  // Background click → deselect everything (always fire so Python can also
+  // clear path selection, which lives only in Streamlit session state)
   svg.onclick = function(evt) {
-    if (selectedNodeId === null && selectedEdge === null) return;
+    const hadSelection = selectedNodeId !== null || selectedEdge !== null;
     selectedNodeId = null;
     selectedEdge = null;
     sendValue([-1, ++clickSeq]);
-    render(graphData, svgW, svgH);
+    if (hadSelection) render(graphData, svgW, svgH);
   };
 }
 

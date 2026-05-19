@@ -419,14 +419,16 @@ def render_graph_component(
                 except (TypeError, ValueError):
                     return selected
                 if node_id == -1:
-                    st.session_state.pop(f"{key}_selected", None)
-                    st.session_state.pop(f"{key}_selected_edge", None)
+                    _cleared = bool(st.session_state.pop(f"{key}_selected", None) is not None
+                                    or st.session_state.pop(f"{key}_selected_edge", None) is not None)
                     # key = f"{key_prefix}_graph" — also clear path selection
                     _kp = key[:-6] if key.endswith("_graph") else key
                     for _k in ("_path_ep_list", "_highlighted_path",
                                "_path_label", "_path_synth_ids"):
-                        st.session_state.pop(f"{_kp}{_k}", None)
-                    st.rerun()
+                        if st.session_state.pop(f"{_kp}{_k}", None) is not None:
+                            _cleared = True
+                    if _cleared:
+                        st.rerun()
                 if node_id in graph.nodes:
                     st.session_state[f"{key}_selected"] = node_id
                     st.session_state.pop(f"{key}_selected_edge", None)
