@@ -633,6 +633,14 @@ else:
     )
     def _div(t: float) -> str:
         return _OUTCOME_BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
+    _SUCCESS_COL = "#0072B2" if colorblind_mode else "#2ca02c"
+    _FAILURE_COL = "#D55E00" if colorblind_mode else "#d62728"
+    # Always override terminal node colors so colorblind mode applies everywhere
+    color_override = {
+        nid: (_SUCCESS_COL if node.cluster_id == SUCCESS_NODE_ID else _FAILURE_COL)
+        for nid, node in bg.nodes.items()
+        if node.cluster_id in (SUCCESS_NODE_ID, FAILURE_NODE_ID)
+    }
     if color_by == "value" and node_values:
         non_term = [v for cid, v in node_values.items() if cid not in _SPECIAL]
         vr = max((abs(v) for v in non_term), default=1.0) or 1.0
