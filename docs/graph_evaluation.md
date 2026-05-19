@@ -103,7 +103,7 @@ disagree on cluster assignment. Let $\ell_t$ be the cluster label of the window 
 frame $t$. The swap rate is:
 
 $$
-\text{swap\_rate} = \frac{\#\{t : \ell_t \neq \ell_{t-1}\}}{\text{total frames}}
+\text{swap rate} = \frac{\#\{t : \ell_t \neq \ell_{t-1}\}}{\text{total frames}}
 $$
 
 Raw swap rate (per-window) is stride-dependent: at stride $S$, adjacent window pairs
