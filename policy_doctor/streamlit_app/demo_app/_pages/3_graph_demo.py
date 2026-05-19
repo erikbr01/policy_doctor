@@ -312,7 +312,7 @@ def _filter(rep=None, k=None, w=None, s=None, agg=None):
     return out
 
 
-_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 5}
+_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 15}
 
 def _pick(label, options, key, default=None):
     if not options:
