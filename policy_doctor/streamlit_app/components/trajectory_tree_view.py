@@ -701,7 +701,7 @@ def _show_one_video_panel(
         mp4_player(
             mp4_dir / ep_entry["path"],
             key=f"{key_prefix}_vid_{ep_idx}",
-            max_height_px=300,
+            max_height_px=220,
             slice_start=ts_range[0] if ts_range else None,
             slice_end=_slice_end,
             total_frames=ep_entry.get("frame_count"),
@@ -711,18 +711,27 @@ def _show_one_video_panel(
     else:
         st.warning(f"No video found for episode {ep_idx}.")
 
-    # Prev / Next controls below the video
-    c1, c2, c3 = st.columns([1, 4, 1])
-    with c1:
-        if st.button("←", key=f"{key_prefix}_prev", disabled=(vp == 0)):
-            st.session_state[vp_key] = vp - 1
-            st.rerun()
-    c2.markdown(
-        f"<div style='text-align:center;padding-top:4px;color:#888;font-size:0.82em;'>"
-        f"{vp + 1} / {n}</div>",
+    # Scrollable episode list — 3 compact buttons per row
+    st.markdown(
+        f"<div style='font-size:0.75em;color:#888;margin:6px 0 2px;'>"
+        f"{vp + 1} / {n} episodes</div>",
         unsafe_allow_html=True,
     )
-    with c3:
-        if st.button("→", key=f"{key_prefix}_next", disabled=(vp >= n - 1)):
-            st.session_state[vp_key] = vp + 1
-            st.rerun()
+    with st.container(height=min(200, max(60, ((n + 2) // 3) * 38)), border=False):
+        rows = [ep_list[i:i+3] for i in range(0, n, 3)]
+        for row_i, row in enumerate(rows):
+            cols = st.columns(3)
+            for col_j, ep in enumerate(row):
+                i = row_i * 3 + col_j
+                ep_e = _find_mp4_episode(ep, mp4_index)
+                icon = ("✓" if ep_e and ep_e.get("success") is True
+                        else "✗" if ep_e and ep_e.get("success") is False else "•")
+                with cols[col_j]:
+                    if st.button(
+                        f"{icon} {ep}",
+                        key=f"{key_prefix}_jump_{ep}",
+                        type="primary" if i == vp else "secondary",
+                        use_container_width=True,
+                    ):
+                        st.session_state[vp_key] = i
+                        st.rerun()
