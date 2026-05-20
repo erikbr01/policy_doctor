@@ -143,6 +143,15 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                     eval_dir_abs, window_width, stride, aggregation,
                 )
 
+            # Track per-run params on the manifest so downstream consumers
+            # (e.g. compute_data_support) can reproduce the exact windowing
+            # without depending on cfg matching at consumer time.
+            policy_emb_layer_for_manifest = (
+                OmegaConf.select(cfg, "clustering_policy_emb_layer")
+                if influence_source in ("policy_emb", "pi05_activations")
+                else None
+            )
+
             print(f"  Slice embeddings: {embeddings_arr.shape}")
             print(f"  Normalizing: {normalize}")
             embeddings_norm, normalizer_model = fit_normalize_embeddings(embeddings_arr, method=normalize)
@@ -164,6 +173,15 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
                 clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{k}"
                 k_output_dir = self.step_dir / "clustering" / f"k{k}"
+                extra_manifest = {
+                    "window_width": int(window_width),
+                    "stride": int(stride),
+                    "aggregation": aggregation,
+                    "umap_n_components": int(umap_n_components),
+                    "umap_prescale": umap_prescale,
+                }
+                if policy_emb_layer_for_manifest:
+                    extra_manifest["policy_emb_layer"] = policy_emb_layer_for_manifest
                 result_dir = save_clustering_result(
                     name=clustering_name,
                     cluster_labels=labels,
@@ -177,6 +195,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                     n_samples=len(labels),
                     embeddings_reduced=embeddings_reduced,
                     output_dir=k_output_dir,
+                    extra_manifest_fields=extra_manifest,
                 )
                 models_path = save_clustering_models(
                     result_dir=result_dir,

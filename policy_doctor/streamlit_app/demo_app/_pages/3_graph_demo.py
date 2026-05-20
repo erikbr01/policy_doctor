@@ -93,14 +93,33 @@ def _read_manifest(path_str: str) -> Dict:
 
 
 @st.cache_data(show_spinner=False)
-def _load_clustering(path_str: str) -> Tuple[np.ndarray, List[Dict], Optional[np.ndarray], Dict]:
+def _load_clustering(
+    path_str: str,
+) -> Tuple[np.ndarray, List[Dict], Optional[np.ndarray], Dict, Optional[Dict]]:
     p = Path(path_str)
     labels = np.load(p / "cluster_labels.npy").astype(np.int64)
     with open(p / "metadata.json") as f:
         meta = json.load(f)
     emb_path = p / "embeddings_reduced.npy"
     emb = np.load(emb_path) if emb_path.exists() else None
-    return labels, meta, emb, _read_manifest(path_str)
+    # Optional sibling artifact written by compute_data_support; absent on
+    # InfEmbed / TRAK clusterings and on policy_emb clusterings that pre-date
+    # the data-support step. We tolerate missing/malformed files because the
+    # graph itself is still useful without data-support colouring.
+    data_support: Optional[Dict] = None
+    ds_path = p / "data_support.json"
+    if ds_path.exists():
+        try:
+            with open(ds_path) as f:
+                raw = json.load(f)
+            metrics = raw.get("metrics") or {}
+            for mname, by_cid in metrics.items():
+                metrics[mname] = {int(k): v for k, v in by_cid.items()}
+            raw["metrics"] = metrics
+            data_support = raw
+        except Exception:
+            data_support = None
+    return labels, meta, emb, _read_manifest(path_str), data_support
 
 
 # ── Sidebar: appearance + task + cascading clustering picker ────────────────
@@ -376,16 +395,20 @@ if not filt:
     st.stop()
 clu_path = filt[0]["path"]
 
-labels, meta, emb, manifest = _load_clustering(str(clu_path))
+labels, meta, emb, manifest, data_support = _load_clustering(str(clu_path))
 level = manifest.get("level", "rollout")
 
 # When the clustering changes, clear stale node/edge selection and bump the
 # render token so the Markov graph iframe fully re-renders with new data.
+# Also drop data-support metric/stat selectors — they may name metrics the
+# new clustering didn't compute, which would crash the selectbox at render time.
 _prev_clu = st.session_state.get("_demo_prev_clu")
 if _prev_clu != str(clu_path):
     st.session_state["_demo_prev_clu"] = str(clu_path)
     for _sfx in ("_selected", "_selected_edge", "_last_click"):
         st.session_state.pop(f"demo_markov_graph{_sfx}", None)
+    for _key in ("ds_metric_sel", "ds_stat_sel"):
+        st.session_state.pop(_key, None)
     _rt = "demo_markov_graph_render_token"
     st.session_state[_rt] = st.session_state.get(_rt, 0) + 1
 
@@ -475,6 +498,11 @@ with c_color:
             "value": "Value V(s) (Bellman)",
             "timesteps": "Timestep count (viridis)",
         }
+    # Data-support coloring is only available when compute_data_support has
+    # produced a sibling JSON for this clustering (policy_emb sources only).
+    if data_support is not None and data_support.get("metrics"):
+        color_opts.append("data_support")
+        color_labels["data_support"] = "Data support (training-demo density)"
     # For the Markov views, the value-based divergent red→green colouring
     # is the most informative default (and what the paper figures use).
     # For trees we keep the cluster-id palette as the entry point.
@@ -484,6 +512,42 @@ with c_color:
         options=color_opts,
         format_func=lambda v: color_labels[v],
         index=_default_color_idx,
+    )
+
+# Data-support metric + statistic selectors live below the color dropdown so
+# users don't have to scroll back to the sidebar to swap views. Only shown
+# when "data_support" is the active mode AND the sibling JSON is present.
+ds_metric: Optional[str] = None
+ds_stat: str = "median"
+if color_by == "data_support" and data_support is not None:
+    _metrics_avail = sorted(data_support["metrics"].keys())
+    _metric_help = {
+        "count_in_radius": "Per slice: # training demos within radius r in joint UMAP space (higher = better-supported).",
+        "binary_coverage": "Per slice: 1 if ≥1 demo within radius r (per-cluster summary = coverage fraction).",
+        "knn_mean_distance": "Per slice: mean distance to k nearest demos (lower = better-supported). Inverted to high=good below.",
+        "knn_max_distance": "Per slice: distance to k-th nearest demo (lower = better worst-case). Inverted to high=good below.",
+        "kde_log_density": "Per slice: Gaussian-KDE log p_demo (higher = better-supported).",
+    }
+    _stat_opts = ["median", "mean", "q10", "q90"]
+    dsc1, dsc2 = st.columns([2, 1])
+    with dsc1:
+        ds_metric = st.selectbox(
+            "Metric",
+            options=_metrics_avail,
+            index=0,
+            help=" · ".join(f"**{m}**: {_metric_help.get(m, '')}" for m in _metrics_avail),
+            key="ds_metric_sel",
+        )
+    with dsc2:
+        ds_stat = st.selectbox(
+            "Summary stat", options=_stat_opts, index=0, key="ds_stat_sel"
+        )
+    st.caption(
+        f"Coloring nodes by **{ds_stat}** of *{ds_metric}* across slices. "
+        "Saturated = well-supported by training data; pale = under-supported "
+        "(possibly OOD behaviour). Configured radius "
+        f"r = {data_support.get('_config', {}).get('radius', '?')}; "
+        f"n_demo_windows = {data_support.get('_config', {}).get('n_demo_windows', '?')}."
     )
 
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
@@ -568,6 +632,27 @@ if color_by == "value":
         st.warning(f"compute_values() failed ({e}); falling back to ID coloring.")
         color_by = "id"
 
+# Build per-cluster data-support dict (signed so that "higher = better
+# supported" regardless of the underlying metric — kNN distance metrics are
+# inverted so the sequential palette stays interpretable).
+_INVERTED_METRICS = {"knn_mean_distance", "knn_max_distance"}
+data_support_by_cluster: Dict[int, float] = {}
+if color_by == "data_support" and ds_metric and data_support is not None:
+    _by_cid = data_support["metrics"].get(ds_metric, {})
+    for cid, rec in _by_cid.items():
+        v = rec.get(ds_stat)
+        if v is None:
+            continue
+        if ds_metric in _INVERTED_METRICS:
+            v = -float(v)
+        data_support_by_cluster[int(cid)] = float(v)
+    if not data_support_by_cluster:
+        st.warning(
+            f"No per-cluster data-support values for metric={ds_metric!r}; "
+            "falling back to ID coloring."
+        )
+        color_by = "id"
+
 # ── Filter summary: how many nodes / edges does the threshold drop ───────────
 _n_nodes_total = len(bg.nodes)
 _n_edges_total = sum(len(t) for t in bg.transition_counts.values())
@@ -592,6 +677,12 @@ if not is_tree:
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 if is_tree:
+    # node_values doubles as the data_support payload when color_by ==
+    # "data_support"; the tree renderer dispatches on color_mode and the
+    # cluster_id-keyed lookup is identical to the "value" mode.
+    _tree_node_values = (
+        data_support_by_cluster if color_by == "data_support" else node_values
+    )
     render_trajectory_tree(
         labels=labels,
         metadata=meta,
@@ -599,7 +690,7 @@ if is_tree:
         min_branch=int(min_branch),
         max_depth_cap=int(max_depth),
         color_mode=color_by,
-        node_values=node_values,
+        node_values=_tree_node_values,
         cluster_names=None,
         mp4_dir=_MP4_DIR,
         mp4_index=_MP4_INDEX,
@@ -664,6 +755,42 @@ else:
             t = np.log1p(bg.nodes[nid].num_timesteps) / ts_max
             idx = int(min(len(viridis) - 1, max(0, t * (len(viridis) - 1))))
             color_override[nid] = viridis[idx]
+    elif color_by == "data_support" and data_support_by_cluster:
+        # Sequential palette: pale = under-supported, saturated = well-
+        # supported.  Viridis when colorblind for perceptual uniformity;
+        # otherwise ColorBrewer YlGn (yellow → dark green).
+        if colorblind_mode:
+            try:
+                import plotly.express as _px
+                _ds_palette = _px.colors.sequential.Viridis
+            except Exception:
+                _ds_palette = ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"]
+        else:
+            _ds_palette = [
+                "#ffffe5", "#f7fcb9", "#d9f0a3", "#addd8e",
+                "#78c679", "#41ab5d", "#238443", "#005a32",
+            ]
+        _ds_vals_only = [
+            data_support_by_cluster[bg.nodes[nid].cluster_id]
+            for nid in bg.nodes
+            if nid not in _SPECIAL
+            and bg.nodes[nid].cluster_id in data_support_by_cluster
+        ]
+        if _ds_vals_only:
+            _ds_lo = float(min(_ds_vals_only))
+            _ds_hi = float(max(_ds_vals_only))
+            if _ds_hi <= _ds_lo:
+                _ds_hi = _ds_lo + 1.0
+            for nid in bg.nodes:
+                if nid in _SPECIAL:
+                    continue
+                cid = bg.nodes[nid].cluster_id
+                if cid not in data_support_by_cluster:
+                    color_override[nid] = "#bfbfbf"
+                    continue
+                t = (float(data_support_by_cluster[cid]) - _ds_lo) / (_ds_hi - _ds_lo)
+                idx = int(min(len(_ds_palette) - 1, max(0, t * (len(_ds_palette) - 1))))
+                color_override[nid] = _ds_palette[idx]
 
     render_graph_full_width(
         graph=bg,
