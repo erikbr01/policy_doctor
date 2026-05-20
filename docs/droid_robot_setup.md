@@ -14,16 +14,17 @@ DATA COLLECTION (droid conda env, on NUC / workstation)
 
 FORMAT CONVERSION (policy_doctor env, on workstation)
 ──────────────────────────────────────────────────────
-  scripts/convert_droid_to_robomimic.py
+  scripts/convert_droid_hdf5_debug.py  (SVO2 recordings — current setup)
+  scripts/convert_droid_to_robomimic.py  (MP4 recordings — legacy)
     →  data/source/droid/droid_dataset.hdf5               (robomimic HDF5 format)
 
-TRAINING + ATTRIBUTION (cupid_torch2 env)
-──────────────────────────────────────────
+TRAINING + ATTRIBUTION (mimicgen_torch2 env)
+─────────────────────────────────────────────
   python -m policy_doctor.scripts.run_pipeline data_source=droid_hdf5
     steps=[train_baseline, train_attribution, run_clustering, ...]
 
-INFERENCE (cupid_torch2 env, with policy server running)
-─────────────────────────────────────────────────────────
+INFERENCE (mimicgen_torch2 env, with policy server running)
+────────────────────────────────────────────────────────────
   DROIDInferenceRunner  →  DROIDInferenceEnv  →  RobotEnv (Franka)
                         └→  WebSocketPolicy  →  openpi server (pi0/pi0.5)
                          or HttpPolicy       →  policy_server.py (diffusion_policy)
@@ -32,6 +33,89 @@ INFERENCE (cupid_torch2 env, with policy server running)
 ---
 
 ## Step 1 — Convert raw trajectories to robomimic HDF5
+
+Two converters exist depending on how recordings were captured:
+
+| Script | Recording format | When to use |
+|---|---|---|
+| `convert_droid_hdf5_debug.py` | `recordings/SVO/` — ZED SVO2 files | **Current setup** (kendama collections May 2026+) |
+| `convert_droid_to_robomimic.py` | `recordings/MP4/` — pre-decoded video | Older collections or when ZED SDK is unavailable |
+
+### Option A — SVO2 converter (ZED SDK, recommended)
+
+Reads images directly from the ZED SVO2 files using `pyzed`. Faster than MP4 decoding and lossless. Requires one-time machine setup below.
+
+```bash
+cd /path/to/policy_doctor
+LD_LIBRARY_PATH=~/data/zed_sdk_extracted/lib:/usr/lib/x86_64-linux-gnu \
+conda run -n policy_doctor --no-capture-output \
+python scripts/convert_droid_hdf5_debug.py \
+    --input_path ~/data/droid_data/data/success/2026-05-19 \
+    --output_path ~/data/droid_data/kendama_may19.hdf5 \
+    --image_size 256 256 \
+    --zed_settings ~/data/zed_settings \
+    --num_workers 4
+```
+
+To combine multiple date folders, create a staging directory with symlinks and pass it as `--input_path` (the script uses `followlinks=True`):
+
+```bash
+mkdir -p ~/data/droid_data/staging_may19_may20
+ln -sf ~/data/droid_data/data/success/2026-05-19 ~/data/droid_data/staging_may19_may20/
+ln -sf ~/data/droid_data/data/success/2026-05-20 ~/data/droid_data/staging_may19_may20/
+
+LD_LIBRARY_PATH=~/data/zed_sdk_extracted/lib:/usr/lib/x86_64-linux-gnu \
+conda run -n policy_doctor --no-capture-output \
+python scripts/convert_droid_hdf5_debug.py \
+    --input_path ~/data/droid_data/staging_may19_may20 \
+    --output_path ~/data/droid_data/kendama_may19_may20.hdf5 \
+    --image_size 256 256 \
+    --zed_settings ~/data/zed_settings \
+    --num_workers 4 \
+    2>&1 | tee ~/data/droid_data/kendama_may19_may20_convert.log
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--input_path` | required | Root folder containing DROID episode dirs (recursively finds `trajectory.h5`) |
+| `--output_path` | required | Destination HDF5 path |
+| `--image_size` | `256 256` | H W to resize images to (256×256 used for kendama baseline) |
+| `--zed_settings` | `/mnt/ssdB/erik/zed_settings` | Directory containing `SN<serial>.conf` calibration files |
+| `--num_workers` | `4` | Parallel SVO2 decode workers |
+| `--train_frac` | `0.85` | Fraction of trajectories for `mask/train` |
+| `--val_frac` | `0.10` | Fraction for `mask/valid`; remainder → `mask/test` |
+
+Camera keys in output: `hand_camera_image` (wrist, serial 14313307), `exterior_image_1_left` (serial 36716034).
+
+#### One-time machine setup for SVO2 conversion
+
+```bash
+# 1. Extract ZED SDK (do NOT run the install script — just extract the files)
+~/data/ZED_SDK_Ubuntu22_cuda12.1_v4.2.5.zstd.run \
+    --noexec --target ~/data/zed_sdk_extracted --noprogress
+
+# 2. Place calibration files with the standard ZED naming convention
+cp ~/data/zed_settingsSN14313307.conf ~/data/zed_settings/SN14313307.conf
+cp ~/data/zed_settingsSN36716034.conf ~/data/zed_settings/SN36716034.conf
+
+# 3. Install NVIDIA video codec libraries (required by pyzed at runtime)
+#    Replace 580 with the driver version from `nvidia-smi`
+sudo apt-get install -y libnvidia-decode-580-server libnvidia-encode-580-server \
+                        libturbojpeg-dev
+
+# 4. Install pyzed into the policy_doctor conda env
+conda run -n policy_doctor pip install ~/data/pyzed-4.2-cp39-cp39-linux_x86_64.whl
+
+# 5. Verify
+LD_LIBRARY_PATH=~/data/zed_sdk_extracted/lib:/usr/lib/x86_64-linux-gnu \
+conda run -n policy_doctor python -c "import pyzed.sl as sl; print('pyzed ok')"
+```
+
+> **Note:** `libturbojpeg.so.0` is needed by pyzed but lives in `/usr/lib/x86_64-linux-gnu`, so both paths must be in `LD_LIBRARY_PATH`. The NVIDIA decode/encode packages must match the installed driver version (check with `nvidia-smi`).
+
+---
+
+### Option B — MP4 converter
 
 ```bash
 conda activate policy_doctor
@@ -108,7 +192,7 @@ python -m policy_doctor.scripts.run_pipeline \
 
 ## Step 3 — Inference
 
-The inference stack runs in `cupid_torch2`. It needs either the openpi server (for pi0/pi0.5) or the Flask policy server (for diffusion_policy checkpoints) running separately.
+The inference stack runs in `mimicgen_torch2`. It needs either the openpi server (for pi0/pi0.5) or the Flask policy server (for diffusion_policy checkpoints) running separately.
 
 ### Launch a policy server
 
@@ -272,7 +356,7 @@ Images are resized via `openpi_client.image_tools.resize_with_pad` to 224×224 b
 |---|---|
 | Data collection | `droid` (on NUC / workstation, with ZED SDK + Franka RDK) |
 | Format conversion | `policy_doctor` |
-| Training + attribution | `cupid_torch2` |
-| Inference (real robot) | `cupid_torch2` (needs `droid` package on `PYTHONPATH`) |
+| Training + attribution | `mimicgen_torch2` |
+| Inference (real robot) | `mimicgen_torch2` (needs `droid` package on `PYTHONPATH`) |
 
 The inference env requires `~/src_droid` on `sys.path`. `DROIDInferenceEnv` adds it automatically via `_ensure_droid_on_path()`.

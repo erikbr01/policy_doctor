@@ -41,7 +41,7 @@ EXT1_SERIAL = "36716034"
 
 def _find_trajectories(root: str) -> list[str]:
     folders = []
-    for dirpath, _, files in os.walk(root):
+    for dirpath, _, files in os.walk(root, followlinks=True):
         if "trajectory.h5" in files:
             folders.append(dirpath)
     return sorted(folders)
