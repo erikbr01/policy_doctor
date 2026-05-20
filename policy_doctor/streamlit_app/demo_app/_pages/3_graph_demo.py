@@ -1085,3 +1085,65 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
                         height=300, yaxis=dict(range=[0, 1.15], title="Transition prob."),
                         margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                     st.plotly_chart(_fig_tr, use_container_width=True, key="dbg_tr")
+
+            # ── Data-support distribution per node ───────────────────────
+            # Shows, for each active node, the spread of per-slice data-support
+            # values — i.e. how broad / tight the training-data envelope around
+            # that behaviour is. Complements the median-only color encoding.
+            if data_support is not None and data_support.get("metrics"):
+                _ds_avail = sorted(data_support["metrics"].keys())
+                _ds_pick = st.selectbox(
+                    "Data-support metric (distribution)",
+                    options=_ds_avail,
+                    index=(_ds_avail.index(ds_metric) if ds_metric in _ds_avail else 0),
+                    key="dbg_ds_metric",
+                    help=(
+                        "Per-slice raw values from data_support.json — one violin "
+                        "per active node. Inverted metrics (knn_*_distance) are "
+                        "shown as-is (lower = better-supported)."
+                    ),
+                )
+                _ds_by_cid = data_support["metrics"].get(_ds_pick, {})
+                _present_lbls = []
+                _absent_lbls = []
+                _ds_fig = go.Figure()
+                for _nid in _active_nodes:
+                    _rec = _ds_by_cid.get(int(_nid))
+                    _lbl = _node_labels.get(_nid, str(_nid))
+                    if _rec is None or not _rec.get("raw"):
+                        _absent_lbls.append(_lbl)
+                        continue
+                    _present_lbls.append(_lbl)
+                    _ds_fig.add_trace(go.Violin(
+                        y=list(_rec["raw"]),
+                        name=f"{_lbl} (n={_rec.get('n_slices', len(_rec['raw']))})",
+                        box_visible=True,
+                        meanline_visible=True,
+                        points="outliers",
+                    ))
+                if _present_lbls:
+                    _radius = data_support.get("_config", {}).get("radius", "?")
+                    _y_axis_title = {
+                        "count_in_radius": f"# demos within r={_radius}",
+                        "binary_coverage": f"≥1 demo within r={_radius}? (0/1)",
+                        "knn_mean_distance": "mean dist to k nearest demos",
+                        "knn_max_distance": "dist to k-th nearest demo",
+                        "kde_log_density": "log p_demo (Gaussian KDE)",
+                    }.get(_ds_pick, _ds_pick)
+                    _ds_fig.update_layout(
+                        title=f"Training-data support distribution per node — {_ds_pick}",
+                        height=360,
+                        yaxis_title=_y_axis_title,
+                        xaxis_title="Behavior",
+                        margin=dict(l=0, r=0, t=36, b=20),
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        showlegend=False,
+                    )
+                    st.plotly_chart(_ds_fig, use_container_width=True, key="dbg_ds_dist")
+                if _absent_lbls:
+                    st.caption(
+                        "No per-slice data-support values for: "
+                        + ", ".join(_absent_lbls)
+                        + " (terminal nodes or clusters with no slices)."
+                    )

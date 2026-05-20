@@ -61,27 +61,47 @@ def _resolve_checkpoint(train_dir: pathlib.Path, train_ckpt: str) -> pathlib.Pat
 
 
 def _episode_lengths_from_dataset(dataset) -> np.ndarray:
-    """Return per-demo sample counts.
+    """Return per-training-demo sample counts in DataLoader-iteration order.
 
-    The diffusion_policy sequence sampler stores ``indices`` as ``(N, 4)``
-    where each row is ``(buffer_start, buffer_end, sample_start, sample_end)``
-    — buffer_start is the position in the concatenated replay buffer, NOT
-    a demo idx, so deriving demo counts from ``indices`` directly is unsafe.
-    Instead, attribute the demo lengths to the replay buffer's
-    ``episode_ends`` (cumulative).  The output length is then scaled at the
-    call site to match ``len(dataset)`` (the sampler may pad with a few
-    extras per demo depending on ``pad_before`` / ``pad_after``).
+    Critical: the replay buffer holds *every* demo in the HDF5 (training +
+    val + holdout), but the diffusion_policy training mask only emits
+    sampler indices for the training subset (e.g. 192 of 300 demos when
+    ``dataset_mask_kwargs.train_ratio=0.64`` + ``uniform_quality=True``).
+    If we attribute the (N_samples, D) embedding stack uniformly across
+    *all* demos in the replay buffer, every per-demo split is wrong by the
+    holdout ratio and demo boundaries leak across.
+
+    Correct attribution: each ``sampler.indices`` row is
+    ``(buffer_start, buffer_end, sample_start, sample_end)`` where
+    ``buffer_start`` is the position in the concatenated replay buffer.
+    Digitising those into the ``episode_ends`` bins gives the demo idx per
+    sample; ``np.bincount`` over demos then yields the actual training
+    sample count per demo.  Output preserves DataLoader order (samples
+    are emitted demo-by-demo, ascending), and demos with zero training
+    contribution are dropped — so the returned array has one entry per
+    *contributing* demo.
     """
     rb = getattr(dataset, "replay_buffer", None)
-    if rb is not None and hasattr(rb, "episode_ends"):
-        ends = np.asarray(rb.episode_ends[:], dtype=np.int64)
-        starts = np.concatenate([[0], ends[:-1]])
-        return (ends - starts).astype(np.int64)
-
-    raise RuntimeError(
-        "Cannot determine episode lengths from dataset: replay_buffer."
-        "episode_ends not available."
-    )
+    sampler = getattr(dataset, "sampler", None)
+    if rb is None or sampler is None or not hasattr(sampler, "indices"):
+        raise RuntimeError(
+            "Cannot determine episode lengths from dataset: missing "
+            "replay_buffer.episode_ends or sampler.indices."
+        )
+    ends = np.asarray(rb.episode_ends[:], dtype=np.int64)
+    indices = np.asarray(sampler.indices)
+    if indices.ndim != 2 or indices.shape[1] < 1:
+        raise RuntimeError(
+            f"sampler.indices has unexpected shape {indices.shape}; "
+            "expected (N, ≥1) with buffer_start in column 0."
+        )
+    buf_start = indices[:, 0].astype(np.int64)
+    # side='right' so a buf_start equal to an end goes to the *next* demo —
+    # episode_ends marks the past-the-end position of each demo.
+    demo_idx = np.searchsorted(ends, buf_start, side="right")
+    counts = np.bincount(demo_idx, minlength=len(ends))
+    # Drop demos that didn't contribute (i.e. masked-out by the train mask).
+    return counts[counts > 0].astype(np.int64)
 
 
 def _patch_dataset_path(cfg, dataset_path_override: Optional[str]) -> None:
@@ -193,11 +213,14 @@ def main():
         N = sum(int(x) for x in ep_lens)
         print(f"Split {split_name}: {len(ds)} samples across {len(ep_lens)} demos (sum ep_lens = {N})")
         if N != len(ds):
-            # Some sampler configs (pad_before/pad_after) make these diverge.
-            # The actual embedding count comes from the dataloader; we just
-            # trust the per-demo split as a best-effort partition.
-            print(f"  NOTE: sum(ep_lens)={N} differs from len(ds)={len(ds)}; "
-                  f"persisting len(ds) as the canonical total.")
+            # Should match exactly after the sampler-indices fix; if it
+            # doesn't, the dataset/sampler shape has changed and we should
+            # know rather than silently distribute.
+            raise RuntimeError(
+                f"sum(ep_lens)={N} != len(ds)={len(ds)} for split {split_name!r}. "
+                "Refusing to persist a mismatched embedding/length pair; "
+                "investigate the dataset's sampler.indices structure."
+            )
 
         loader = DataLoader(
             ds,
@@ -237,18 +260,12 @@ def main():
             split_embs.append(emb)
 
         split_arr = np.concatenate(split_embs, axis=0) if split_embs else np.zeros((0, 0), dtype=np.float32)
-        all_embs.append(split_arr)
-        # Reconcile: trim or pad ep_lens to match the actual embedding count.
         if int(ep_lens.sum()) != split_arr.shape[0]:
-            # Scale ep_lens uniformly to match — preserves rough per-demo counts.
-            target = split_arr.shape[0]
-            ratio = target / max(1, int(ep_lens.sum()))
-            scaled = np.maximum(1, np.round(ep_lens * ratio)).astype(np.int64)
-            # Fix the rounding residual by adjusting the last demo.
-            diff = target - int(scaled.sum())
-            scaled[-1] = max(1, scaled[-1] + diff)
-            ep_lens = scaled
-            print(f"  Adjusted ep_lens to sum to {target} (was {int(scaled.sum())})")
+            raise RuntimeError(
+                f"emb count {split_arr.shape[0]} != sum(ep_lens) {int(ep_lens.sum())} "
+                f"for split {split_name!r}; refusing to persist."
+            )
+        all_embs.append(split_arr)
         all_ep_lens_parts.append(ep_lens)
 
     demo_embeddings = np.concatenate(all_embs, axis=0)
