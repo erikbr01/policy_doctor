@@ -681,3 +681,280 @@ else:
         edge_width_slope=float(edge_width_slope),
         node_size_slope=float(node_size_slope),
     )
+
+# ── Node / Transition Inspector ───────────────────────────────────────────────
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
+
+_SPECIAL_IDS = frozenset({SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID})
+_ep_key = "rollout_idx" if any("rollout_idx" in m for m in meta) else "demo_idx"
+
+@st.cache_data(show_spinner=False)
+def _node_episode_stats(
+    _labels_bytes: bytes, _meta_json: str, cluster_id: int
+) -> List[Dict]:
+    """Per-episode stats for episodes that visit cluster_id."""
+    _labels = np.frombuffer(_labels_bytes, dtype=np.int64)
+    _meta = json.loads(_meta_json)
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in _meta) else "demo_idx"
+    ep_tss: Dict[int, List[int]] = defaultdict(list)
+    ep_success: Dict[int, Optional[bool]] = {}
+    ep_len: Dict[int, int] = defaultdict(int)
+    for i, m in enumerate(_meta):
+        ep = m.get(ep_key, -1)
+        ts = m.get("window_start", m.get("timestep", 0))
+        ep_len[ep] = max(ep_len[ep], ts + 1)
+        if ep not in ep_success:
+            ep_success[ep] = m.get("success")
+        if int(_labels[i]) == cluster_id:
+            ep_tss[ep].append(ts)
+    out = []
+    for ep, tss in ep_tss.items():
+        ts_min, ts_max = min(tss), max(tss)
+        length = ep_len.get(ep, ts_max + 1) or 1
+        out.append({
+            "ep": ep,
+            "duration": ts_max - ts_min + 1,
+            "position": (ts_min + ts_max) / 2 / length,
+            "success": ep_success.get(ep),
+        })
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def _edge_episode_stats(
+    _labels_bytes: bytes, _meta_json: str, src_id: int, tgt_id: int
+) -> List[Dict]:
+    """Per-episode stats for episodes containing the src→tgt transition."""
+    _labels = np.frombuffer(_labels_bytes, dtype=np.int64)
+    _meta = json.loads(_meta_json)
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in _meta) else "demo_idx"
+    ep_wins: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+    ep_success: Dict[int, Optional[bool]] = {}
+    ep_len: Dict[int, int] = defaultdict(int)
+    for i, m in enumerate(_meta):
+        ep = m.get(ep_key, -1)
+        ts = m.get("window_start", m.get("timestep", 0))
+        ep_len[ep] = max(ep_len[ep], ts + 1)
+        if ep not in ep_success:
+            ep_success[ep] = m.get("success")
+        ep_wins[ep].append((ts, int(_labels[i])))
+    out = []
+    for ep, wins in ep_wins.items():
+        wins.sort()
+        rle: List[Tuple[int, int]] = []
+        for ts, lab in wins:
+            if lab == -1:
+                continue
+            if not rle or rle[-1][1] != lab:
+                rle.append((ts, lab))
+        length = ep_len.get(ep, 1) or 1
+        for j in range(len(rle) - 1):
+            if rle[j][1] == src_id and rle[j + 1][1] == tgt_id:
+                ts_trans = rle[j + 1][0]
+                out.append({
+                    "ep": ep,
+                    "ts_src": rle[j][0],
+                    "ts_tgt": ts_trans,
+                    "position": ts_trans / length,
+                    "success": ep_success.get(ep),
+                })
+                break
+    return out
+
+
+_labels_bytes = labels.tobytes()
+_meta_json = json.dumps(meta)
+
+# Determine what the graph currently has selected
+_kp = "demo_tree" if is_tree else "demo_markov"
+_sel_node_raw = st.session_state.get(f"{_kp}_graph_selected")
+_sel_edge_raw = st.session_state.get(f"{_kp}_graph_selected_edge")
+
+# Map tree synth IDs → raw cluster IDs
+def _synth_to_cluster(synth_id: int) -> Optional[int]:
+    _id_to_path = st.session_state.get(f"{_kp}_id_to_path", {})
+    _p = _id_to_path.get(synth_id, ())
+    return int(_p[-1]) if _p else None
+
+_sel_cluster: Optional[int] = None
+_sel_edge_clusters: Optional[Tuple[int, int]] = None
+if _sel_node_raw is not None:
+    if is_tree:
+        _sel_cluster = _synth_to_cluster(int(_sel_node_raw))
+    else:
+        _sel_cluster = int(_sel_node_raw) if int(_sel_node_raw) not in _SPECIAL_IDS else None
+elif _sel_edge_raw is not None:
+    _src_r, _tgt_r = _sel_edge_raw
+    if is_tree:
+        _src_c = _synth_to_cluster(int(_src_r))
+        _tgt_c = _synth_to_cluster(int(_tgt_r))
+    else:
+        _src_c = int(_src_r) if int(_src_r) not in _SPECIAL_IDS else None
+        _tgt_c = int(_tgt_r) if int(_tgt_r) not in _SPECIAL_IDS else None
+    if _src_c is not None or _tgt_c is not None:
+        _sel_edge_clusters = (_src_c, _tgt_c)
+
+# Non-special behavior nodes available for comparison
+_behavior_nodes = {nid: bg.nodes[nid].name for nid in sorted(bg.nodes)
+                   if nid not in _SPECIAL_IDS}
+_node_opts = list(_behavior_nodes.keys())
+_node_labels = {nid: name for nid, name in _behavior_nodes.items()}
+_edge_opts = [
+    (src, tgt)
+    for src in sorted(bg.transition_counts)
+    for tgt in sorted(bg.transition_counts[src])
+    if src not in _SPECIAL_IDS or tgt not in _SPECIAL_IDS
+]
+_edge_labels = {
+    (src, tgt): f"{bg.nodes[src].name if src in bg.nodes else src} → {bg.nodes[tgt].name if tgt in bg.nodes else tgt}"
+    for src, tgt in _edge_opts
+}
+
+_is_edge_mode = _sel_edge_clusters is not None and _sel_cluster is None
+
+with st.expander("🔍 Node / Transition Inspector", expanded=False):
+    # Comparison selector
+    if _is_edge_mode:
+        _cmp_edges = st.multiselect(
+            "Compare with transitions",
+            options=_edge_opts,
+            format_func=lambda e: _edge_labels.get(e, str(e)),
+            default=[],
+            key="dbg_cmp_edges",
+        )
+        # Collect all edges to analyze
+        _active_edges: List[Tuple[int, int]] = []
+        if _sel_edge_clusters is not None:
+            _active_edges.append(_sel_edge_clusters)
+        _active_edges += [e for e in _cmp_edges if e not in _active_edges]
+        if not _active_edges:
+            st.info("Click a transition in the graph, or pick edges from the dropdown.")
+            st.stop()
+
+        # Compute stats for each edge
+        _edge_data: Dict[str, List[Dict]] = {}
+        for _e in _active_edges:
+            _lbl = _edge_labels.get(_e, str(_e))
+            _src_c, _tgt_c = _e
+            if _src_c is None or _tgt_c is None:
+                continue
+            _edge_data[_lbl] = _edge_episode_stats(_labels_bytes, _meta_json, _src_c, _tgt_c)
+
+        if not _edge_data:
+            st.info("No data found for selected transitions.")
+        else:
+            _dc1, _dc2 = st.columns(2)
+            with _dc1:
+                # Episode position distribution
+                _fig_pos = go.Figure()
+                for _lbl, _rows in _edge_data.items():
+                    _pos = [r["position"] for r in _rows]
+                    if _pos:
+                        _fig_pos.add_trace(go.Violin(x=_pos, name=_lbl, box_visible=True, meanline_visible=True, orientation="h"))
+                _fig_pos.update_layout(title="Transition position in episode", height=300,
+                    xaxis_title="Fraction of episode (0=start, 1=end)",
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_pos, use_container_width=True, key="dbg_edge_pos")
+            with _dc2:
+                # Success rate comparison
+                _fig_sr = go.Figure()
+                _sr_names, _sr_vals, _sr_n = [], [], []
+                for _lbl, _rows in _edge_data.items():
+                    _succ = [r for r in _rows if r["success"] is True]
+                    _tot = len(_rows)
+                    _sr_names.append(_lbl)
+                    _sr_vals.append(len(_succ) / _tot if _tot else 0)
+                    _sr_n.append(_tot)
+                _fig_sr.add_trace(go.Bar(x=_sr_names, y=_sr_vals,
+                    text=[f"{v:.0%} (n={n})" for v, n in zip(_sr_vals, _sr_n)],
+                    textposition="outside", marker_color="#4e79a7"))
+                _fig_sr.update_layout(title="Success rate after transition", height=300,
+                    yaxis=dict(range=[0, 1.15], title="Success rate"),
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_sr, use_container_width=True, key="dbg_edge_sr")
+
+    else:
+        _cmp_nodes = st.multiselect(
+            "Compare with nodes",
+            options=_node_opts,
+            format_func=lambda n: _node_labels.get(n, str(n)),
+            default=[],
+            key="dbg_cmp_nodes",
+        )
+        # Collect all nodes to analyze
+        _active_nodes: List[int] = []
+        if _sel_cluster is not None:
+            _active_nodes.append(_sel_cluster)
+        _active_nodes += [n for n in _cmp_nodes if n not in _active_nodes]
+        if not _active_nodes:
+            st.info("Click a node in the graph, or pick nodes from the dropdown.")
+        else:
+            # Compute per-episode stats for each node
+            _node_data: Dict[str, List[Dict]] = {}
+            for _nid in _active_nodes:
+                _lbl = _node_labels.get(_nid, str(_nid))
+                _node_data[_lbl] = _node_episode_stats(_labels_bytes, _meta_json, _nid)
+
+            _dc1, _dc2 = st.columns(2)
+            with _dc1:
+                # Duration distribution
+                _fig_dur = go.Figure()
+                for _lbl, _rows in _node_data.items():
+                    _dur = [r["duration"] for r in _rows]
+                    if _dur:
+                        _fig_dur.add_trace(go.Violin(y=_dur, name=_lbl, box_visible=True, meanline_visible=True))
+                _fig_dur.update_layout(title="Visit duration (windows)", height=320,
+                    yaxis_title="Duration (windows)", xaxis_title="Behavior",
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_dur, use_container_width=True, key="dbg_dur")
+
+            with _dc2:
+                # Episode position distribution
+                _fig_pos = go.Figure()
+                for _lbl, _rows in _node_data.items():
+                    _pos = [r["position"] for r in _rows]
+                    if _pos:
+                        _fig_pos.add_trace(go.Violin(y=_pos, name=_lbl, box_visible=True, meanline_visible=True))
+                _fig_pos.update_layout(title="Position in episode", height=320,
+                    yaxis=dict(range=[0, 1], title="Fraction of episode (0=start, 1=end)"),
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_pos, use_container_width=True, key="dbg_pos")
+
+            _dc3, _dc4 = st.columns(2)
+            with _dc3:
+                # Success rate
+                _fig_sr = go.Figure()
+                _sr_names, _sr_vals, _sr_n = [], [], []
+                for _lbl, _rows in _node_data.items():
+                    _tot = len(_rows)
+                    _succ = sum(1 for r in _rows if r["success"] is True)
+                    _sr_names.append(_lbl)
+                    _sr_vals.append(_succ / _tot if _tot else 0)
+                    _sr_n.append(_tot)
+                _fig_sr.add_trace(go.Bar(x=_sr_names, y=_sr_vals,
+                    text=[f"{v:.0%} (n={n})" for v, n in zip(_sr_vals, _sr_n)],
+                    textposition="outside", marker_color="#4e79a7"))
+                _fig_sr.update_layout(title="Success rate (episodes visiting node)", height=300,
+                    yaxis=dict(range=[0, 1.15], title="Success rate"),
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_sr, use_container_width=True, key="dbg_sr")
+
+            with _dc4:
+                # Outgoing transitions for first selected node
+                _first_nid = _active_nodes[0]
+                _out = bg.transition_probs.get(_first_nid, {})
+                if _out:
+                    _tgt_names = [bg.nodes[t].name if t in bg.nodes else str(t) for t in _out]
+                    _tgt_probs = list(_out.values())
+                    _fig_tr = go.Figure(go.Bar(
+                        x=_tgt_names, y=_tgt_probs,
+                        text=[f"{p:.0%}" for p in _tgt_probs],
+                        textposition="outside",
+                        marker_color="#f28e2b",
+                    ))
+                    _fig_tr.update_layout(
+                        title=f"Outgoing transitions: {_node_labels.get(_first_nid, str(_first_nid))}",
+                        height=300, yaxis=dict(range=[0, 1.15], title="Transition prob."),
+                        margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                    st.plotly_chart(_fig_tr, use_container_width=True, key="dbg_tr")
