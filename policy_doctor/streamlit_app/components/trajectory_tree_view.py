@@ -14,8 +14,34 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import base64
+import io
+
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as _components
+
+_THUMB_STRIP = _components.declare_component(
+    "thumb_strip",
+    path=str(Path(__file__).parent / "_thumb_strip"),
+)
+
+
+@st.cache_data(show_spinner=False)
+def _thumbnail_b64(video_path_str: str) -> str:
+    """Extract first frame of a video as a base64 JPEG thumbnail."""
+    try:
+        import imageio
+        from PIL import Image
+        reader = imageio.get_reader(video_path_str)
+        frame = reader.get_data(0)
+        reader.close()
+        img = Image.fromarray(frame).resize((96, 64), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=70)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
 
 from policy_doctor.behaviors.behavior_graph import (
     BehaviorGraph,
@@ -204,7 +230,14 @@ def _render_native_svg(
         if cid == FAILURE_NODE_ID: return -1.0
         if cid in (END_NODE_ID, START_NODE_ID): return 0.0
         return float(node_values.get(int(cid), 0.0))
-    _BINS = ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    _cb = st.session_state.get("colorblind_mode", False)
+    _BINS = (
+        ["#D55E00", "#E69F00", "#F0E442", "#009E73", "#0072B2"]  # Okabe-Ito
+        if _cb else
+        ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
+    )
+    _SUCCESS_COL = "#0072B2" if _cb else "#2ca02c"
+    _FAILURE_COL = "#D55E00" if _cb else "#d62728"
     def _diverging(t: float) -> str:
         return _BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
     # Pre-compute V range for value mode. Exclude SUCCESS / FAILURE /
@@ -239,8 +272,8 @@ def _render_native_svg(
             elif color_mode == "value" and not is_special:
                 v = _v_for_cluster(cid, nd["n_success"], nd["n_episodes"])
                 color_override[next_id] = _diverging(0.5 + v / (2 * v_range))
-            elif cid == SUCCESS_NODE_ID: color_override[next_id] = "#2ca02c"
-            elif cid == FAILURE_NODE_ID: color_override[next_id] = "#d62728"
+            elif cid == SUCCESS_NODE_ID: color_override[next_id] = _SUCCESS_COL
+            elif cid == FAILURE_NODE_ID: color_override[next_id] = _FAILURE_COL
             elif cid == END_NODE_ID:     color_override[next_id] = "#888888"
             else:
                 # id mode
@@ -379,6 +412,11 @@ def _render_native_svg(
     st.session_state[f"{key_prefix}_path_to_id"] = {
         tuple(p): nid for p, nid in path_to_id.items()
     }
+    # Reverse map: synth_id → path tuple (cluster IDs), used by terminal-node handler
+    st.session_state[f"{key_prefix}_id_to_path"] = {
+        nid: tuple(p) for p, nid in path_to_id.items()
+    }
+    st.session_state[f"{key_prefix}_cluster_names"] = dict(cluster_names)
     # Also save synth_id → "START → A → B → …" string so the click
     # panels can show the full prefix in their header.
     _id_to_prefix: Dict[int, str] = {}
@@ -592,6 +630,70 @@ def _seg_colors() -> List[str]:
     )
 
 
+def _render_edge_panel_narrow(
+    src_id: int,
+    tgt_id: int,
+    graph,
+    labels: np.ndarray,
+    metadata: List[Dict],
+    mp4_dir: Path,
+    mp4_index: Dict,
+    key_prefix: str,
+    fps: int,
+) -> None:
+    from policy_doctor.streamlit_app.user_study.graph_explorer import (
+        _episodes_for_edge,
+        _episodes_for_node,
+    )
+
+    src_node = graph.nodes.get(src_id)
+    tgt_node = graph.nodes.get(tgt_id)
+    src_name = src_node.name if src_node else str(src_id)
+    tgt_name = tgt_node.name if tgt_node else str(tgt_id)
+    prob = graph.transition_probs.get(src_id, {}).get(tgt_id, 0.0)
+    st.caption(f"**{src_name} → {tgt_name}** · {prob:.0%}")
+
+    triples = _episodes_for_edge(src_id, tgt_id, labels, metadata, graph=graph)
+    if not triples:
+        st.info("No episodes found for this transition.")
+        return
+
+    _sc = _seg_colors()
+    ep_list = [t[0] for t in triples]
+    ep_set = set(ep_list)
+    _term_cids = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+
+    def _is_terminal(nid: int) -> bool:
+        gn = graph.nodes.get(nid)
+        return gn is not None and gn.cluster_id in _term_cids
+
+    # Build full behavior ranges using _episodes_for_node (same as path/terminal)
+    ep_segs: Dict[int, List] = {}
+    for i, (nid, name, col) in enumerate([
+        (src_id, src_name, _sc[0]),
+        (tgt_id, tgt_name, _sc[1 % len(_sc)]),
+    ]):
+        if _is_terminal(nid):
+            continue
+        for ep_idx, ts_s, ts_e in _episodes_for_node(nid, labels, metadata):
+            if ep_idx in ep_set:
+                ep_segs.setdefault(ep_idx, []).append((ts_s, ts_e, name, col))
+
+    # Close gaps between adjacent segments
+    for ep_idx, segs in ep_segs.items():
+        if len(segs) > 1:
+            segs.sort(key=lambda s: s[0])
+            closed = [(segs[j][0], segs[j+1][0], segs[j][2], segs[j][3]) for j in range(len(segs)-1)]
+            closed.append(segs[-1])
+            ep_segs[ep_idx] = closed
+
+    _show_one_video_panel(
+        ep_list, {}, mp4_dir, mp4_index,
+        f"{key_prefix}_edge_{src_id}_{tgt_id}", fps,
+        ep_segs_by_idx=ep_segs if ep_segs else None,
+    )
+
+
 def _render_right_video_panel(
     labels: np.ndarray,
     metadata: List[Dict],
@@ -615,9 +717,9 @@ def _render_right_video_panel(
 
     if selected_edge is not None and graph is not None and mp4_dir is not None:
         src_id, tgt_id = selected_edge
-        _render_edge_panel(
+        _render_edge_panel_narrow(
             src_id, tgt_id, graph, labels, metadata,
-            mp4_dir, mp4_index, key_prefix,
+            mp4_dir, mp4_index, key_prefix, fps,
         )
     elif selected_node is not None:
         ep_slices = _episodes_for_node(int(selected_node), labels, metadata)
@@ -625,16 +727,48 @@ def _render_right_video_panel(
         all_eps = sorted(ep_slices_by_idx.keys())
         # Terminal nodes (SUCCESS/FAILURE) are never assigned synth_labels so
         # ep_slices will be empty — fall back to the graph node's episode list.
+        ep_segs_by_idx_node: Optional[Dict[int, List]] = None
         if not all_eps and graph is not None:
             gnode = graph.nodes.get(int(selected_node))
             if gnode is not None:
                 all_eps = sorted(gnode.episode_indices)
+                # Build full-path segment annotations (same as path button)
+                _id_to_path = st.session_state.get(f"{key_prefix}_id_to_path", {})
+                _cnames = st.session_state.get(f"{key_prefix}_cluster_names", {})
+                _p2id = st.session_state.get(f"{key_prefix}_path_to_id", {})
+                _term_path = _id_to_path.get(int(selected_node), ())
+                _term = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+                _path_synth_ids = []
+                for _d in range(1, len(_term_path) + 1):
+                    _cid = _term_path[_d - 1]
+                    if _cid in _term:
+                        continue
+                    _nid = _p2id.get(_term_path[:_d])
+                    if _nid is not None:
+                        _lbl = _cnames.get(int(_cid), f"B{_cid}")
+                        _path_synth_ids.append((_nid, _lbl))
+                if _path_synth_ids:
+                    ep_segs_by_idx_node = {}
+                    _ep_set = set(all_eps)
+                    _sc = _seg_colors()
+                    for _i, (_nid, _lbl) in enumerate(_path_synth_ids):
+                        _col = _sc[_i % len(_sc)]
+                        for _ep, _ts_s, _ts_e in _episodes_for_node(_nid, labels, metadata):
+                            if _ep in _ep_set:
+                                ep_segs_by_idx_node.setdefault(_ep, []).append((_ts_s, _ts_e, _lbl, _col))
+                    for _ep, _segs in ep_segs_by_idx_node.items():
+                        if len(_segs) > 1:
+                            _segs.sort(key=lambda s: s[0])
+                            _closed = [(_segs[j][0], _segs[j+1][0], _segs[j][2], _segs[j][3]) for j in range(len(_segs)-1)]
+                            _closed.append(_segs[-1])
+                            ep_segs_by_idx_node[_ep] = _closed
         _id_to_prefix = st.session_state.get(f"{key_prefix}_id_to_prefix", {})
         title = _id_to_prefix.get(int(selected_node), f"Node {selected_node}")
         st.caption(f"**{title}**")
         _show_one_video_panel(
             all_eps, ep_slices_by_idx, mp4_dir, mp4_index,
             f"{key_prefix}_node_{selected_node}", fps,
+            ep_segs_by_idx=ep_segs_by_idx_node,
         )
     elif path_eps:
         st.caption(f"**{path_label}**" if path_label else "**Selected path**")
@@ -649,6 +783,16 @@ def _render_right_video_panel(
             for ep_idx, ts_s, ts_e in _episodes_for_node(nid, labels, metadata):
                 if ep_idx in path_eps_set:
                     ep_segs_by_idx.setdefault(ep_idx, []).append((ts_s, ts_e, lbl, col))
+        # Close gaps between adjacent segments: extend each segment's end to
+        # the start of the next so transition frames are always covered.
+        for ep_idx, segs in ep_segs_by_idx.items():
+            if len(segs) > 1:
+                segs.sort(key=lambda s: s[0])
+                closed = []
+                for j in range(len(segs) - 1):
+                    closed.append((segs[j][0], segs[j + 1][0], segs[j][2], segs[j][3]))
+                closed.append(segs[-1])
+                ep_segs_by_idx[ep_idx] = closed
         _show_one_video_panel(
             path_eps, {}, mp4_dir, mp4_index,
             f"{key_prefix}_path", fps,
@@ -677,6 +821,12 @@ def _show_one_video_panel(
         return
 
     vp_key = f"{key_prefix}_vid_page"
+    # Reset to 0 when the episode list changes (different path/node selected)
+    list_sig = (ep_list[0] if ep_list else -1, n)
+    sig_key = f"{key_prefix}_vid_list_sig"
+    if st.session_state.get(sig_key) != list_sig:
+        st.session_state[sig_key] = list_sig
+        st.session_state[vp_key] = 0
     vp = max(0, min(st.session_state.get(vp_key, 0), n - 1))
     ep_idx = ep_list[vp]
     ep_entry = _find_mp4_episode(ep_idx, mp4_index)
@@ -701,7 +851,7 @@ def _show_one_video_panel(
         mp4_player(
             mp4_dir / ep_entry["path"],
             key=f"{key_prefix}_vid_{ep_idx}",
-            max_height_px=300,
+            max_height_px=220,
             slice_start=ts_range[0] if ts_range else None,
             slice_end=_slice_end,
             total_frames=ep_entry.get("frame_count"),
@@ -711,7 +861,31 @@ def _show_one_video_panel(
     else:
         st.warning(f"No video found for episode {ep_idx}.")
 
-    # Prev / Next controls below the video
+    # Horizontal thumbnail strip
+    thumbs = []
+    for i, ep in enumerate(ep_list):
+        ep_e = _find_mp4_episode(ep, mp4_index)
+        icon = ("✓" if ep_e and ep_e.get("success") is True
+                else "✗" if ep_e and ep_e.get("success") is False else "•")
+        b64 = ""
+        if ep_e and mp4_dir:
+            b64 = _thumbnail_b64(str(mp4_dir / ep_e["path"]))
+        thumbs.append({"b64": b64, "label": f"{icon} {ep}"})
+
+    clicked = _THUMB_STRIP(
+        thumbs=thumbs,
+        selected=vp,
+        key=f"{key_prefix}_thumb_strip",
+    )
+    _seq_key = f"{key_prefix}_thumb_seq"
+    if isinstance(clicked, list) and len(clicked) == 2:
+        new_vp, seq = int(clicked[0]), int(clicked[1])
+        if seq != st.session_state.get(_seq_key):
+            st.session_state[_seq_key] = seq
+            if new_vp != vp:
+                st.session_state[vp_key] = new_vp
+                st.rerun()
+
     c1, c2, c3 = st.columns([1, 4, 1])
     with c1:
         if st.button("←", key=f"{key_prefix}_prev", disabled=(vp == 0)):

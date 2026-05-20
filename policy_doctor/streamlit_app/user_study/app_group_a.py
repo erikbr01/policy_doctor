@@ -24,11 +24,27 @@ st.set_page_config(page_title="User Study — Group A", layout="wide")
 
 gate_or_render()
 
-st.title("User Study: Data Collection Strategy Design")
+st.title("User Study: Teaching Robots from Examples")
 st.markdown(
-    "**Group A** — You will see rollout videos from the base policy. "
-    "Use these to inform how you would allocate a data collection budget."
+    "**Welcome!** In this study, you will help improve a robot arm that learns by watching "
+    "human demonstrations — much like how a person learns a new skill by watching someone else do it. "
+    "The more demonstrations the robot sees, and the more carefully chosen they are, "
+    "the better it gets at the task."
 )
+
+with st.expander("📖 Background: How does the robot learn?", expanded=False):
+    st.markdown("""
+**Learning from Demonstrations (LfD)**
+
+Instead of programming the robot with explicit rules, we show it many examples of the task being done correctly.
+The robot learns a *policy* — a mapping from what it sees (camera images, joint positions) to what action to take next.
+
+**The task:** The robot must pick up an object from a table and transport it to a goal location.
+- ✓ **Success** — the object reaches the goal
+- ✗ **Failure** — the robot drops it, misses, or runs out of time
+
+**Your role:** You'll watch videos of the robot's current behavior, then decide how to allocate a *data collection budget* — choosing how many new demonstrations to collect, and of what kind. Think of it like a coach deciding which drills to run before the next game.
+""")
 
 st.sidebar.header("Configuration")
 
@@ -101,8 +117,12 @@ mp4_dir = Path(mp4_dir_str)
 total_budget = st.session_state.get("ga_budget", 500)
 alloc_step = st.session_state.get("ga_alloc_step", 25)
 
-st.header("1. Explore Rollout Videos")
-st.markdown("Review the robot's current behavior. Use these videos to inform your strategy.")
+st.header("1. Watch the Robot in Action")
+st.markdown(
+    "These videos show **rollouts** — the robot attempting the task from scratch. "
+    "Watch several to get a feel for what it does well and where it struggles. "
+    "Pay attention to how it handles the object and whether it reaches the goal."
+)
 
 render_video_browser(mp4_dir, index, page_size=9, key_prefix="vbrow")
 
