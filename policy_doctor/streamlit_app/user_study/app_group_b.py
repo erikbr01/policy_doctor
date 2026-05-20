@@ -54,6 +54,12 @@ _session_labels = {f.stem: yaml.safe_load(f.read_text()).get("label", f.stem) fo
 
 participant_id = st.sidebar.text_input("Participant ID", value="anonymous")
 
+colorblind_mode = st.sidebar.toggle(
+    "Colorblind",
+    value=st.session_state.get("colorblind_mode", False),
+    key="colorblind_mode",
+)
+
 if not _session_files:
     st.sidebar.warning("No session configs found in configs/user_study/sessions/")
     st.stop()
@@ -150,19 +156,32 @@ n_success = sum(1 for ep in index["episodes"] if ep.get("success") is True)
 n_total = len(index["episodes"])
 
 # ── Guided flow ───────────────────────────────────────────────────────────────
-st.title("User Study: Data Collection Strategy Design")
+st.title("User Study: Teaching Robots from Examples")
 st.markdown(
-    "**Group B** — Work through the sections below in order. Each section gives you a "
-    "different lens on the robot's current behavior. At the end, allocate your data "
-    "collection budget across the available strategies."
+    "**Welcome!** In this study, you will help improve a robot arm that learns by watching "
+    "human demonstrations. Work through the steps below in order — each gives you a "
+    "different view of the robot's behavior to inform your data collection decisions."
 )
 
+with st.expander("📖 Background: How does the robot learn?", expanded=False):
+    st.markdown("""
+**Learning from Demonstrations (LfD)**
+
+Instead of programming the robot with explicit rules, we show it many examples of the task being done correctly.
+The robot learns a *policy* — a mapping from what it sees (camera images, joint positions) to what action to take next.
+
+**The task:** The robot must pick up an object from a table and transport it to a goal location.
+- ✓ **Success** — the object reaches the goal
+- ✗ **Failure** — the robot drops it, misses, or runs out of time
+
+**Your role:** You'll watch videos of the robot's current behavior and explore a *behavior graph* that groups similar movement patterns together. Then you'll allocate a *data collection budget* — choosing how many new demonstrations to collect, and of what kind.
+""")
+
 # ── Section 1: Task & base policy overview ────────────────────────────────────
-st.header("Step 1 — Understand the Task & Base Policy")
+st.header("Step 1 — Watch the Robot in Action")
 st.markdown(
-    "The robot must pick up an object and transport it to a goal location. "
-    "The videos below show rollouts from the **base policy** — the starting point "
-    "we want to improve with additional data."
+    "These videos show **rollouts** — the robot attempting the task from scratch. "
+    "Watch several to understand what it does well and where it struggles."
 )
 
 ov_c1, ov_c2, ov_c3 = st.columns(3)
@@ -175,17 +194,26 @@ render_video_browser(mp4_dir, index, page_size=4, key_prefix="gb_vbrow")
 
 # ── Section 2: Behavior graph ────────────────────────────────────────────────
 st.divider()
-st.header("Step 2 — Behavior Graph")
+st.header("Step 2 — Explore the Behavior Graph")
 st.markdown(
-    "We clustered the policy's rollouts into **behavioral modes** — recurring movement "
-    "patterns that appear across many episodes. The graph below shows how the policy "
-    "transitions between these modes, and which transitions tend to lead to success or failure."
+    "The robot's rollouts have been automatically grouped into **behavioral modes** — "
+    "recurring movement patterns that appear across many episodes. "
+    "Think of these like chapters in the robot's playbook: "
+    "each chapter describes a distinct way the robot moves during part of the task."
 )
 st.markdown(
-    "> **How to read it:** Each circle is a behavioral mode. "
-    "Arrows show how often the policy moves from one mode to another. "
-    "**Click any node** to see example videos and outgoing transitions from that mode."
+    "The graph below shows how often the robot moves from one behavioral mode to another, "
+    "and which transitions tend to lead to **success ✓** or **failure ✗**."
 )
+with st.expander("❓ How to read this graph", expanded=False):
+    st.markdown("""
+- **Each circle** is a behavioral mode (a cluster of similar movements)
+- **Arrows** show transitions — how often the robot moves from one mode to another
+- **Larger circles** = more episodes passed through that mode
+- **Color** = success rate of that mode (green = high success, red = low success)
+- **Click any node or edge** to see example videos for that mode or transition
+- **Click the background** to deselect
+""")
 
 highlighted_path = st.session_state.get("gb_pex_highlighted_path")
 
@@ -280,12 +308,22 @@ if _is_tree:
         height=600,
         level=getattr(_active_graph, "level", "rollout"),
         key_prefix="gb_tree",
+        edge_style="lines",
+        edge_width_slope=5.0,
+        node_size_slope=24.0,
     )
 else:
     # Markov view with color override matching the demo's logic
-    _color_override = None
+    _SUCCESS_COL = "#0072B2" if colorblind_mode else "#2ca02c"
+    _FAILURE_COL = "#D55E00" if colorblind_mode else "#d62728"
+    _SPECIAL_TERM = {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID}
+    _color_override = {
+        nid: (_SUCCESS_COL if node.cluster_id == SUCCESS_NODE_ID else _FAILURE_COL)
+        for nid, node in _active_graph.nodes.items()
+        if node.cluster_id in (SUCCESS_NODE_ID, FAILURE_NODE_ID)
+    }
     if _color_by == "timesteps":
-        _SPECIAL = {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID}
+        _SPECIAL = _SPECIAL_TERM
         try:
             import plotly.express as _px
             _viridis = _px.colors.sequential.Viridis
