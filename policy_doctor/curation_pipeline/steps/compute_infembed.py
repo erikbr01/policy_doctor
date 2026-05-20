@@ -73,8 +73,11 @@ class ComputeInfembedStep(PipelineStep[None]):
             tf32 = bool(OmegaConf.select(attribution, "tf32") or False)
             use_compile = bool(OmegaConf.select(attribution, "compile") or False)
 
+            result_date = OmegaConf.select(attribution, "result_date") or "default"
+            exp_name = OmegaConf.select(attribution, "infembed_exp_name") or f"{result_date}_trak_results-infembed"
+
             cmd_args = [
-                "--exp_name=auto",
+                f"--exp_name={exp_name}",
                 f"--eval_dir={eval_dir}",
                 f"--train_dir={train_dir}",
                 f"--train_ckpt={train_ckpt}",

@@ -149,8 +149,10 @@ class SelectMimicgenSeedFromGraphStep(PipelineStep[dict]):
 
         explicit = OmegaConf.select(self.cfg, "clustering_dir")
         if explicit and not clustering_dirs:
-            # Accept a single explicit override (compatible with ExportMarkovReportStep)
-            clustering_dirs["0"] = str(explicit)
+            # Store under the policy_seed key if available, otherwise "0"
+            _ps = OmegaConf.select(cfg_mg, "policy_seed")
+            _key = str(_ps) if _ps is not None else "0"
+            clustering_dirs[_key] = str(explicit)
 
         if not clustering_dirs:
             raise ValueError(

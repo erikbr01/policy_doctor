@@ -67,8 +67,18 @@ def main(
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
     cfg.task.env_runner.n_test = num_episodes
-    cfg.task.env_runner.n_test_vis = num_episodes
+    cfg.task.env_runner.n_test_vis = 0
     cfg.task.env_runner.test_start_seed = test_start_seed
+
+    # Strip _orig_mod. prefix from compiled checkpoints (torch.compile wraps model).
+    if 'state_dicts' in payload:
+        for key in list(payload['state_dicts'].keys()):
+            sd = payload['state_dicts'][key]
+            if isinstance(sd, dict) and any(k.startswith('_orig_mod.') for k in sd):
+                payload['state_dicts'][key] = {
+                    k[len('_orig_mod.'):] if k.startswith('_orig_mod.') else k: v
+                    for k, v in sd.items()
+                }
 
     # Construct workspace.
     workspace = cls(cfg, output_dir=output_dir)

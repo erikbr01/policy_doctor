@@ -88,47 +88,6 @@ def _list_demo_keys(hdf5_path: pathlib.Path) -> list[str]:
         return sorted(k for k in f["data"].keys() if k.startswith("demo_"))
 
 
-def _read_all_object_poses_from_hdf5(
-    hdf5_path: pathlib.Path,
-) -> dict[str, dict[str, float]]:
-    """Return world-frame pose at t=0 for every object in datagen_info/object_poses.
-
-    Works for any MimicGen task — reads whatever objects are present in the HDF5.
-    Returns world-frame (x, y, z_rot) so that the subprocess can subtract the
-    env-specific reference to compute relative bounds offsets.
-
-    Args:
-        hdf5_path: Prepared source or generated HDF5 (must have datagen_info).
-
-    Returns:
-        Dict mapping object_name → {x: float, y: float, z_rot: float} in world frame.
-
-    Raises:
-        RuntimeError: if datagen_info/object_poses is missing (file not prepared).
-    """
-    result: dict[str, dict[str, float]] = {}
-    with h5py.File(hdf5_path, "r") as f:
-        demo_keys = sorted(k for k in f["data"].keys() if k.startswith("demo_"))
-        if not demo_keys:
-            raise RuntimeError(f"No demo_* keys found in {hdf5_path}")
-        poses_grp_key = f"data/{demo_keys[0]}/datagen_info/object_poses"
-        if poses_grp_key not in f:
-            raise RuntimeError(
-                f"datagen_info/object_poses not found in {hdf5_path} — "
-                "has prepare_src_dataset been run on this file?"
-            )
-        for obj_name in f[poses_grp_key].keys():
-            poses = np.array(f[f"{poses_grp_key}/{obj_name}"])  # (T, 4, 4)
-            pos = poses[0, :3, 3]          # world-frame translation
-            R = poses[0, :3, :3]           # rotation matrix
-            result[obj_name] = {
-                "x": float(pos[0]),
-                "y": float(pos[1]),
-                "z_rot": float(np.arctan2(R[1, 0], R[0, 0])),
-            }
-    return result
-
-
 class GenerateMimicgenDemosStep(PipelineStep[dict]):
     """Generate MimicGen demos from one seed trajectory and extract EEF data.
 
@@ -290,34 +249,6 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             )
             print(f"  [generate_mimicgen_demos] seed HDF5 written: {seed_hdf5}")
 
-        # --- Auto-read seed world poses for all objects (always when pose-fixing is on) ---
-        seed_object_poses: dict | None = None
-        if fix_initial_object_poses:
-            # seed_hdf5 may not yet have datagen_info (prepare_src_dataset runs in the
-            # subprocess), so fall back to reading from the source dataset directly.
-            read_target = seed_hdf5
-            try:
-                seed_object_poses = _read_all_object_poses_from_hdf5(read_target)
-            except RuntimeError:
-                # seed_hdf5 not yet prepared; fall back to source dataset
-                src_str = OmegaConf.select(cfg_mg, "source_dataset_path") or _DEFAULT_SOURCE_DATASET
-                src_p = pathlib.Path(src_str)
-                if not src_p.is_absolute():
-                    src_p = PROJECT_ROOT / src_p if (PROJECT_ROOT / src_p).exists() else self.repo_root / src_p
-                read_target = src_p
-                seed_object_poses = _read_all_object_poses_from_hdf5(read_target)
-            summary = ", ".join(
-                f"{obj}=({', '.join(f'{k}:{v:.3f}' for k, v in comps.items())})"
-                for obj, comps in seed_object_poses.items()
-            )
-            print(
-                f"  [generate_mimicgen_demos] seed object poses from "
-                f"{read_target.name}: {summary}"
-            )
-            if object_pose_ranges is None:
-                print("  [generate_mimicgen_demos] object_pose_ranges=null → "
-                      "all axes pinned exactly to seed ([0,0] offsets)")
-
         # --- Output directory for generation ---
         gen_output_dir = self.repo_root / output_dir_rel / seed_demo_key
         gen_output_dir.mkdir(parents=True, exist_ok=True)
@@ -357,13 +288,15 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             cmd.append("--interpolate_from_last_target_pose")
         if transform_first:
             cmd.append("--transform_first_robot_pose")
-        if fix_initial_object_poses and seed_object_poses:
-            import json as _json
-            cmd += ["--seed_object_poses", _json.dumps(seed_object_poses)]
+        if fix_initial_object_poses:
+            # Pose reading happens inside the subprocess after prepare_src_dataset, so
+            # the correct seed-trajectory poses are always used (no fallback needed).
+            cmd.append("--fix_initial_object_poses")
             if object_pose_ranges is not None:
+                import json as _json
                 ranges_plain = OmegaConf.to_container(object_pose_ranges, resolve=True)
                 cmd += ["--object_pose_ranges", _json.dumps(ranges_plain)]
-            # If object_pose_ranges is None, the subprocess defaults to [0,0] for all axes
+            # If object_pose_ranges is None, the subprocess defaults to [0,0] (pin all axes)
 
         print(f"  [generate_mimicgen_demos] running generation ...")
         print(f"    action_noise={action_noise}  offset=({offset_lo},{offset_hi})  nn_k={nn_k}")

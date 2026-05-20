@@ -98,9 +98,21 @@ Probed 20 trials per source demo with full D1 (mug z_rot ∈ [0, 2π]):
 - Added `_patch_robomimic_api_compat()` to both `generate_coffee_prep_d1_pool.py` and `run_mimicgen_generate.py`
 - Patches `EnvUtils.create_env_for_data_processing` to drop unsupported kwargs at runtime
 
-### Pool Generation Status
+### Correction: Official Dataset Used
 
-Started at 01:15 UTC. Processing all 10 source demos, 150 trials each.
+**Correction (10:39 UTC):** Initial training used 278 self-generated demos (wrong). Stopped and restarted on
+the official MimicGen data release (`amandlek/mimicgen_datasets`, `coffee_preparation_d1`):
+- **1000 demos** official, training on 100 (as intended)
+- env_name: CoffeePreparation_D1, object: 86 dims ✓
+- WandB run: `f118vzfc` (fresh start at 10:39 UTC)
+
+Downloaded to: `data/source/mimicgen/core_datasets/coffee_preparation_d1_official/core/coffee_preparation_d1.hdf5`
+Symlinked to standard path: `data/source/mimicgen/core_datasets/coffee_preparation_d1/demo.hdf5`
+
+### Pool Generation Status (self-generated, discarded)
+
+Started at 01:15 UTC. Completed at 03:16 UTC with 278 demos. **This data was deleted at 10:39 UTC**
+in favor of the official 1000-demo dataset.
 
 | Parameter | Value |
 |-----------|-------|
@@ -179,9 +191,9 @@ Modified to support non-square tasks. When `task_name != "square"`:
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: D1 pool generation | Not started | Need probe result first |
-| Configs creation | In progress | Creating all configs |
-| Phase 1: Baseline training | Pending pool | ~2-4 hrs |
+| Phase 0: D1 pool generation | **Superseded** | Official 1000-demo dataset used instead |
+| Configs creation | **Done** | All configs created |
+| Phase 1: Baseline training | **Running** | Epoch ~100/1751 at 10:53 PDT; ETA ~15:00 PDT; WandB `f118vzfc` |
 | Phase 1: Eval + attribution | Pending baseline | ~2-3 hrs |
 | Phase 1: Budget rep sweep | Pending clustering | ~6-12 hrs (27 arms on cuda:0 × 3 slots) |
 

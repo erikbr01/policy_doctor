@@ -199,10 +199,8 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                 f"training.checkpoint_every={checkpoint_every}",
                 f"training.rollout_every={checkpoint_every}",
                 f"task.dataset.seed={seed}",
-                f"task.dataset.val_ratio={val_ratio}",
+                f"task.dataset.val_ratio=0.0",
                 f"training.device={device}",
-                f"+task.dataset.dataset_mask_kwargs.train_ratio={train_ratio}",
-                f"+task.dataset.dataset_mask_kwargs.uniform_quality={uniform_quality}",
                 f"logging.name={train_name}",
                 f"logging.group={train_date}_train_{policy}_{task}",
                 f"logging.project={project}",
@@ -222,21 +220,31 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                 continue
 
             pathlib.Path(run_output_dir).mkdir(parents=True, exist_ok=True)
-            p = mp_ctx.Process(
-                target=_train_combined_worker,
-                args=(run_output_dir, config_dir_abs, config_name, overrides),
-                daemon=False,
-            )
-            p.start()
-            procs.append((p, seed, run_output_dir))
-            print(f"  [launched] pid={p.pid}  output_dir={run_output_dir}")
 
-        for p, seed, run_output_dir in procs:
-            p.join()
-            if p.exitcode != 0:
+            # Use the train conda env (mimicgen_torch2) via subprocess to avoid
+            # policy_doctor env's diffusers version incompatibility.
+            import subprocess as _sp
+            conda_env = (
+                OmegaConf.select(cfg, "data_source.conda_env_train")
+                or OmegaConf.select(cfg, "conda_env_train")
+                or "mimicgen_torch2"
+            )
+            train_script = str(self.repo_root / "train.py")
+            cmd = [
+                "conda", "run", "-n", conda_env, "--no-capture-output",
+                "python", train_script,
+                f"--config-dir={config_dir_abs}",
+                f"--config-name={config_name}",
+            ] + overrides
+            print(f"  [launched] conda_env={conda_env}  output_dir={run_output_dir}")
+            procs.append((cmd, seed, run_output_dir))
+
+        for cmd, seed, run_output_dir in procs:
+            result = _sp.run(cmd, cwd=str(self.repo_root))
+            if result.returncode != 0:
                 raise RuntimeError(
-                    f"[train_on_combined_data] seed={seed} process (pid={p.pid}) "
-                    f"exited with code {p.exitcode}"
+                    f"[train_on_combined_data] seed={seed} subprocess "
+                    f"exited with code {result.returncode}"
                 )
 
         return {

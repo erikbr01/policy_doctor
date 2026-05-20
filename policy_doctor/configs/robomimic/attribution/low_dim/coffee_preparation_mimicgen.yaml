@@ -22,7 +22,7 @@ use_half_precision: false
 batch_size: 128
 loss_fn: square
 num_timesteps: 64
-featurize_holdout: true
+featurize_holdout: false
 finalize_scores: true
 device: cuda:0
 seed: 0

@@ -53,6 +53,11 @@ attribution:
   train_date: may18_coffee_prep_d1_d100_mug_constrained
   eval_date: may18_coffee_prep_d1_d100_mug_constrained
 
+# Explicit clustering dir (seed 1 result from run_clustering)
+clustering_dir: /home/erbauer/refactor_cupid/policy_doctor/third_party/influence_visualizer/configs/coffee_prep_d1_may18/clustering/mimicgen_coffee_prep_d1_may18_d100_mug_constrained_seed1_kmeans_k15
+# Point arms to the top-level pipeline run_dir so they can find run_clustering/result.json
+clustering_run_dir: data/pipeline_runs/mimicgen_coffee_prep_d1_may18_seed1_d100_mug_constrained
+
 # Clustering — same parameters as square apr26 experiments
 clustering_influence_source: infembed
 clustering_level: rollout
@@ -65,6 +70,8 @@ clustering_normalize: none
 clustering_aggregation: sum
 
 mimicgen_datagen:
+  task_name: coffee_preparation
+  env_interface_name: MG_CoffeePreparation
   num_seeds: 10
   output_dir: data/outputs/mimicgen_datagen
   policy_seed: 1

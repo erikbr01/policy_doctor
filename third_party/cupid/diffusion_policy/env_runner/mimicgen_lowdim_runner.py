@@ -268,7 +268,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         if save_episodes:
             assert n_envs == 1
             assert n_train == n_train_vis == 0
-            assert n_test > 0 and n_test == n_test_vis
+            assert n_test > 0
             self.episode_dir = pathlib.Path(output_dir) / "episodes"
             self.episode_dir.mkdir()
             self.media_dir = pathlib.Path(output_dir) / "media"
@@ -356,7 +356,6 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                         "episode": chunk_idx,
                         "timestep": timestep,
                         "obs": np_obs_dict["obs"].copy().astype(np.float32)[0],
-                        "img": env.call("_render_frame", "rgb_array")[0]
                     }
 
                     if "action_pred" in np_action_dict:
@@ -447,12 +446,13 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             log_data[name] = value
 
         if self.save_episodes:
-            # rename media files based on success or failure
+            # rename media files based on success or failure (only if videos were recorded)
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
-            media_files = sorted([ep for ep in self.media_dir.iterdir()])
-            assert len(episode_files) == len(media_files)
-            for episode_file, media_file in zip(episode_files, media_files):
-                media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
+            if self.media_dir.exists():
+                media_files = sorted([ep for ep in self.media_dir.iterdir()])
+                if len(media_files) == len(episode_files):
+                    for episode_file, media_file in zip(episode_files, media_files):
+                        media_file.rename(self.media_dir / f"{episode_file.stem}{media_file.suffix}")
 
             # save episode metadata
             metadata = {
