@@ -684,10 +684,16 @@ else:
 
 # ── Node / Transition Inspector ───────────────────────────────────────────────
 import plotly.graph_objects as go
-import plotly.figure_factory as ff
 
 _SPECIAL_IDS = frozenset({SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID})
 _ep_key = "rollout_idx" if any("rollout_idx" in m for m in meta) else "demo_idx"
+_PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7"]
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
 
 @st.cache_data(show_spinner=False)
 def _node_episode_stats(
@@ -715,6 +721,9 @@ def _node_episode_stats(
         out.append({
             "ep": ep,
             "duration": ts_max - ts_min + 1,
+            "count": len(tss),
+            "ts_start": ts_min,
+            "ts_end": ts_max,
             "position": (ts_min + ts_max) / 2 / length,
             "success": ep_success.get(ep),
         })
@@ -813,9 +822,36 @@ _edge_labels = {
 
 _is_edge_mode = _sel_edge_clusters is not None and _sel_cluster is None
 
-with st.expander("🔍 Node / Transition Inspector", expanded=False):
-    # Comparison selector
+# Node comparison multiselect.
+# We use a plain session-state key ("_insp_pins") as the accumulator rather than
+# a widget key so Streamlit never clears it.  Graph clicks append additively;
+# the user can remove nodes via the pill ×.
+_active_nodes: List[int] = []
+if not _is_edge_mode:
+    # 1. Merge new graph click into the accumulator
+    _acc = list(st.session_state.get("_insp_pins") or [])
+    if _sel_cluster is not None and _sel_cluster not in _acc:
+        _acc.append(_sel_cluster)
+        st.session_state["_insp_pins"] = _acc
+
+    # 2. Build the default list from the accumulator, filtering to valid options
+    _default_nodes = [n for n in (st.session_state.get("_insp_pins") or []) if n in _node_opts]
+
+    # 3. Multiselect driven by default= (no key=), so Streamlit never clears it
+    _cmp_nodes = st.multiselect(
+        "Compare nodes — click graph nodes to add, remove here to deselect",
+        options=_node_opts,
+        format_func=lambda n: _node_labels.get(n, str(n)),
+        default=_default_nodes,
+    )
+
+    # 4. Sync the user's current selection back to the accumulator
+    st.session_state["_insp_pins"] = list(_cmp_nodes)
+    _active_nodes = list(dict.fromkeys(_cmp_nodes))
+
+with st.expander("🔍 Node / Transition Inspector", expanded=False, key="inspector_expander"):
     if _is_edge_mode:
+        # ── Edge mode ────────────────────────────────────────────────────────
         _cmp_edges = st.multiselect(
             "Compare with transitions",
             options=_edge_opts,
@@ -823,7 +859,6 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
             default=[],
             key="dbg_cmp_edges",
         )
-        # Collect all edges to analyze
         _active_edges: List[Tuple[int, int]] = []
         if _sel_edge_clusters is not None:
             _active_edges.append(_sel_edge_clusters)
@@ -832,7 +867,6 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
             st.info("Click a transition in the graph, or pick edges from the dropdown.")
             st.stop()
 
-        # Compute stats for each edge
         _edge_data: Dict[str, List[Dict]] = {}
         for _e in _active_edges:
             _lbl = _edge_labels.get(_e, str(_e))
@@ -846,18 +880,17 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
         else:
             _dc1, _dc2 = st.columns(2)
             with _dc1:
-                # Episode position distribution
                 _fig_pos = go.Figure()
                 for _lbl, _rows in _edge_data.items():
                     _pos = [r["position"] for r in _rows]
                     if _pos:
-                        _fig_pos.add_trace(go.Violin(x=_pos, name=_lbl, box_visible=True, meanline_visible=True, orientation="h"))
+                        _fig_pos.add_trace(go.Violin(x=_pos, name=_lbl,
+                            meanline_visible=True, orientation="h"))
                 _fig_pos.update_layout(title="Transition position in episode", height=300,
                     xaxis_title="Fraction of episode (0=start, 1=end)",
                     margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(_fig_pos, use_container_width=True, key="dbg_edge_pos")
             with _dc2:
-                # Success rate comparison
                 _fig_sr = go.Figure()
                 _sr_names, _sr_vals, _sr_n = [], [], []
                 for _lbl, _rows in _edge_data.items():
@@ -875,86 +908,125 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
                 st.plotly_chart(_fig_sr, use_container_width=True, key="dbg_edge_sr")
 
     else:
-        _cmp_nodes = st.multiselect(
-            "Compare with nodes",
-            options=_node_opts,
-            format_func=lambda n: _node_labels.get(n, str(n)),
-            default=[],
-            key="dbg_cmp_nodes",
-        )
-        # Collect all nodes to analyze
-        _active_nodes: List[int] = []
-        if _sel_cluster is not None:
-            _active_nodes.append(_sel_cluster)
-        _active_nodes += [n for n in _cmp_nodes if n not in _active_nodes]
+        # ── Node mode ────────────────────────────────────────────────────────
         if not _active_nodes:
-            st.info("Click a node in the graph, or pick nodes from the dropdown.")
+            st.info("Click a node in the graph, or pick nodes from the dropdown above.")
         else:
-            # Compute per-episode stats for each node
             _node_data: Dict[str, List[Dict]] = {}
             for _nid in _active_nodes:
                 _lbl = _node_labels.get(_nid, str(_nid))
                 _node_data[_lbl] = _node_episode_stats(_labels_bytes, _meta_json, _nid)
 
+            # Row 1: duration | windows assigned
             _dc1, _dc2 = st.columns(2)
             with _dc1:
-                # Duration distribution
                 _fig_dur = go.Figure()
-                for _lbl, _rows in _node_data.items():
+                for _ci, (_lbl, _rows) in enumerate(_node_data.items()):
                     _dur = [r["duration"] for r in _rows]
                     if _dur:
-                        _fig_dur.add_trace(go.Violin(y=_dur, name=_lbl, box_visible=True, meanline_visible=True))
-                _fig_dur.update_layout(title="Visit duration (windows)", height=320,
-                    yaxis_title="Duration (windows)", xaxis_title="Behavior",
+                        _fig_dur.add_trace(go.Violin(y=_dur, name=_lbl,
+                            meanline_visible=True, box_visible=False,
+                            marker_color=_PALETTE[_ci % len(_PALETTE)]))
+                _fig_dur.update_layout(title="Visit duration (window span)", height=320,
+                    yaxis_title="Windows (span)", xaxis_title="Behavior",
                     margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(_fig_dur, use_container_width=True, key="dbg_dur")
 
             with _dc2:
-                # Episode position distribution
+                _fig_cnt = go.Figure()
+                for _ci, (_lbl, _rows) in enumerate(_node_data.items()):
+                    _cnt = [r["count"] for r in _rows]
+                    if _cnt:
+                        _fig_cnt.add_trace(go.Violin(y=_cnt, name=_lbl,
+                            meanline_visible=True, box_visible=False,
+                            marker_color=_PALETTE[_ci % len(_PALETTE)]))
+                _fig_cnt.update_layout(title="Windows assigned to node", height=320,
+                    yaxis_title="Window count", xaxis_title="Behavior",
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_cnt, use_container_width=True, key="dbg_cnt")
+
+            # Row 2: relative position | absolute start/end (split violin)
+            _dc3, _dc4 = st.columns(2)
+            with _dc3:
                 _fig_pos = go.Figure()
-                for _lbl, _rows in _node_data.items():
+                for _ci, (_lbl, _rows) in enumerate(_node_data.items()):
                     _pos = [r["position"] for r in _rows]
                     if _pos:
-                        _fig_pos.add_trace(go.Violin(y=_pos, name=_lbl, box_visible=True, meanline_visible=True))
-                _fig_pos.update_layout(title="Position in episode", height=320,
-                    yaxis=dict(range=[0, 1], title="Fraction of episode (0=start, 1=end)"),
+                        _fig_pos.add_trace(go.Violin(y=_pos, name=_lbl,
+                            meanline_visible=True, box_visible=False,
+                            marker_color=_PALETTE[_ci % len(_PALETTE)]))
+                _fig_pos.update_layout(title="Relative position in episode", height=320,
+                    yaxis=dict(range=[0, 1], title="Fraction (0=start, 1=end)"),
                     margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(_fig_pos, use_container_width=True, key="dbg_pos")
 
-            _dc3, _dc4 = st.columns(2)
-            with _dc3:
-                # Success rate
+            with _dc4:
+                # Split violin: left half = start timestep, right half = end timestep
+                _fig_abs = go.Figure()
+                for _ci, (_lbl, _rows) in enumerate(_node_data.items()):
+                    _col = _PALETTE[_ci % len(_PALETTE)]
+                    _starts = [r["ts_start"] for r in _rows]
+                    _ends = [r["ts_end"] for r in _rows]
+                    if _starts:
+                        _fig_abs.add_trace(go.Violin(
+                            x=[_lbl] * len(_starts), y=_starts,
+                            name="start", legendgroup="start",
+                            side="negative", line_color=_col,
+                            fillcolor=_hex_to_rgba(_col, 0.8),
+                            meanline_visible=True, box_visible=False,
+                            showlegend=(_ci == 0), scalegroup=_lbl,
+                        ))
+                        _fig_abs.add_trace(go.Violin(
+                            x=[_lbl] * len(_ends), y=_ends,
+                            name="end", legendgroup="end",
+                            side="positive", line_color=_col,
+                            fillcolor=_hex_to_rgba(_col, 0.3),
+                            meanline_visible=True, box_visible=False,
+                            showlegend=(_ci == 0), scalegroup=_lbl,
+                        ))
+                _fig_abs.update_layout(
+                    title="Absolute start / end timestep (split)",
+                    violinmode="overlay", height=320,
+                    yaxis_title="Window index",
+                    legend=dict(orientation="h", y=1.12, x=0.5, xanchor="center"),
+                    margin=dict(l=0,r=0,t=48,b=20),
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_abs, use_container_width=True, key="dbg_abs")
+
+            # Row 3: success rate | outgoing transitions (all nodes)
+            _dc5, _dc6 = st.columns(2)
+            with _dc5:
                 _fig_sr = go.Figure()
-                _sr_names, _sr_vals, _sr_n = [], [], []
-                for _lbl, _rows in _node_data.items():
+                for _ci, (_lbl, _rows) in enumerate(_node_data.items()):
                     _tot = len(_rows)
                     _succ = sum(1 for r in _rows if r["success"] is True)
-                    _sr_names.append(_lbl)
-                    _sr_vals.append(_succ / _tot if _tot else 0)
-                    _sr_n.append(_tot)
-                _fig_sr.add_trace(go.Bar(x=_sr_names, y=_sr_vals,
-                    text=[f"{v:.0%} (n={n})" for v, n in zip(_sr_vals, _sr_n)],
-                    textposition="outside", marker_color="#4e79a7"))
+                    _val = _succ / _tot if _tot else 0
+                    _fig_sr.add_trace(go.Bar(x=[_lbl], y=[_val],
+                        text=[f"{_val:.0%} (n={_tot})"], textposition="outside",
+                        marker_color=_PALETTE[_ci % len(_PALETTE)], showlegend=False))
                 _fig_sr.update_layout(title="Success rate (episodes visiting node)", height=300,
                     yaxis=dict(range=[0, 1.15], title="Success rate"),
                     margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(_fig_sr, use_container_width=True, key="dbg_sr")
 
-            with _dc4:
-                # Outgoing transitions for first selected node
-                _first_nid = _active_nodes[0]
-                _out = bg.transition_probs.get(_first_nid, {})
-                if _out:
-                    _tgt_names = [bg.nodes[t].name if t in bg.nodes else str(t) for t in _out]
-                    _tgt_probs = list(_out.values())
-                    _fig_tr = go.Figure(go.Bar(
-                        x=_tgt_names, y=_tgt_probs,
-                        text=[f"{p:.0%}" for p in _tgt_probs],
-                        textposition="outside",
-                        marker_color="#f28e2b",
-                    ))
-                    _fig_tr.update_layout(
-                        title=f"Outgoing transitions: {_node_labels.get(_first_nid, str(_first_nid))}",
-                        height=300, yaxis=dict(range=[0, 1.15], title="Transition prob."),
-                        margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-                    st.plotly_chart(_fig_tr, use_container_width=True, key="dbg_tr")
+            with _dc6:
+                _fig_tr = go.Figure()
+                for _ci, _nid in enumerate(_active_nodes):
+                    _lbl = _node_labels.get(_nid, str(_nid))
+                    _out = bg.transition_probs.get(_nid, {})
+                    if _out:
+                        _sorted_items = sorted(_out.items(), key=lambda x: -x[1])
+                        _tgt_names = [bg.nodes[t].name if t in bg.nodes else str(t) for t, _ in _sorted_items]
+                        _tgt_probs = [p for _, p in _sorted_items]
+                        _fig_tr.add_trace(go.Bar(
+                            name=_lbl, x=_tgt_names, y=_tgt_probs,
+                            text=[f"{p:.0%}" for p in _tgt_probs],
+                            textposition="outside",
+                            marker_color=_PALETTE[_ci % len(_PALETTE)],
+                        ))
+                _fig_tr.update_layout(
+                    title="Outgoing transitions",
+                    height=320, yaxis=dict(range=[0, 1.15], title="Transition prob."),
+                    barmode="group",
+                    margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(_fig_tr, use_container_width=True, key="dbg_tr")
