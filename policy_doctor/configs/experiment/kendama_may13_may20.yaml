@@ -1,0 +1,40 @@
+# @package _global_
+# Baseline training for kendama real-robot task — combined may13 + may19 + may20 dataset.
+#
+# Prerequisites:
+#   1. Convert may19+may20 success data:
+#      LD_LIBRARY_PATH=~/data/zed_sdk_extracted/lib:/usr/lib/x86_64-linux-gnu \
+#      conda run -n policy_doctor --no-capture-output \
+#      python scripts/convert_droid_hdf5_debug.py \
+#          --input_path ~/data/droid_data/staging_may19_may20 \
+#          --output_path ~/data/droid_data/kendama_may19_may20.hdf5 \
+#          --image_size 256 256 --num_workers 12
+#
+#   2. Merge into combined file:
+#      conda run -n policy_doctor python scripts/merge_droid_hdf5.py \
+#          --inputs ~/data/droid_data/kendama_may13.hdf5 \
+#                   ~/data/droid_data/kendama_may19_may20.hdf5 \
+#          --output ~/data/droid_data/kendama_may13_may20.hdf5
+#
+# Usage:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=droid_hdf5 \
+#     +experiment=kendama_may13_may20 \
+#     steps=[train_baseline]
+
+experiment_name: kendama_may13_may20
+seeds: [0]
+
+baseline:
+  train_date: may20
+  num_epochs: 3000
+  checkpoint_every: 50
+  checkpoint_topk: 3
+  val_ratio: 0.1
+  tf32: true
+  compile: true
+  diffusion_dataset_path: /home/erbauer/data/droid_data/kendama_may13_may20.hdf5
+
+device: "cuda:0"
+project: kendama-droid
+wandb_tags: [droid, kendama, baseline, may13, may19, may20]
