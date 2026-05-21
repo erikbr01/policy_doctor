@@ -35,6 +35,9 @@ COPY third_party /app/third_party
 # MP4s for the user-study + graph-demo pages.
 COPY data/study_mp4s /tmp/study_mp4s
 
+# Data-support clusterings discovered by graph_demo.
+COPY data/clusterings /app/data/clusterings
+
 # Demo sweep clustering results.
 COPY data/demo_sweep /app/data/demo_sweep
 

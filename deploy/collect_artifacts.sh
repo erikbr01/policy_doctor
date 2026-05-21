@@ -117,7 +117,23 @@ PYEOF
     fi
 done
 
-# 4. Demo sweep clustering results (data/demo_sweep/<task>/run_clustering/clustering/).
+# 4. Data-support clusterings: graph_demo discovers tasks from
+#    data/clusterings/<task>/<prep_mode>/<cid>/. Symlinks point at SSD —
+#    rsync -L dereferences so the data is baked into the image. Exclude
+#    bulky artifacts the demo doesn't load.
+if [ -d "data/clusterings" ]; then
+    mkdir -p deploy/data/clusterings
+    rsync -aL --delete \
+        --exclude='clustering_models.pkl' \
+        --exclude='embedding_models.pkl' \
+        --exclude='joint_umap.joblib' \
+        data/clusterings/ deploy/data/clusterings/
+    echo "  data/clusterings: $(find deploy/data/clusterings -name 'cluster_labels.npy' 2>/dev/null | wc -l) clusterings bundled"
+else
+    echo "WARNING: data/clusterings/ not found — data-support feature will be empty in the demo."
+fi
+
+# 5. Demo sweep clustering results (data/demo_sweep/<task>/run_clustering/clustering/).
 DEMO_SWEEP_TASKS=(
     transport_mh_jan28
     square_mh_feb5

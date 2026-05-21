@@ -5,13 +5,28 @@ and writes a metrics.json alongside each manifest.yaml.  Skips dirs that already
 have an up-to-date metrics.json.
 
 Metrics written per clustering:
-  silhouette_mean       Mean silhouette coefficient (sklearn, subsampled ≤ 2000 pts)
-  davies_bouldin        Davies-Bouldin index (lower = better)
-  calinski_harabasz     Calinski-Harabasz index (higher = better)
-  markov_holds          bool — does the majority of states pass the chi² Markov test?
-  markov_fraction_holds fraction of testable states where Markov property holds
-  markov_num_tested     number of states that could be tested
-  start_v_value         V(START) from Bellman solve — expected success probability
+  silhouette_mean         Mean silhouette coefficient (sklearn, subsampled ≤ 2000 pts)
+  davies_bouldin          Davies-Bouldin index (lower = better)
+  calinski_harabasz       Calinski-Harabasz index (higher = better)
+  markov_holds            bool — does the majority of states pass the chi² Markov test?
+  markov_fraction_holds   fraction of testable states where Markov property holds
+  markov_num_tested       number of states that could be tested
+  markov_violation_mean   Mean Cramér's V across testable nodes, weighted by transitions
+                          through each node.  ∈ [0, 1].  0 = perfect Markov.
+  markov_violation_max    Worst per-node Cramér's V — flags single bad-apple clusters.
+  testable_fraction       Share of cluster states that pass Markov-testability gates
+                          (≥2 distinct predecessors, ≥2 distinct successors, ≥5 transitions).
+                          See docs/graph_evaluation.md §2.2.4. Higher = better data coverage.
+  swap_rate_per_frame     Stride-fair fraction of frame-pairs where the label changes.
+                          See docs/graph_evaluation.md §2.2.2. Lower = more temporally
+                          coherent labels.
+  distinct_per_episode    Mean # distinct cluster labels visited per episode after run-length
+                          collapse. See docs/graph_evaluation.md §2.2.1. Should match the
+                          true number of task phases.
+  mi_success              Mutual information (nats) between window cluster and episode
+                          success/failure outcome. See docs/graph_evaluation.md §2.2.3.
+                          Higher = clusters discriminate outcomes better.
+  start_v_value           V(START) from Bellman solve — expected success probability
 
 Run with:
   python -m policy_doctor.scripts.run_pipeline \\
@@ -141,7 +156,8 @@ def _compute_for_dir(clu_dir: pathlib.Path) -> Optional[Dict[str, Any]]:
         metrics["davies_bouldin"] = None
         metrics["calinski_harabasz"] = None
 
-    # ── Markov property test (chi²) ──────────────────────────────────────────
+    # ── Markov property test (chi² + Cramér's V) ───────────────────────────
+    n_tested: Optional[int] = None
     try:
         from policy_doctor.behaviors.behavior_graph import test_markov_property
 
@@ -149,11 +165,41 @@ def _compute_for_dir(clu_dir: pathlib.Path) -> Optional[Dict[str, Any]]:
             labels, metadata, level=level,
             significance_level=0.05, method="chi2",
         )
-        n_tested = int(markov.get("num_states_tested") or 0)
-        n_holds = sum(
-            1 for r in (markov.get("per_state") or {}).values()
-            if isinstance(r, dict) and r.get("markov_holds") is True
-        )
+        per_state = markov.get("per_state") or {}
+        # Note: per_state values are MarkovTestResult dataclasses, NOT dicts.
+        # The previous version used isinstance(r, dict), which was always False
+        # — so markov_fraction_holds was always 0. Use attribute access.
+        testable = [r for r in per_state.values() if getattr(r, "testable", False)]
+        n_tested = len(testable)
+        n_holds = sum(1 for r in testable if getattr(r, "markov_holds", False))
+
+        # Cramér's V per node: sqrt(chi² / (N * (min(rows, cols) - 1))).
+        # Weighted mean across testable nodes by transitions through the node.
+        cramers_v_per_node = []
+        weights = []
+        for r in testable:
+            ct = r.contingency_table
+            if ct is None or r.chi2 is None:
+                continue
+            n_obs = int(ct.sum())
+            denom = min(ct.shape) - 1
+            if n_obs <= 0 or denom <= 0:
+                continue
+            v = float(np.sqrt(r.chi2 / (n_obs * denom)))
+            v = min(max(v, 0.0), 1.0)  # clamp numerical drift
+            cramers_v_per_node.append(v)
+            weights.append(n_obs)
+        if cramers_v_per_node:
+            arr = np.array(cramers_v_per_node)
+            wts = np.array(weights, dtype=float)
+            metrics["markov_violation_mean"] = round(
+                float((arr * wts).sum() / wts.sum()), 4
+            )
+            metrics["markov_violation_max"] = round(float(arr.max()), 4)
+        else:
+            metrics["markov_violation_mean"] = None
+            metrics["markov_violation_max"] = None
+
         metrics["markov_holds"] = bool(markov.get("markov_holds"))
         metrics["markov_fraction_holds"] = (
             round(n_holds / n_tested, 4) if n_tested > 0 else None
@@ -164,6 +210,8 @@ def _compute_for_dir(clu_dir: pathlib.Path) -> Optional[Dict[str, Any]]:
         metrics["markov_holds"] = None
         metrics["markov_fraction_holds"] = None
         metrics["markov_num_tested"] = None
+        metrics["markov_violation_mean"] = None
+        metrics["markov_violation_max"] = None
 
     # ── V(START) from Bellman solve ──────────────────────────────────────────
     try:
@@ -179,5 +227,111 @@ def _compute_for_dir(clu_dir: pathlib.Path) -> Optional[Dict[str, Any]]:
         print(f"    [warn] V(START) computation failed: {e}", flush=True)
         metrics["start_v_value"] = None
 
+    # ── Coverage metrics (docs/graph_evaluation.md §2.2) ────────────────────
+    try:
+        K = max(int(labels.max()) + 1, 1) if len(labels) else 0
+        if n_tested is not None and K > 0:
+            metrics["testable_fraction"] = round(n_tested / K, 4)
+        else:
+            metrics["testable_fraction"] = None
+    except Exception as e:
+        print(f"    [warn] testable_fraction failed: {e}", flush=True)
+        metrics["testable_fraction"] = None
+
+    try:
+        cov = _coverage_metrics(labels, metadata, level)
+        metrics["swap_rate_per_frame"] = cov.get("swap_rate_per_frame")
+        metrics["distinct_per_episode"] = cov.get("distinct_per_episode")
+        metrics["mi_success"] = cov.get("mi_success")
+    except Exception as e:
+        print(f"    [warn] coverage metrics failed: {e}", flush=True)
+        metrics["swap_rate_per_frame"] = None
+        metrics["distinct_per_episode"] = None
+        metrics["mi_success"] = None
+
     metrics_path.write_text(json.dumps(metrics, indent=2))
     return metrics
+
+
+def _coverage_metrics(
+    labels: np.ndarray, metadata: List[Dict], level: str
+) -> Dict[str, Optional[float]]:
+    """Per-frame swap rate, mean distinct clusters/episode, MI(label; success).
+
+    All three operate on the labels + metadata. See docs/graph_evaluation.md
+    §2.2.1, §2.2.2, §2.2.3.
+    """
+    ep_key = "rollout_idx" if level == "rollout" else "demo_idx"
+
+    # Group windows by episode, sorted by window_start (or timestep).
+    episodes: Dict[Any, List[Dict]] = {}
+    for i, m in enumerate(metadata):
+        if int(labels[i]) == -1:
+            continue
+        ep = m.get(ep_key)
+        if ep is None:
+            continue
+        episodes.setdefault(ep, []).append({
+            "i": i,
+            "start": m.get("window_start", m.get("timestep", 0)),
+            "end": m.get("window_end", m.get("timestep", 0) + 1),
+            "success": m.get("success"),
+        })
+    for ep in episodes:
+        episodes[ep].sort(key=lambda r: r["start"])
+
+    # Swap rate per frame: sum(swaps) / sum(frames per episode).
+    n_swaps = 0
+    n_frames = 0
+    distinct_counts: List[int] = []
+    for ep, rows in episodes.items():
+        if not rows:
+            continue
+        labs = [int(labels[r["i"]]) for r in rows]
+        n_swaps += sum(1 for j in range(1, len(labs)) if labs[j] != labs[j - 1])
+        # Frame total: highest window_end seen for the episode (1-indexed-style).
+        n_frames += int(rows[-1]["end"])
+        # Run-length-collapsed distinct count.
+        rle: List[int] = []
+        for lab in labs:
+            if not rle or rle[-1] != lab:
+                rle.append(lab)
+        distinct_counts.append(len(set(rle)))
+
+    swap_rate = (n_swaps / n_frames) if n_frames > 0 else None
+    distinct_per_ep = (float(np.mean(distinct_counts)) if distinct_counts else None)
+
+    # MI(cluster_label; success) in nats. Skip if all episodes share one outcome.
+    mi_succ: Optional[float] = None
+    succ = np.array(
+        [bool(m.get("success")) for m in metadata],
+        dtype=object,
+    )
+    keep = (labels != -1) & np.array(
+        [m.get("success") is not None for m in metadata]
+    )
+    if keep.sum() >= 2:
+        lab_k = labels[keep].astype(int)
+        succ_k = succ[keep].astype(int)
+        if len(set(succ_k)) >= 2:
+            N = float(lab_k.size)
+            # Joint counts via 2D histogram
+            uniq_lab = np.unique(lab_k)
+            joint = np.zeros((uniq_lab.size, 2), dtype=float)
+            for j, c in enumerate(uniq_lab):
+                m = lab_k == c
+                joint[j, 0] = (succ_k[m] == 0).sum()
+                joint[j, 1] = (succ_k[m] == 1).sum()
+            p_joint = joint / N
+            p_lab = p_joint.sum(axis=1, keepdims=True)
+            p_succ = p_joint.sum(axis=0, keepdims=True)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ratio = p_joint / (p_lab @ p_succ)
+                terms = np.where(p_joint > 0, p_joint * np.log(ratio), 0.0)
+            mi_succ = float(np.nansum(terms))
+
+    return {
+        "swap_rate_per_frame": round(swap_rate, 6) if swap_rate is not None else None,
+        "distinct_per_episode": round(distinct_per_ep, 3) if distinct_per_ep is not None else None,
+        "mi_success": round(mi_succ, 4) if mi_succ is not None else None,
+    }
