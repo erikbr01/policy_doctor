@@ -17,11 +17,13 @@ PORT=8502
 
 COLLECT=true
 BUILD=true
+NO_CACHE=false
 
 for arg in "$@"; do
     case "$arg" in
         --no-collect) COLLECT=false ;;
         --no-build)   BUILD=false ;;
+        --no-cache)   NO_CACHE=true ;;
         *) echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -32,8 +34,10 @@ if $COLLECT; then
 fi
 
 if $BUILD; then
-    echo "→ Building image $IMAGE_NAME"
-    docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"
+    BUILD_ARGS=()
+    $NO_CACHE && BUILD_ARGS+=(--no-cache)
+    echo "→ Building image $IMAGE_NAME${NO_CACHE:+ (--no-cache)}"
+    docker build "${BUILD_ARGS[@]}" -t "$IMAGE_NAME" "$SCRIPT_DIR"
 fi
 
 echo "→ Stopping existing container (if any)"

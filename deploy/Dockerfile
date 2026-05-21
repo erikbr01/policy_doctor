@@ -37,6 +37,11 @@ COPY third_party /app/third_party
 # the data there.
 COPY data/study_mp4s /tmp/study_mp4s
 
+# Clusterings discovered by graph_demo (data/clusterings/<task>/<cid>/).
+# Path resolution in 3_graph_demo.py resolves _WORKTREE to /app, so the
+# in-container layout mirrors the host worktree.
+COPY data/clusterings /app/data/clusterings
+
 ENV PYTHONPATH=/app
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 ENV STREAMLIT_SERVER_HEADLESS=true

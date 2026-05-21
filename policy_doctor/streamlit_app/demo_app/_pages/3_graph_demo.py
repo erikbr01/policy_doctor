@@ -58,23 +58,45 @@ st.caption(
 # ── Locate clusterings ────────────────────────────────────────────────────────
 
 _REPO = _WORKTREE
-_IV_CFG = _REPO / "third_party" / "influence_visualizer" / "configs"
+_DATA_CLUSTERINGS = _REPO / "data" / "clusterings"
+
+
+def _has_any_clustering(d: Path) -> bool:
+    """True if directory ``d`` contains at least one clustering subdir."""
+    if not d.is_dir():
+        return False
+    return any(c.is_dir() and (c / "cluster_labels.npy").exists() for c in d.iterdir())
 
 
 @st.cache_data(show_spinner=False)
 def _list_tasks() -> List[str]:
+    """A task is valid if any prep-mode subdir holds at least one clustering."""
     tasks: set = set()
-    if _IV_CFG.is_dir():
-        for d in _IV_CFG.iterdir():
-            if (d / "clustering").is_dir() and any((d / "clustering").iterdir()):
+    if _DATA_CLUSTERINGS.is_dir():
+        for d in _DATA_CLUSTERINGS.iterdir():
+            if not d.is_dir():
+                continue
+            if any(_has_any_clustering(sub) for sub in d.iterdir() if sub.is_dir()):
                 tasks.add(d.name)
     return sorted(tasks)
 
 
 @st.cache_data(show_spinner=False)
-def _clusterings_for_task(task: str) -> List[Path]:
+def _prep_modes_for_task(task: str) -> List[str]:
+    """List of prep-mode subdirs that contain at least one clustering."""
+    out: List[str] = []
+    task_dir = _DATA_CLUSTERINGS / task
+    if task_dir.is_dir():
+        for sub in sorted(task_dir.iterdir()):
+            if sub.is_dir() and _has_any_clustering(sub):
+                out.append(sub.name)
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def _clusterings_for_task(task: str, prep_mode: str) -> List[Path]:
     out: List[Path] = []
-    clu_dir = _IV_CFG / task / "clustering"
+    clu_dir = _DATA_CLUSTERINGS / task / prep_mode
     if clu_dir.is_dir():
         for d in sorted(clu_dir.iterdir()):
             if (d / "cluster_labels.npy").exists():
@@ -280,10 +302,37 @@ if _prev_task != task:
         for suffix in ("_selected", "_selected_edge", "_last_click", "_render_token"):
             st.session_state.pop(prefix + suffix, None)
 
-st.sidebar.header("Clustering")
-_cands = _clusterings_for_task(task)
-if not _cands:
+_prep_modes = _prep_modes_for_task(task)
+if not _prep_modes:
     st.error(f"No clusterings under {task}.")
+    st.stop()
+_default_prep_idx = _prep_modes.index("umap_first") if "umap_first" in _prep_modes else 0
+prep_mode = st.sidebar.selectbox(
+    "Prep mode",
+    _prep_modes,
+    index=_default_prep_idx,
+    help=(
+        "How rollout/demo embeddings were prepared before clustering. "
+        "`umap_first` projects to low-dim before windowing; `agg_first` "
+        "windows first then projects."
+    ),
+)
+
+# Clear stale per-component state when the prep mode flips, so a cached
+# node/edge selection from one mode doesn't ghost into the other.
+_prev_prep = st.session_state.get("_demo_prev_prep")
+if _prev_prep != prep_mode:
+    st.session_state["_demo_prev_prep"] = prep_mode
+    for prefix in ("demo_markov_graph", "demo_tree"):
+        for suffix in ("_selected", "_selected_edge", "_last_click", "_render_token"):
+            st.session_state.pop(prefix + suffix, None)
+    st.session_state.pop("ds_metric_sel", None)
+    st.session_state.pop("ds_stat_sel", None)
+
+st.sidebar.header("Clustering")
+_cands = _clusterings_for_task(task, prep_mode)
+if not _cands:
+    st.error(f"No clusterings under {task}/{prep_mode}.")
     st.stop()
 
 # Only show representations from the official sweep. The directory name
@@ -517,17 +566,45 @@ with c_color:
 # Data-support metric + statistic selectors live below the color dropdown so
 # users don't have to scroll back to the sidebar to swap views. Only shown
 # when "data_support" is the active mode AND the sibling JSON is present.
+def _ds_metric_labels(cfg: Dict) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
+    """Human-readable labels for the data-support metrics.
+
+    Three "k"s coexist in this page (KMeans-K = cluster count,
+    UMAP n_components, kNN-k = neighbour count) so the labels avoid the
+    bare letter "k" and spell out the configured kNN count from cfg.
+    """
+    r = cfg.get("radius", "?")
+    n = cfg.get("knn_k", "?")
+    display = {
+        "count_in_radius":   f"Demo windows within radius (r={r})",
+        "binary_coverage":   f"Has any demo window within radius (r={r})",
+        "knn_mean_distance": f"Mean distance to K={n} nearest neighbors",
+        "knn_max_distance":  f"Max distance within K={n} nearest neighbors",
+    }
+    y_axis = {
+        "count_in_radius":   f"# demo windows within r={r}",
+        "binary_coverage":   f"Fraction of slices with ≥1 demo window in r={r}",
+        "knn_mean_distance": f"Mean dist. to K={n} nearest neighbors",
+        "knn_max_distance":  f"Max dist. within K={n} nearest neighbors",
+    }
+    help_text = {
+        "count_in_radius":   f"Per rollout window: # training-demo windows within radius r={r} in joint UMAP space (higher = better-supported).",
+        "binary_coverage":   f"Per rollout window: 1 if ≥1 demo window within radius r={r}, else 0. Per-cluster summary = coverage fraction in [0,1].",
+        "knn_mean_distance": f"Per rollout window: mean of the Euclidean distances to its K={n} nearest training-demo window neighbors (lower = better-supported). Inverted to high=good below.",
+        "knn_max_distance":  f"Per rollout window: maximum distance within its K={n} nearest training-demo window neighbors — i.e. how far the K-th neighbor is (lower = better worst-case). Inverted to high=good below.",
+    }
+    return display, y_axis, help_text
+
+
 ds_metric: Optional[str] = None
 ds_stat: str = "median"
 if color_by == "data_support" and data_support is not None:
-    _metrics_avail = sorted(data_support["metrics"].keys())
-    _metric_help = {
-        "count_in_radius": "Per slice: # training demos within radius r in joint UMAP space (higher = better-supported).",
-        "binary_coverage": "Per slice: 1 if ≥1 demo within radius r (per-cluster summary = coverage fraction).",
-        "knn_mean_distance": "Per slice: mean distance to k nearest demos (lower = better-supported). Inverted to high=good below.",
-        "knn_max_distance": "Per slice: distance to k-th nearest demo (lower = better worst-case). Inverted to high=good below.",
-        "kde_log_density": "Per slice: Gaussian-KDE log p_demo (higher = better-supported).",
-    }
+    _ds_cfg = data_support.get("_config", {})
+    _ds_display, _ds_yaxis, _ds_help = _ds_metric_labels(_ds_cfg)
+    # KDE log-density is computed but hidden — raw log p_demo values (e.g.
+    # −29 to −15) are too hard to interpret at a glance. The data stays in
+    # the JSON for downstream analysis; just keep it off the UI.
+    _metrics_avail = sorted(m for m in data_support["metrics"].keys() if m != "kde_log_density")
     _stat_opts = ["median", "mean", "q10", "q90"]
     dsc1, dsc2 = st.columns([2, 1])
     with dsc1:
@@ -535,7 +612,8 @@ if color_by == "data_support" and data_support is not None:
             "Metric",
             options=_metrics_avail,
             index=0,
-            help=" · ".join(f"**{m}**: {_metric_help.get(m, '')}" for m in _metrics_avail),
+            format_func=lambda m: _ds_display.get(m, m),
+            help=" · ".join(f"**{_ds_display.get(m, m)}**: {_ds_help.get(m, '')}" for m in _metrics_avail),
             key="ds_metric_sel",
         )
     with dsc2:
@@ -543,11 +621,13 @@ if color_by == "data_support" and data_support is not None:
             "Summary stat", options=_stat_opts, index=0, key="ds_stat_sel"
         )
     st.caption(
-        f"Coloring nodes by **{ds_stat}** of *{ds_metric}* across slices. "
-        "Saturated = well-supported by training data; pale = under-supported "
-        "(possibly OOD behaviour). Configured radius "
-        f"r = {data_support.get('_config', {}).get('radius', '?')}; "
-        f"n_demo_windows = {data_support.get('_config', {}).get('n_demo_windows', '?')}."
+        f"Coloring nodes by **{ds_stat}** of *{_ds_display.get(ds_metric, ds_metric)}* "
+        "across slices. Saturated = well-supported by training data; pale = "
+        "under-supported (possibly OOD behaviour). "
+        f"r = {_ds_cfg.get('radius', '?')}, "
+        f"kNN neighbours = {_ds_cfg.get('knn_k', '?')}, "
+        f"joint-UMAP dim = {_ds_cfg.get('umap_n_components', '?')}, "
+        f"n_demo_windows = {_ds_cfg.get('n_demo_windows', '?')}."
     )
 
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
@@ -1091,22 +1171,30 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
             # values — i.e. how broad / tight the training-data envelope around
             # that behaviour is. Complements the median-only color encoding.
             if data_support is not None and data_support.get("metrics"):
-                _ds_avail = sorted(data_support["metrics"].keys())
+                _ds_avail = sorted(m for m in data_support["metrics"].keys() if m != "kde_log_density")
+                if not _ds_avail:
+                    _ds_avail = sorted(data_support["metrics"].keys())  # fallback if only kde was stored
+                _ds_inspect_cfg = data_support.get("_config", {})
+                _ds_inspect_display, _ds_inspect_yaxis, _ = _ds_metric_labels(_ds_inspect_cfg)
                 _ds_pick = st.selectbox(
                     "Data-support metric (distribution)",
                     options=_ds_avail,
                     index=(_ds_avail.index(ds_metric) if ds_metric in _ds_avail else 0),
+                    format_func=lambda m: _ds_inspect_display.get(m, m),
                     key="dbg_ds_metric",
                     help=(
                         "Per-slice raw values from data_support.json — one violin "
-                        "per active node. Inverted metrics (knn_*_distance) are "
-                        "shown as-is (lower = better-supported)."
+                        "per active node. Distance metrics are shown as-is "
+                        "(lower = better-supported)."
                     ),
                 )
                 _ds_by_cid = data_support["metrics"].get(_ds_pick, {})
                 _present_lbls = []
                 _absent_lbls = []
                 _ds_fig = go.Figure()
+                _is_binary = _ds_pick == "binary_coverage"
+                _bar_x: List[str] = []
+                _bar_y: List[float] = []
                 for _nid in _active_nodes:
                     _rec = _ds_by_cid.get(int(_nid))
                     _lbl = _node_labels.get(_nid, str(_nid))
@@ -1114,24 +1202,32 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
                         _absent_lbls.append(_lbl)
                         continue
                     _present_lbls.append(_lbl)
-                    _ds_fig.add_trace(go.Violin(
-                        y=list(_rec["raw"]),
-                        name=f"{_lbl} (n={_rec.get('n_slices', len(_rec['raw']))})",
-                        box_visible=True,
-                        meanline_visible=True,
-                        points="outliers",
+                    if _is_binary:
+                        # Per-slice values are 0/1; a violin would smear into
+                        # negative / >1 territory. Plot the per-cluster
+                        # coverage fraction (= mean of 0/1) as a bar instead.
+                        _name = f"{_lbl} (n={_rec.get('n_slices', len(_rec['raw']))})"
+                        _bar_x.append(_name)
+                        _bar_y.append(float(_rec.get("mean", 0.0)))
+                    else:
+                        _ds_fig.add_trace(go.Violin(
+                            y=list(_rec["raw"]),
+                            name=f"{_lbl} (n={_rec.get('n_slices', len(_rec['raw']))})",
+                            box_visible=True,
+                            meanline_visible=True,
+                            points="outliers",
+                        ))
+                if _present_lbls and _is_binary:
+                    _ds_fig.add_trace(go.Bar(
+                        x=_bar_x, y=_bar_y,
+                        text=[f"{p:.0%}" for p in _bar_y],
+                        textposition="outside",
+                        marker_color="#59a14f",
                     ))
                 if _present_lbls:
-                    _radius = data_support.get("_config", {}).get("radius", "?")
-                    _y_axis_title = {
-                        "count_in_radius": f"# demos within r={_radius}",
-                        "binary_coverage": f"≥1 demo within r={_radius}? (0/1)",
-                        "knn_mean_distance": "mean dist to k nearest demos",
-                        "knn_max_distance": "dist to k-th nearest demo",
-                        "kde_log_density": "log p_demo (Gaussian KDE)",
-                    }.get(_ds_pick, _ds_pick)
+                    _y_axis_title = _ds_inspect_yaxis.get(_ds_pick, _ds_pick)
                     _ds_fig.update_layout(
-                        title=f"Training-data support distribution per node — {_ds_pick}",
+                        title=f"Training-data support per node — {_ds_inspect_display.get(_ds_pick, _ds_pick)}",
                         height=360,
                         yaxis_title=_y_axis_title,
                         xaxis_title="Behavior",
@@ -1139,6 +1235,10 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False):
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
                         showlegend=False,
+                        **(
+                            dict(yaxis=dict(range=[0, 1.15], title=_y_axis_title))
+                            if _is_binary else {}
+                        ),
                     )
                     st.plotly_chart(_ds_fig, use_container_width=True, key="dbg_ds_dist")
                 if _absent_lbls:

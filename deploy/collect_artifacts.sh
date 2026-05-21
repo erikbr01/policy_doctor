@@ -9,7 +9,7 @@ cd "$ROOT"
 
 echo "== Bundling deploy/ from $ROOT =="
 
-mkdir -p deploy/policy_doctor deploy/third_party deploy/data/study_mp4s
+mkdir -p deploy/policy_doctor deploy/third_party deploy/data/study_mp4s deploy/data/clusterings
 
 # 1. The policy_doctor source package (only the parts the demo uses).
 rsync -a --delete \
@@ -111,7 +111,19 @@ PYEOF
     fi
 done
 
-# 4. Sanity check.
+# 4. Bundled clusterings: graph_demo discovers tasks from data/clusterings/<task>/.
+#    Symlinks point at the canonical SSD paths — rsync -L dereferences them so
+#    the data is baked into the image. Exclude big artifacts that the demo
+#    doesn't load (clustering_models.pkl, embedding_models.pkl, joint_umap.joblib).
+if [ -d "data/clusterings" ]; then
+    rsync -aL --delete \
+        --exclude='clustering_models.pkl' \
+        --exclude='embedding_models.pkl' \
+        --exclude='joint_umap.joblib' \
+        data/clusterings/ deploy/data/clusterings/
+fi
+
+# 5. Sanity check.
 echo "== Bundle contents =="
 du -sh deploy/policy_doctor deploy/third_party deploy/data 2>&1
 
