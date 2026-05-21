@@ -56,14 +56,32 @@ st.caption(
 
 
 # ── Locate clusterings ────────────────────────────────────────────────────────
+# New canonical location: data/clusterings/<task>/<ordering>/<slug>/
+# Legacy location (pi05 + old robomimic): third_party/influence_visualizer/configs/<task>/clustering/
+# Both are read; the ordering is derived from the pipeline field in the manifest
+# (window before umap → aggregate_first; umap before window → umap_first; absent → umap_first).
 
 _REPO = _WORKTREE
 _IV_CFG = _REPO / "third_party" / "influence_visualizer" / "configs"
+# Demo sweep results: data/demo_sweep/<task>/run_clustering/clustering/<ordering>/<slug>/
+_DEMO_SWEEP = _REPO / "data" / "demo_sweep"
+
+
+def _ordering_from_manifest(manifest: Dict) -> str:
+    steps = manifest.get("pipeline_steps", [])
+    if "window" in steps and "umap" in steps:
+        return "aggregate_first" if steps.index("window") < steps.index("umap") else "umap_first"
+    return "umap_first"
 
 
 @st.cache_data(show_spinner=False)
 def _list_tasks() -> List[str]:
     tasks: set = set()
+    if _DEMO_SWEEP.is_dir():
+        for d in _DEMO_SWEEP.iterdir():
+            clu = d / "run_clustering" / "clustering"
+            if clu.is_dir() and any(clu.rglob("cluster_labels.npy")):
+                tasks.add(d.name)
     if _IV_CFG.is_dir():
         for d in _IV_CFG.iterdir():
             if (d / "clustering").is_dir() and any((d / "clustering").iterdir()):
@@ -74,6 +92,14 @@ def _list_tasks() -> List[str]:
 @st.cache_data(show_spinner=False)
 def _clusterings_for_task(task: str) -> List[Path]:
     out: List[Path] = []
+    clu_root = _DEMO_SWEEP / task / "run_clustering" / "clustering"
+    if clu_root.is_dir():
+        for ordering_dir in sorted(clu_root.iterdir()):
+            if ordering_dir.is_dir():
+                for d in sorted(ordering_dir.iterdir()):
+                    if (d / "cluster_labels.npy").exists():
+                        out.append(d)
+    # Legacy: iv configs (pi05)
     clu_dir = _IV_CFG / task / "clustering"
     if clu_dir.is_dir():
         for d in sorted(clu_dir.iterdir()):
@@ -88,6 +114,15 @@ def _read_manifest(path_str: str) -> Dict:
     try:
         with open(Path(path_str) / "manifest.yaml") as f:
             return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+@st.cache_data(show_spinner=False)
+def _read_metrics(path_str: str) -> Dict:
+    try:
+        with open(Path(path_str) / "metrics.json") as f:
+            return json.load(f)
     except Exception:
         return {}
 
@@ -293,6 +328,7 @@ for p in _cands:
     if rep_full not in _OFFICIAL_REPS:
         continue
     m = _read_manifest(str(p))
+    mx = _read_metrics(str(p))
     _INDEX.append({
         "path": p,
         "rep": rep_full,
@@ -300,19 +336,22 @@ for p in _cands:
         "w": int(m.get("window_width", 5) or 5),
         "s": int(m.get("stride", 2) or 2),
         "agg": str(m.get("aggregation", "sum") or "sum"),
+        "ordering": _ordering_from_manifest(m),
+        "metrics": mx,
     })
 
-def _filter(rep=None, k=None, w=None, s=None, agg=None):
+def _filter(rep=None, k=None, w=None, s=None, agg=None, ordering=None):
     out = _INDEX
     if rep is not None: out = [e for e in out if e["rep"] == rep]
     if k is not None: out = [e for e in out if e["k"] == k]
     if w is not None: out = [e for e in out if e["w"] == w]
     if s is not None: out = [e for e in out if e["s"] == s]
     if agg is not None: out = [e for e in out if e["agg"] == agg]
+    if ordering is not None: out = [e for e in out if e["ordering"] == ordering]
     return out
 
 
-_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 8}
+_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 8, "ordering": "umap_first"}
 
 def _pick(label, options, key, default=None):
     if not options:
@@ -351,26 +390,36 @@ _REP_DESCRIPTIONS = {
         "and the full action chunk, flattened and UMAP-reduced.",
 }
 
-reps = sorted({e["rep"] for e in _INDEX})
+_ORDERING_LABELS = {
+    "umap_first": "UMAP-first (normalize → UMAP → window → K-means)",
+    "aggregate_first": "Aggregate-first (window → normalize → UMAP → K-means)",
+}
+orderings_available = sorted({e["ordering"] for e in _INDEX})
+ordering_pick = _pick(
+    "UMAP ordering", orderings_available, "demo_ordering",
+    default=_DEFAULT["ordering"],
+)
+if ordering_pick and ordering_pick in _ORDERING_LABELS:
+    st.sidebar.caption(_ORDERING_LABELS[ordering_pick])
+
+filt_by_ordering = _filter(ordering=ordering_pick)
+reps = sorted({e["rep"] for e in filt_by_ordering})
 rep_pick = _pick("Embedding", reps, "demo_rep", default=_DEFAULT["rep"])
 if rep_pick in _REP_DESCRIPTIONS:
     st.sidebar.caption(_REP_DESCRIPTIONS[rep_pick])
-filt = _filter(rep=rep_pick)
+filt = _filter(rep=rep_pick, ordering=ordering_pick)
 ks = sorted({e["k"] for e in filt})
 k_pick = _pick("K (clusters)", ks, "demo_k", default=_DEFAULT["k"])
-filt = _filter(rep=rep_pick, k=k_pick)
+filt = _filter(rep=rep_pick, k=k_pick, ordering=ordering_pick)
 ws = sorted({e["w"] for e in filt})
 w_pick = _pick("W (window width)", ws, "demo_w")
-filt = _filter(rep=rep_pick, k=k_pick, w=w_pick)
+filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, ordering=ordering_pick)
 ss_ = sorted({e["s"] for e in filt})
 s_pick = _pick("S (stride)", ss_, "demo_s")
-filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick)
-# Aggregation is always "mean" in the bundled clusterings; the dropdown
-# would be a single-option no-op. If you generate variants with other
-# aggregations, re-expose the picker here.
+filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick, ordering=ordering_pick)
 aggs = sorted({e["agg"] for e in filt})
 agg_pick = aggs[0] if aggs else None
-filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick, agg=agg_pick)
+filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick, agg=agg_pick, ordering=ordering_pick)
 if not filt:
     st.error("No clustering matches the chosen combination.")
     st.stop()
@@ -487,7 +536,7 @@ with c_color:
     )
 
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
-_default_min_branch = max(2, int(n_total_eps * 0.02))  # ~2% of rollouts
+_default_min_branch = 2
 min_branch = st.slider(
     "Hide transitions where count(s, s′) < N",
     1, max(50, _default_min_branch + 10), _default_min_branch,

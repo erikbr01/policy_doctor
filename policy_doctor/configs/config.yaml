@@ -14,6 +14,8 @@ defaults:
   # MimicGen task profile: task-specific generation settings (see configs/mimicgen/*.yaml)
   # Override with mimicgen=square_d0 etc. — use null when not running mimicgen generation.
   - mimicgen: null
+  # Demo clustering sweep: set with clustering_sweep=transport_mh_jan28 etc.
+  - clustering_sweep: null
   - experiment: null                                       # experiment config (highest priority — use experiment=name)
 
 # Pipeline identity — override per experiment or on CLI

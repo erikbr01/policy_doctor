@@ -57,7 +57,7 @@ def _write_video(frames: List[np.ndarray], output_path: pathlib.Path, fps: int):
             padded.append(p)
         frames = padded
 
-    imageio.mimwrite(str(output_path), frames, fps=fps, codec="h264")
+    imageio.mimwrite(str(output_path), frames, fps=fps, format="ffmpeg")
 
 
 def _episode_number(path: pathlib.Path) -> int:

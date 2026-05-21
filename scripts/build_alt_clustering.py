@@ -70,7 +70,7 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--reducer", default="umap", choices=["umap", "pca", "none"])
     ap.add_argument("--umap_n_components", type=int, default=50,
                     help="UMAP target dim. Capped at (feature_dim - 1) automatically.")
-    ap.add_argument("--umap_n_jobs", type=int, default=-1)
+    ap.add_argument("--umap_n_jobs", type=int, default=4)
     ap.add_argument("--umap_init", default="spectral",
                     help="UMAP initialization method ('spectral' or 'random'). "
                          "Use 'random' to skip spectral embedding; much faster on large disconnected graphs.")
@@ -241,6 +241,7 @@ def main() -> int:
                 "seed": int(args.seed),
                 "rep_kwargs": kw,
                 "timestep_embed_dir": str(src),
+                "pipeline_steps": ["normalize", "umap", "window", "kmeans"],
             },
         )
         print(f"  [embed-branch] done {time.time()-t0:.1f}s → {out_dir}", flush=True)
@@ -297,6 +298,7 @@ def main() -> int:
             "eval_dir": str(args.eval_dir),
             "seed": int(args.seed),
             "rep_kwargs": kw,
+            "pipeline_steps": ["window", "normalize", "umap", "kmeans"],
         },
     )
     print(f"  [alt_clustering] done {time.time()-t0:.1f}s → {out_dir}", flush=True)

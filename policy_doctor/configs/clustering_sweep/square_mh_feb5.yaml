@@ -1,0 +1,8 @@
+# @package clustering_sweep
+defaults:
+  - defaults
+  - _self_
+
+task: square_mh_feb5
+eval_dir: third_party/cupid/data/outputs/eval_save_episodes/feb5/feb5_train_diffusion_unet_lowdim_square_mh_0/latest
+run_dir: data/demo_sweep/square_mh_feb5

@@ -1,0 +1,8 @@
+# @package clustering_sweep
+defaults:
+  - defaults
+  - _self_
+
+task: lift_mh_jan26
+eval_dir: third_party/cupid/data/outputs/eval_save_episodes/jan26/jan26_train_diffusion_unet_lowdim_lift_mh_0/latest
+run_dir: data/demo_sweep/lift_mh_jan26

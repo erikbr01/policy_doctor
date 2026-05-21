@@ -114,6 +114,15 @@ def main() -> None:
         reducer_method="umap",
         kmeans=kmeans_model,
     )
+
+    # Record pipeline ordering so the demo app can distinguish aggregate_first
+    # (window → normalize → UMAP → kmeans) from umap_first.
+    import yaml as _yaml
+    manifest_path = result_dir / "manifest.yaml"
+    _m = _yaml.safe_load(manifest_path.read_text()) or {}
+    _m["pipeline_steps"] = ["window", "normalize", "umap", "kmeans"]
+    with open(manifest_path, "w") as _f:
+        _yaml.safe_dump(_m, _f, default_flow_style=False, sort_keys=False)
     print(f"\nSaved clustering: {result_dir}")
     print(f"Saved models:     {models_path}")
     print(f"\nStreamlit config: set  eval_dir: {eval_dir}")

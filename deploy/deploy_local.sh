@@ -6,22 +6,24 @@
 #   ./deploy/deploy_local.sh --no-collect  # skip collect_artifacts.sh (faster rebuild)
 #   ./deploy/deploy_local.sh --no-build    # skip docker build (reuse existing image)
 #
-# Opens http://localhost:8501 when the container is ready.
+# Opens http://localhost:8503 when the container is ready.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTAINER_NAME="policy-doctor-demo"
 IMAGE_NAME="policy-doctor-demo"
-PORT=8502
+PORT=8503
 
 COLLECT=true
 BUILD=true
+NO_CACHE=""
 
 for arg in "$@"; do
     case "$arg" in
         --no-collect) COLLECT=false ;;
         --no-build)   BUILD=false ;;
+        --no-cache)   NO_CACHE="--no-cache" ;;
         *) echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -33,7 +35,7 @@ fi
 
 if $BUILD; then
     echo "→ Building image $IMAGE_NAME"
-    docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"
+    docker build $NO_CACHE -t "$IMAGE_NAME" "$SCRIPT_DIR"
 fi
 
 echo "→ Stopping existing container (if any)"

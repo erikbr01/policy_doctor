@@ -73,6 +73,10 @@ ALL_STEPS: List[str] = [
     "train_on_combined_data",
     # Standalone failure analysis:
     "analyze_failure_states",
+    # Demo clustering sweep (W × S × K × rep × ordering grid):
+    "run_clustering_demo_sweep",
+    # Evaluation metrics for demo-sweep clusterings (silhouette, Markov, V(START)):
+    "compute_clustering_metrics",
 ]
 
 
@@ -131,6 +135,12 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
         AnalyzeFailureStatesStep,
     )
+    from policy_doctor.curation_pipeline.steps.run_clustering_demo_sweep import (
+        RunClusteringDemoSweepStep,
+    )
+    from policy_doctor.curation_pipeline.steps.compute_clustering_metrics import (
+        ComputeClusteringMetricsStep,
+    )
     from policy_doctor.curation_pipeline.steps.eval_baseline import EvalBaselineStep
     from policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep import (
         MimicgenBudgetSweepStep,
@@ -184,6 +194,8 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "mimicgen_failure_targeting": MimicgenFailureTargetingArmStep,
         "mimicgen_failure_ic_only": MimicgenFailureICOnlyArmStep,
         "analyze_failure_states": AnalyzeFailureStatesStep,
+        "run_clustering_demo_sweep": RunClusteringDemoSweepStep,
+        "compute_clustering_metrics": ComputeClusteringMetricsStep,
     }
     return registry
 

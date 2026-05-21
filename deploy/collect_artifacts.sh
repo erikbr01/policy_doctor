@@ -27,18 +27,22 @@ mkdir -p deploy/third_party/influence_visualizer/configs
 for task in "${TASKS[@]}"; do
     src_clu="third_party/influence_visualizer/configs/$task"
     if [ -d "$src_clu/clustering" ]; then
-        rsync -a --delete \
+        rsync -aL --delete \
             --exclude='clustering_models.pkl' \
             --exclude='embedding_models.pkl' \
             "$src_clu" deploy/third_party/influence_visualizer/configs/
     else
-        echo "WARNING: $src_clu/clustering not found — task '$task' will be missing from the bundle."
+        echo "ERROR: $src_clu/clustering not found — task '$task' missing from bundle." >&2; exit 1
     fi
-    src_mp4="/tmp/study_mp4s/$task"
-    if [ -d "$src_mp4" ]; then
-        rsync -a --delete "$src_mp4" deploy/data/study_mp4s/
+    src_mp4="$ROOT/data/study_mp4s/$task"
+    if [ -d "$src_mp4" ] && [ -f "$src_mp4/index.json" ]; then
+        mkdir -p "deploy/data/study_mp4s/$task"
+        rsync -a --delete "$src_mp4/" "deploy/data/study_mp4s/$task/"
+        mkdir -p /tmp/study_mp4s
+        ln -sfn "$src_mp4" "/tmp/study_mp4s/$task"
+        echo "  $task: $(ls "$src_mp4"/*.mp4 2>/dev/null | wc -l) MP4s bundled"
     else
-        echo "WARNING: $src_mp4 not found — task '$task' video panels will be empty."
+        echo "ERROR: $src_mp4 not found or missing index.json — task '$task' video panels would be empty." >&2; exit 1
     fi
 done
 
@@ -57,12 +61,12 @@ for suite in "${PI05_SUITES[@]}"; do
 
     # Clusterings
     if [ -d "$src_clu/clustering" ]; then
-        rsync -a --delete \
+        rsync -aL --delete \
             --exclude='clustering_models.pkl' \
             --exclude='embedding_models.pkl' \
             "$src_clu" deploy/third_party/influence_visualizer/configs/
     else
-        echo "WARNING: $src_clu/clustering not found — pi05 task '$task' missing from bundle."
+        echo "ERROR: $src_clu/clustering not found — pi05 task '$task' missing from bundle." >&2; exit 1
     fi
 
     # Media
@@ -100,6 +104,8 @@ with open(dst_dir / "index.json", "w") as f:
     json.dump({"episodes": episodes}, f, indent=2)
 print(f"  index.json: {len(episodes)} episodes")
 PYEOF
+        else
+            echo "ERROR: $META not found — cannot generate index.json for '$task'." >&2; exit 1
         fi
 
         # Local symlink so the demo works immediately without Docker
@@ -107,11 +113,35 @@ PYEOF
         ln -sfn "$dst_mp4" "/tmp/study_mp4s/$task"
         echo "  $task: $(ls "$dst_mp4"/*.mp4 2>/dev/null | wc -l) MP4s bundled, symlinked to /tmp/study_mp4s/$task"
     else
-        echo "WARNING: $src_media not found — pi05 task '$task' video panels will be empty."
+        echo "ERROR: $src_media not found — pi05 task '$task' video panels would be empty." >&2; exit 1
     fi
 done
 
-# 4. Sanity check.
+# 4. Demo sweep clustering results (data/demo_sweep/<task>/run_clustering/clustering/).
+DEMO_SWEEP_TASKS=(
+    transport_mh_jan28
+    square_mh_feb5
+    lift_mh_jan26
+    pi05_libero_spatial
+    pi05_libero_object
+    pi05_libero_goal
+)
+mkdir -p deploy/data/demo_sweep
+for task in "${DEMO_SWEEP_TASKS[@]}"; do
+    task_dir="$ROOT/data/demo_sweep/$task"
+    clu_dir="$task_dir/run_clustering/clustering"
+    if [ -d "$clu_dir" ] && [ -n "$(find "$clu_dir" -name "cluster_labels.npy" -print -quit 2>/dev/null)" ]; then
+        rsync -aL --delete \
+            --exclude='clustering_models.pkl' \
+            --exclude='_trunks' \
+            "$task_dir" deploy/data/demo_sweep/
+        echo "  $task: $(find "$clu_dir" -name 'cluster_labels.npy' | wc -l) clusterings bundled"
+    else
+        echo "ERROR: data/demo_sweep/$task has no clusterings — run the sweep first." >&2; exit 1
+    fi
+done
+
+# 5. Sanity check.
 echo "== Bundle contents =="
 du -sh deploy/policy_doctor deploy/third_party deploy/data 2>&1
 

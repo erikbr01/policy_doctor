@@ -32,10 +32,11 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY policy_doctor /app/policy_doctor
 COPY third_party /app/third_party
 
-# MP4s for the user-study + graph-demo pages. The session YAMLs and the
-# graph-demo sidebar both default to /tmp/study_mp4s/<task>/, so we land
-# the data there.
+# MP4s for the user-study + graph-demo pages.
 COPY data/study_mp4s /tmp/study_mp4s
+
+# Demo sweep clustering results.
+COPY data/demo_sweep /app/data/demo_sweep
 
 ENV PYTHONPATH=/app
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
