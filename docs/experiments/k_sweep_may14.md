@@ -75,6 +75,10 @@ BG advantage peaks at K=10–15, disappears at K=5 and K=25. Prior tight-constra
 | 15 | 0.356 | 0.316 | **0.414** | −0.058 |
 | 20 | **0.376** | 0.262† | 0.270† | +0.106 |
 | 25 | 0.200 | 0.322 | **0.344** | −0.144 |
+| **Mean ± Std** | **0.340 ± 0.079** | **0.316 ± 0.034** | **0.338 ± 0.052** | |
+| *(excl outliers)* | *(0.375 ± 0.014, excl K=25)* | | *(0.355 ± 0.040, excl K=20†)* | |
+
+Random is K-independent (ignores the graph), so its mean ± std reflects single-replicate variance rather than K sensitivity. BG std is dominated by the K=25 collapse; excluding it, BG is notably stable across K=5–20 (0.375 ± 0.014). All n=1 per cell.
 
 ### Real eval findings
 
