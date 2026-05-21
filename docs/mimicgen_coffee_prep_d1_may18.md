@@ -193,9 +193,41 @@ Modified to support non-square tasks. When `task_name != "square"`:
 |-------|--------|-------|
 | Phase 0: D1 pool generation | **Superseded** | Official 1000-demo dataset used instead |
 | Configs creation | **Done** | All configs created |
-| Phase 1: Baseline training | **Running** | Epoch ~100/1751 at 10:53 PDT; ETA ~15:00 PDT; WandB `f118vzfc` |
-| Phase 1: Eval + attribution | Pending baseline | ~2-3 hrs |
-| Phase 1: Budget rep sweep | Pending clustering | ~6-12 hrs (27 arms on cuda:0 × 3 slots) |
+| Phase 1: Baseline training | **Done** | Epoch 1751/1751; WandB `f118vzfc` |
+| Phase 1: Eval (500 eps) | **Done** | Ran in parallel (4 seeds × 125 eps) |
+| Phase 1: InfEmbed attribution | **Done** | cupid_torch2 env, ~4h |
+| Phase 1: run_clustering | **Done** | k=15, UMAP 100D, seed 1 |
+| Budget × rep sweep | **In progress** | Batch 1/3 training; see below |
+
+### Sweep progress as of May 20 2026 23:07 PDT
+
+**Batch 1 (currently training, 3 concurrent arms on cuda:0):**
+
+| Arm | Epoch | Best score | Started |
+|-----|-------|-----------|---------|
+| random-budget100-rep2 | 1000/1751 | 0.720 | 00:37 May 20 |
+| random-budget100-rep1 | 1000/1751 | 0.740 | 00:37 May 20 |
+| random-budget300-rep1 | 1050/1751 | 0.660 | 00:38 May 20 |
+
+ETA training complete: ~noon May 21. Eval (~8h each): ~8 PM May 21.
+
+**Remaining arms:**
+- Batch 2: random-budget100-rep3, budget300-rep2, budget300-rep3
+- Batch 3: random-budget500 × 3
+- Then: behavior_graph arms (generate demos for 7 of 9 still needed)
+- Then: diversity arms
+
+**Known issues fixed during run:**
+- `_orig_mod.` compiled checkpoint stripping in eval_save_episodes
+- `val_ratio=0.0` to avoid remainder assertion in combined training
+- `n_test_vis=0` to prevent offscreen render crash
+- `task_name=coffee_preparation` + `env_interface_name=MG_CoffeePreparation` in experiment config
+- `featurize_holdout=false` in attribution config (saves ~6h)
+- SSD symlinks for all data (boot drive crashed at 99% from 8 concurrent training jobs)
+- `DiversitySelectionHeuristic` pulled from main (was missing from this branch, diversity arms would have failed)
+
+**Pipeline restart plan:**
+The running pipeline process (PID 3355011) has `heuristics.py` cached in memory with the old (no-diversity) version. A monitor is watching for arm completions. The pipeline will be restarted after the current Batch 1 completes (train + eval) so that subsequent batches and eventually the diversity arms load the correct code. The restart is safe because all completed steps have `done` sentinel files and will be skipped on resume.
 
 ---
 
@@ -205,3 +237,4 @@ Modified to support non-square tasks. When `task_name != "square"`:
 2. **D1 vs D0 env:** The source HDF5 has `env_name=CoffeePreparation_D0`. Pool generation patches this to D1.
 3. **Observation dim:** 86-dim object key is large. Verified from source HDF5. Training config uses obs_dim=95.
 4. **max_steps for eval:** Coffee prep demos average ~600-700 timesteps (demo_0 has 676). Using max_steps=800 (vs 500 for square) to avoid timeout.
+5. **Rollout eval slows with high success rate:** At 60-70% success, episodes run all 800 steps → rollout eval takes 30-90 min per checkpoint interval instead of ~10 min. Each 50-epoch cycle takes 60-98 min instead of the initial 65 min.
