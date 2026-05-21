@@ -423,16 +423,15 @@ _REP_DESCRIPTIONS = {
         "**InfEmbed** — influence-based representation computed via a "
         "low-rank factorization of the Hessian.",
     "policy_emb":
-        "**Policy embedding (bottleneck)** — diffusion U-Net bottleneck "
-        "(mid-block) activations extracted at the final denoising step, "
-        "aggregated over a sliding window and UMAP-reduced to 50D.",
+        "**Policy embedding** — internal policy activations.",
     "trak":
         "**TRAK** — per-timestep features from the TRAK influence-score "
         "matrix (rollout × training demos), reduced to 200D with truncated "
         "SVD before windowing.",
     "policy_emb_bottleneck_plan_t0":
-        "**Policy embedding (bottleneck, plan t=0)** — diffusion U-Net "
-        "bottleneck (mid-block) activations at the final denoising step.",
+        "**Policy embedding** — internal policy activations. "
+        "Robomimic: U-Net bottleneck at the final denoising step. "
+        "pi0.5-LIBERO: final flow-matching head at the last flow timestep.",
     "state_full_history":
         "**State (full history)** — full observation history, flattened and "
         "UMAP-reduced.",
@@ -961,36 +960,8 @@ def _edge_episode_stats(
 _labels_bytes = labels.tobytes()
 _meta_json = json.dumps(meta)
 
-# Determine what the graph currently has selected
-_kp = "demo_tree" if is_tree else "demo_markov"
-_sel_node_raw = st.session_state.get(f"{_kp}_graph_selected")
-_sel_edge_raw = st.session_state.get(f"{_kp}_graph_selected_edge")
-
-# Map tree synth IDs → raw cluster IDs
-def _synth_to_cluster(synth_id: int) -> Optional[int]:
-    _id_to_path = st.session_state.get(f"{_kp}_id_to_path", {})
-    _p = _id_to_path.get(synth_id, ())
-    return int(_p[-1]) if _p else None
-
-_sel_cluster: Optional[int] = None
-_sel_edge_clusters: Optional[Tuple[int, int]] = None
-if _sel_node_raw is not None:
-    if is_tree:
-        _sel_cluster = _synth_to_cluster(int(_sel_node_raw))
-    else:
-        _sel_cluster = int(_sel_node_raw) if int(_sel_node_raw) not in _SPECIAL_IDS else None
-elif _sel_edge_raw is not None:
-    _src_r, _tgt_r = _sel_edge_raw
-    if is_tree:
-        _src_c = _synth_to_cluster(int(_src_r))
-        _tgt_c = _synth_to_cluster(int(_tgt_r))
-    else:
-        _src_c = int(_src_r) if int(_src_r) not in _SPECIAL_IDS else None
-        _tgt_c = int(_tgt_r) if int(_tgt_r) not in _SPECIAL_IDS else None
-    if _src_c is not None or _tgt_c is not None:
-        _sel_edge_clusters = (_src_c, _tgt_c)
-
-# Non-special behavior nodes available for comparison
+# Non-special behavior nodes available for comparison (selected via the
+# dropdown only — click-to-add was unreliable and has been removed).
 _behavior_nodes = {nid: bg.nodes[nid].name for nid in sorted(bg.nodes)
                    if nid not in _SPECIAL_IDS}
 _node_opts = list(_behavior_nodes.keys())
@@ -1006,51 +977,42 @@ _edge_labels = {
     for src, tgt in _edge_opts
 }
 
-_is_edge_mode = _sel_edge_clusters is not None and _sel_cluster is None
-
-# Node comparison multiselect.
-# We use a plain session-state key ("_insp_pins") as the accumulator rather than
-# a widget key so Streamlit never clears it.  Graph clicks append additively;
-# the user can remove nodes via the pill ×.
+# Inspector controls (radio + node multiselect) live inside the expander
+# so the page header isn't cluttered when the panel is collapsed.
 _active_nodes: List[int] = []
-if not _is_edge_mode:
-    # 1. Merge new graph click into the accumulator
-    _acc = list(st.session_state.get("_insp_pins") or [])
-    if _sel_cluster is not None and _sel_cluster not in _acc:
-        _acc.append(_sel_cluster)
-        st.session_state["_insp_pins"] = _acc
-
-    # 2. Build the default list from the accumulator, filtering to valid options
-    _default_nodes = [n for n in (st.session_state.get("_insp_pins") or []) if n in _node_opts]
-
-    # 3. Multiselect driven by default= (no key=), so Streamlit never clears it
-    _cmp_nodes = st.multiselect(
-        "Compare nodes — click graph nodes to add, remove here to deselect",
-        options=_node_opts,
-        format_func=lambda n: _node_labels.get(n, str(n)),
-        default=_default_nodes,
-    )
-
-    # 4. Sync the user's current selection back to the accumulator
-    st.session_state["_insp_pins"] = list(_cmp_nodes)
-    _active_nodes = list(dict.fromkeys(_cmp_nodes))
+_is_edge_mode = False
 
 with st.expander("🔍 Node / Transition Inspector", expanded=False, key="inspector_expander"):
+    _insp_mode = st.radio(
+        "Inspect",
+        options=["Nodes", "Transitions"],
+        horizontal=True,
+        key="dbg_insp_mode",
+    )
+    _is_edge_mode = _insp_mode == "Transitions"
+
+    if not _is_edge_mode:
+        _cmp_nodes = st.multiselect(
+            "Compare nodes",
+            options=_node_opts,
+            format_func=lambda n: _node_labels.get(n, str(n)),
+            default=[],
+            key="dbg_cmp_nodes",
+        )
+        _active_nodes = list(dict.fromkeys(_cmp_nodes))
+
     if _is_edge_mode:
         # ── Edge mode ────────────────────────────────────────────────────────
         _cmp_edges = st.multiselect(
-            "Compare with transitions",
+            "Compare transitions",
             options=_edge_opts,
             format_func=lambda e: _edge_labels.get(e, str(e)),
             default=[],
             key="dbg_cmp_edges",
         )
-        _active_edges: List[Tuple[int, int]] = []
-        if _sel_edge_clusters is not None:
-            _active_edges.append(_sel_edge_clusters)
-        _active_edges += [e for e in _cmp_edges if e not in _active_edges]
+        _active_edges: List[Tuple[int, int]] = list(dict.fromkeys(_cmp_edges))
         if not _active_edges:
-            st.info("Click a transition in the graph, or pick edges from the dropdown.")
+            st.info("Pick one or more transitions from the dropdown above.")
             st.stop()
 
         _edge_data: Dict[str, List[Dict]] = {}
@@ -1092,6 +1054,95 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False, key="inspec
                     yaxis=dict(range=[0, 1.15], title="Success rate"),
                     margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(_fig_sr, use_container_width=True, key="dbg_edge_sr")
+
+            # ── Data-support per transition endpoint ─────────────────────
+            # For each selected edge, show the data-support distribution of
+            # the SOURCE cluster and the TARGET cluster side-by-side. A
+            # transition is "well-supported" when both endpoints sit in
+            # training-data-dense regions.
+            if data_support is not None and data_support.get("metrics"):
+                _ds_avail = sorted(
+                    m for m in data_support["metrics"].keys() if m != "kde_log_density"
+                )
+                if not _ds_avail:
+                    _ds_avail = sorted(data_support["metrics"].keys())
+                _ds_cfg_e = data_support.get("_config", {})
+                _ds_disp_e, _ds_yaxis_e, _ = _ds_metric_labels(_ds_cfg_e)
+                _ds_pick_e = st.selectbox(
+                    "Data-support metric (per endpoint)",
+                    options=_ds_avail,
+                    index=(_ds_avail.index(ds_metric) if ds_metric in _ds_avail else 0),
+                    format_func=lambda m: _ds_disp_e.get(m, m),
+                    key="dbg_ds_metric_edge",
+                    help=(
+                        "Per-slice raw values from data_support.json for the "
+                        "transition's source and target clusters."
+                    ),
+                )
+                _ds_by_cid_e = data_support["metrics"].get(_ds_pick_e, {})
+                _is_binary_e = _ds_pick_e == "binary_coverage"
+                _fig_ds_e = go.Figure()
+                _bar_e_x: List[str] = []
+                _bar_e_y: List[float] = []
+                _bar_e_color: List[str] = []
+                _absent_e: List[str] = []
+                for _e in _active_edges:
+                    _src_c, _tgt_c = _e
+                    _lbl_e = _edge_labels.get(_e, str(_e))
+                    for _role, _cid, _col in (
+                        ("src", _src_c, "#4e79a7"),
+                        ("tgt", _tgt_c, "#f28e2b"),
+                    ):
+                        if _cid is None:
+                            continue
+                        _rec_e = _ds_by_cid_e.get(int(_cid))
+                        if _rec_e is None or not _rec_e.get("raw"):
+                            _absent_e.append(f"{_lbl_e}/{_role}")
+                            continue
+                        _trace_name = f"{_lbl_e}  ({_role}={_cid})"
+                        if _is_binary_e:
+                            _bar_e_x.append(_trace_name)
+                            _bar_e_y.append(float(_rec_e.get("mean", 0.0)))
+                            _bar_e_color.append(_col)
+                        else:
+                            _fig_ds_e.add_trace(go.Violin(
+                                y=list(_rec_e["raw"]),
+                                name=_trace_name,
+                                box_visible=True,
+                                meanline_visible=True,
+                                points="outliers",
+                                line_color=_col,
+                                fillcolor=_hex_to_rgba(_col, 0.3),
+                            ))
+                if _is_binary_e and _bar_e_x:
+                    _fig_ds_e.add_trace(go.Bar(
+                        x=_bar_e_x, y=_bar_e_y,
+                        text=[f"{p:.0%}" for p in _bar_e_y],
+                        textposition="outside",
+                        marker_color=_bar_e_color,
+                    ))
+                if _bar_e_x or _fig_ds_e.data:
+                    _y_title_e = _ds_yaxis_e.get(_ds_pick_e, _ds_pick_e)
+                    _fig_ds_e.update_layout(
+                        title=f"Training-data support per endpoint — {_ds_disp_e.get(_ds_pick_e, _ds_pick_e)}",
+                        height=360,
+                        yaxis_title=_y_title_e,
+                        xaxis_title="Transition (src=blue, tgt=orange)",
+                        margin=dict(l=0, r=0, t=36, b=20),
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        showlegend=False,
+                        **(
+                            dict(yaxis=dict(range=[0, 1.15], title=_y_title_e))
+                            if _is_binary_e else {}
+                        ),
+                    )
+                    st.plotly_chart(_fig_ds_e, use_container_width=True, key="dbg_ds_edge")
+                if _absent_e:
+                    st.caption(
+                        "No per-slice data-support values for: "
+                        + ", ".join(_absent_e)
+                        + " (terminal nodes or clusters with no slices)."
+                    )
 
     else:
         # ── Node mode ────────────────────────────────────────────────────────

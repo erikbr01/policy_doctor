@@ -61,6 +61,8 @@ _HERE = Path(__file__).resolve().parent
 pages = [
     st.Page(_HERE / "_pages" / "3_graph_demo.py",
             title="Graph Demo", url_path="graph_demo", default=True),
+    st.Page(_HERE / "_pages" / "4_sweep_analysis.py",
+            title="Sweep Analysis", url_path="sweep_analysis"),
     st.Page(_HERE / "_pages" / "1_user_study_a.py",
             title="User Study A", url_path="user_study_a"),
     st.Page(_HERE / "_pages" / "2_user_study_b.py",
