@@ -195,6 +195,10 @@ Strict separation (enforced in `third_party/cupid/CLAUDE.md` and followed throug
 - Plotting functions are exported from `policy_doctor/plotting/__init__.py`
 - Never import Streamlit in plotting modules; never create Plotly figures inside render functions
 
+### Data support (`policy_doctor/behaviors/data_support.py`)
+
+Per-cluster diagnostic that measures how well each behavior-graph node is supported by the training distribution. Joint UMAP fit on demo + rollout windows + BallTree over demo points; metric registry (count-in-radius, kNN distance, KDE log-density, binary coverage) with per-cluster summary stats. Scoped to `influence_source == "policy_emb"` clusterings only. Writes `data_support.json` next to `cluster_labels.npy`; surfaced as a "Data support" color mode in the Streamlit graph demo. Full documentation in `docs/data_support.md`.
+
 ### Runtime monitoring (`policy_doctor/monitoring/`)
 
 Assigns each policy timestep to a behavior graph node in real time. Full documentation in `docs/monitoring.md`.

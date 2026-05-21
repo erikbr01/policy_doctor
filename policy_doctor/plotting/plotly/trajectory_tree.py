@@ -78,6 +78,56 @@ def _value_color_kwargs(
     )
 
 
+def _data_support_color_kwargs(
+    nodes_f: List[Dict],
+    node_values: Dict[int, float],
+) -> Dict[str, Any]:
+    """Color by data support on a sequential YlGn scale.
+
+    Higher = better-supported by training data; lower = under-supported (and
+    therefore plausibly out-of-distribution behaviour).  Terminals and START
+    are coloured grey so they don't distort the colorbar — non-terminal
+    clusters drive the min/max range.
+    """
+    _terminal_ids = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+    raw_vals: List[float] = []
+    has_value: List[bool] = []
+    for nd in nodes_f:
+        cid = nd["cluster_id"]
+        v = node_values.get(int(cid))
+        if cid in _terminal_ids or v is None or (isinstance(v, float) and v != v):
+            raw_vals.append(float("nan"))
+            has_value.append(False)
+        else:
+            raw_vals.append(float(v))
+            has_value.append(True)
+
+    finite = [v for v in raw_vals if v == v]
+    cmin = min(finite) if finite else 0.0
+    cmax = max(finite) if finite else 1.0
+    if cmax <= cmin:
+        cmax = cmin + 1.0
+    # Plotly doesn't render NaN — replace terminals with cmin so they sit at
+    # the bottom of the scale (we paint them grey explicitly below).
+    colors = [v if v == v else cmin for v in raw_vals]
+    return dict(
+        marker=dict(
+            colors=colors,
+            colorscale=[
+                [0.00, "#ffffe5"],
+                [0.15, "#f7fcb9"],
+                [0.30, "#d9f0a3"],
+                [0.45, "#addd8e"],
+                [0.60, "#78c679"],
+                [0.75, "#41ab5d"],
+                [0.90, "#238443"],
+                [1.00, "#005a32"],
+            ],
+            cmin=cmin, cmax=cmax,
+        ),
+    )
+
+
 def _common_kwargs(
     nodes_f: List[Dict],
     color_mode: str,
@@ -108,6 +158,8 @@ def _common_kwargs(
     ]
     if color_mode == "value":
         color = _value_color_kwargs(nodes_f, node_values)
+    elif color_mode == "data_support":
+        color = _data_support_color_kwargs(nodes_f, node_values)
     elif color_mode == "id":
         color = _cluster_color_kwargs(nodes_f)
     else:  # outcome

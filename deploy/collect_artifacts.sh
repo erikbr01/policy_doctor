@@ -133,6 +133,8 @@ for task in "${DEMO_SWEEP_TASKS[@]}"; do
     if [ -d "$clu_dir" ] && [ -n "$(find "$clu_dir" -name "cluster_labels.npy" -print -quit 2>/dev/null)" ]; then
         rsync -aL --delete \
             --exclude='clustering_models.pkl' \
+            --exclude='embedding_models.pkl' \
+            --exclude='joint_umap.joblib' \
             --exclude='_trunks' \
             "$task_dir" deploy/data/demo_sweep/
         echo "  $task: $(find "$clu_dir" -name 'cluster_labels.npy' | wc -l) clusterings bundled"

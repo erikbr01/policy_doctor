@@ -128,14 +128,65 @@ def _read_metrics(path_str: str) -> Dict:
 
 
 @st.cache_data(show_spinner=False)
-def _load_clustering(path_str: str) -> Tuple[np.ndarray, List[Dict], Optional[np.ndarray], Dict]:
+def _load_clustering(
+    path_str: str,
+) -> Tuple[np.ndarray, List[Dict], Optional[np.ndarray], Dict, Optional[Dict]]:
     p = Path(path_str)
     labels = np.load(p / "cluster_labels.npy").astype(np.int64)
     with open(p / "metadata.json") as f:
         meta = json.load(f)
     emb_path = p / "embeddings_reduced.npy"
     emb = np.load(emb_path) if emb_path.exists() else None
-    return labels, meta, emb, _read_manifest(path_str)
+    # Optional sibling artifact written by compute_data_support; absent on
+    # InfEmbed / TRAK clusterings and on policy_emb clusterings that pre-date
+    # the data-support step. Tolerated as None so the graph still renders.
+    data_support: Optional[Dict] = None
+    ds_path = p / "data_support.json"
+    if ds_path.exists():
+        try:
+            with open(ds_path) as f:
+                raw = json.load(f)
+            metrics = raw.get("metrics") or {}
+            for mname, by_cid in metrics.items():
+                metrics[mname] = {int(k): v for k, v in by_cid.items()}
+            raw["metrics"] = metrics
+            data_support = raw
+        except Exception:
+            data_support = None
+    return labels, meta, emb, _read_manifest(path_str), data_support
+
+
+def _ds_metric_labels(cfg: Dict) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
+    """Human-readable labels for the data-support metrics.
+
+    Three "k"s coexist on this page (KMeans-K = cluster count, UMAP
+    n_components, kNN-k = neighbour count), so labels avoid the bare letter
+    "k" and spell out the configured kNN count from cfg.
+    """
+    r = cfg.get("radius", "?")
+    n = cfg.get("knn_k", "?")
+    display = {
+        "count_in_radius":   f"Demo windows within radius (r={r})",
+        "binary_coverage":   f"Has any demo window within radius (r={r})",
+        "knn_mean_distance": f"Mean distance to K={n} nearest neighbors",
+        "knn_max_distance":  f"Max distance within K={n} nearest neighbors",
+    }
+    y_axis = {
+        "count_in_radius":   f"# demo windows within r={r}",
+        "binary_coverage":   f"Fraction of slices with ≥1 demo window in r={r}",
+        "knn_mean_distance": f"Mean dist. to K={n} nearest neighbors",
+        "knn_max_distance":  f"Max dist. within K={n} nearest neighbors",
+    }
+    help_text = {
+        "count_in_radius":   f"Per rollout window: # training-demo windows within radius r={r} in joint UMAP space (higher = better-supported).",
+        "binary_coverage":   f"Per rollout window: 1 if ≥1 demo window within radius r={r}, else 0. Per-cluster summary = coverage fraction in [0,1].",
+        "knn_mean_distance": f"Per rollout window: mean of the Euclidean distances to its K={n} nearest training-demo window neighbors (lower = better-supported). Inverted to high=good below.",
+        "knn_max_distance":  f"Per rollout window: maximum distance within its K={n} nearest training-demo window neighbors (lower = better worst-case). Inverted to high=good below.",
+    }
+    return display, y_axis, help_text
+
+
+_DS_INVERTED_METRICS = {"knn_mean_distance", "knn_max_distance"}
 
 
 # ── Sidebar: appearance + task + cascading clustering picker ────────────────
@@ -425,7 +476,7 @@ if not filt:
     st.stop()
 clu_path = filt[0]["path"]
 
-labels, meta, emb, manifest = _load_clustering(str(clu_path))
+labels, meta, emb, manifest, data_support = _load_clustering(str(clu_path))
 level = manifest.get("level", "rollout")
 
 # When the clustering changes, clear stale node/edge selection and bump the
@@ -437,6 +488,11 @@ if _prev_clu != str(clu_path):
         st.session_state.pop(f"demo_markov_graph{_sfx}", None)
     _rt = "demo_markov_graph_render_token"
     st.session_state[_rt] = st.session_state.get(_rt, 0) + 1
+    # Data-support selections are clustering-scoped (a metric/stat that
+    # made sense for the previous clustering may not exist or be defaulted
+    # for the new one).
+    st.session_state.pop("ds_metric_sel", None)
+    st.session_state.pop("ds_stat_sel", None)
 
 # MP4 resolution is hard-coded — the bundle puts videos in a known
 # location. The metadata / debug block below the dropdowns was dev
@@ -524,6 +580,10 @@ with c_color:
             "value": "Value V(s) (Bellman)",
             "timesteps": "Timestep count (viridis)",
         }
+    # Surface data_support only when the sibling JSON is present.
+    if data_support is not None and data_support.get("metrics"):
+        color_opts.append("data_support")
+        color_labels["data_support"] = "Data support (training-demo density)"
     # For the Markov views, the value-based divergent red→green colouring
     # is the most informative default (and what the paper figures use).
     # For trees we keep the cluster-id palette as the entry point.
@@ -533,6 +593,42 @@ with c_color:
         options=color_opts,
         format_func=lambda v: color_labels[v],
         index=_default_color_idx,
+    )
+
+# Data-support metric + statistic selectors appear below the color dropdown
+# so users can swap views without scrolling back to the sidebar.
+ds_metric: Optional[str] = None
+ds_stat: str = "median"
+if color_by == "data_support" and data_support is not None:
+    _ds_cfg = data_support.get("_config", {})
+    _ds_display, _ds_yaxis, _ds_help = _ds_metric_labels(_ds_cfg)
+    # KDE log-density is computed but hidden — raw log p_demo values are
+    # too hard to read at a glance. The data stays in the JSON for any
+    # downstream analysis; just keep it off the UI.
+    _metrics_avail = sorted(m for m in data_support["metrics"].keys() if m != "kde_log_density")
+    _stat_opts = ["median", "mean", "q10", "q90"]
+    dsc1, dsc2 = st.columns([2, 1])
+    with dsc1:
+        ds_metric = st.selectbox(
+            "Metric",
+            options=_metrics_avail,
+            index=0,
+            format_func=lambda m: _ds_display.get(m, m),
+            help=" · ".join(f"**{_ds_display.get(m, m)}**: {_ds_help.get(m, '')}" for m in _metrics_avail),
+            key="ds_metric_sel",
+        )
+    with dsc2:
+        ds_stat = st.selectbox(
+            "Summary stat", options=_stat_opts, index=0, key="ds_stat_sel",
+        )
+    st.caption(
+        f"Coloring nodes by **{ds_stat}** of *{_ds_display.get(ds_metric, ds_metric)}* "
+        "across slices. Saturated = well-supported by training data; pale = "
+        "under-supported (possibly OOD behaviour). "
+        f"r = {_ds_cfg.get('radius', '?')}, "
+        f"kNN neighbours = {_ds_cfg.get('knn_k', '?')}, "
+        f"joint-UMAP dim = {_ds_cfg.get('umap_n_components', '?')}, "
+        f"n_demo_windows = {_ds_cfg.get('n_demo_windows', '?')}."
     )
 
 n_total_eps = len(set(m.get("rollout_idx", m.get("demo_idx", 0)) for m in meta))
@@ -616,6 +712,23 @@ if color_by == "value":
     except Exception as e:
         st.warning(f"compute_values() failed ({e}); falling back to ID coloring.")
         color_by = "id"
+elif color_by == "data_support" and data_support is not None and ds_metric is not None:
+    # Build node_values from the per-cluster summary stat. Distance metrics
+    # are inverted so the convention "high = better-supported" matches the
+    # other data_support metrics and the sequential palette.
+    per_cluster = data_support.get("metrics", {}).get(ds_metric, {})
+    raw: Dict[int, float] = {}
+    for cid, rec in per_cluster.items():
+        if rec is None:
+            continue
+        v = rec.get(ds_stat)
+        if v is None:
+            continue
+        raw[int(cid)] = float(v)
+    if ds_metric in _DS_INVERTED_METRICS and raw:
+        v_max = max(raw.values())
+        raw = {cid: v_max - v for cid, v in raw.items()}
+    node_values = raw
 
 # ── Filter summary: how many nodes / edges does the threshold drop ───────────
 _n_nodes_total = len(bg.nodes)
@@ -713,6 +826,30 @@ else:
             t = np.log1p(bg.nodes[nid].num_timesteps) / ts_max
             idx = int(min(len(viridis) - 1, max(0, t * (len(viridis) - 1))))
             color_override[nid] = viridis[idx]
+    elif color_by == "data_support" and node_values:
+        # Sequential palette: YlGn by default, Viridis when the colorblind
+        # toggle is on. node_values already has inverted metrics flipped so
+        # "high = better-supported" holds for every metric.
+        if colorblind_mode:
+            _seq = ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"]
+        else:
+            _seq = ["#ffffe5", "#f7fcb9", "#d9f0a3", "#addd8e",
+                    "#78c679", "#41ab5d", "#238443", "#005a32"]
+        _ds_non_term = [v for cid, v in node_values.items() if cid not in _SPECIAL]
+        _ds_lo = min(_ds_non_term) if _ds_non_term else 0.0
+        _ds_hi = max(_ds_non_term) if _ds_non_term else 1.0
+        if _ds_hi <= _ds_lo:
+            _ds_hi = _ds_lo + 1.0
+        color_override = {}
+        for nid in bg.nodes:
+            if nid in _SPECIAL: continue
+            v = node_values.get(nid)
+            if v is None or v != v:  # missing / NaN
+                color_override[nid] = "#cccccc"
+            else:
+                t = (float(v) - _ds_lo) / (_ds_hi - _ds_lo)
+                idx = int(min(len(_seq) - 1, max(0, t * (len(_seq) - 1))))
+                color_override[nid] = _seq[idx]
 
     render_graph_full_width(
         graph=bg,
@@ -1079,3 +1216,89 @@ with st.expander("🔍 Node / Transition Inspector", expanded=False, key="inspec
                     barmode="group",
                     margin=dict(l=0,r=0,t=36,b=20), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(_fig_tr, use_container_width=True, key="dbg_tr")
+
+            # ── Data-support distribution per node ───────────────────────
+            # Shows, for each active node, the spread of per-slice
+            # data-support values — i.e. how broad / tight the training-
+            # data envelope around that behaviour is. Complements the
+            # median-only color encoding.
+            if data_support is not None and data_support.get("metrics"):
+                _ds_avail = sorted(
+                    m for m in data_support["metrics"].keys() if m != "kde_log_density"
+                )
+                if not _ds_avail:
+                    _ds_avail = sorted(data_support["metrics"].keys())
+                _ds_inspect_cfg = data_support.get("_config", {})
+                _ds_inspect_display, _ds_inspect_yaxis, _ = _ds_metric_labels(_ds_inspect_cfg)
+                _ds_pick = st.selectbox(
+                    "Data-support metric (distribution)",
+                    options=_ds_avail,
+                    index=(_ds_avail.index(ds_metric) if ds_metric in _ds_avail else 0),
+                    format_func=lambda m: _ds_inspect_display.get(m, m),
+                    key="dbg_ds_metric",
+                    help=(
+                        "Per-slice raw values from data_support.json — one "
+                        "violin per active node. Distance metrics are shown "
+                        "as-is (lower = better-supported)."
+                    ),
+                )
+                _ds_by_cid = data_support["metrics"].get(_ds_pick, {})
+                _present_lbls = []
+                _absent_lbls = []
+                _ds_fig = go.Figure()
+                _is_binary = _ds_pick == "binary_coverage"
+                _bar_x: List[str] = []
+                _bar_y: List[float] = []
+                for _nid in _active_nodes:
+                    _rec = _ds_by_cid.get(int(_nid))
+                    _lbl = _node_labels.get(_nid, str(_nid))
+                    if _rec is None or not _rec.get("raw"):
+                        _absent_lbls.append(_lbl)
+                        continue
+                    _present_lbls.append(_lbl)
+                    if _is_binary:
+                        # Per-slice values are 0/1; a violin would smear
+                        # into negative / >1 territory. Plot the per-
+                        # cluster coverage fraction (= mean of 0/1) as a
+                        # bar instead.
+                        _name = f"{_lbl} (n={_rec.get('n_slices', len(_rec['raw']))})"
+                        _bar_x.append(_name)
+                        _bar_y.append(float(_rec.get("mean", 0.0)))
+                    else:
+                        _ds_fig.add_trace(go.Violin(
+                            y=list(_rec["raw"]),
+                            name=f"{_lbl} (n={_rec.get('n_slices', len(_rec['raw']))})",
+                            box_visible=True,
+                            meanline_visible=True,
+                            points="outliers",
+                        ))
+                if _present_lbls and _is_binary:
+                    _ds_fig.add_trace(go.Bar(
+                        x=_bar_x, y=_bar_y,
+                        text=[f"{p:.0%}" for p in _bar_y],
+                        textposition="outside",
+                        marker_color="#59a14f",
+                    ))
+                if _present_lbls:
+                    _y_axis_title = _ds_inspect_yaxis.get(_ds_pick, _ds_pick)
+                    _ds_fig.update_layout(
+                        title=f"Training-data support per node — {_ds_inspect_display.get(_ds_pick, _ds_pick)}",
+                        height=360,
+                        yaxis_title=_y_axis_title,
+                        xaxis_title="Behavior",
+                        margin=dict(l=0, r=0, t=36, b=20),
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        showlegend=False,
+                        **(
+                            dict(yaxis=dict(range=[0, 1.15], title=_y_axis_title))
+                            if _is_binary else {}
+                        ),
+                    )
+                    st.plotly_chart(_ds_fig, use_container_width=True, key="dbg_ds_dist")
+                if _absent_lbls:
+                    st.caption(
+                        "No per-slice data-support values for: "
+                        + ", ".join(_absent_lbls)
+                        + " (terminal nodes or clusters with no slices)."
+                    )

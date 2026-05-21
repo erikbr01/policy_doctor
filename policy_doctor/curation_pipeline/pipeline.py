@@ -21,7 +21,9 @@ ALL_STEPS: List[str] = [
     "finalize_attribution",
     "compute_demonstration_scores",
     "compute_infembed",
+    "compute_policy_embeddings_demos",
     "run_clustering",
+    "compute_data_support",
     "export_markov_report",
     "annotate_slices_vlm",
     "summarize_behaviors_vlm",
@@ -88,7 +90,11 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.finalize_attribution import FinalizeAttributionStep
     from policy_doctor.curation_pipeline.steps.compute_demonstration_scores import ComputeDemonstrationScoresStep
     from policy_doctor.curation_pipeline.steps.compute_infembed import ComputeInfembedStep
+    from policy_doctor.curation_pipeline.steps.compute_policy_embeddings_demos import (
+        ComputePolicyEmbeddingsDemosStep,
+    )
     from policy_doctor.curation_pipeline.steps.run_clustering import RunClusteringStep
+    from policy_doctor.curation_pipeline.steps.compute_data_support import ComputeDataSupportStep
     from policy_doctor.curation_pipeline.steps.export_markov_report import ExportMarkovReportStep
     from policy_doctor.curation_pipeline.steps.annotate_slices_vlm import AnnotateSlicesVLMStep
     from policy_doctor.curation_pipeline.steps.summarize_behaviors_vlm import SummarizeBehaviorsVLMStep
@@ -154,7 +160,9 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "finalize_attribution": FinalizeAttributionStep,
         "compute_demonstration_scores": ComputeDemonstrationScoresStep,
         "compute_infembed": ComputeInfembedStep,
+        "compute_policy_embeddings_demos": ComputePolicyEmbeddingsDemosStep,
         "run_clustering": RunClusteringStep,
+        "compute_data_support": ComputeDataSupportStep,
         "export_markov_report": ExportMarkovReportStep,
         "annotate_slices_vlm": AnnotateSlicesVLMStep,
         "summarize_behaviors_vlm": SummarizeBehaviorsVLMStep,

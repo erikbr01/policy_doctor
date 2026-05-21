@@ -236,10 +236,21 @@ def _render_native_svg(
         if _cb else
         ["#d62728", "#ff7f0e", "#e8c32a", "#9dc95d", "#2ca02c"]
     )
+    # Sequential palette for data_support: pale (under-supported) → saturated
+    # (well-supported).  Colorblind branch uses Viridis (perceptually uniform);
+    # default uses ColorBrewer YlGn.
+    _SEQ_BINS = (
+        ["#fde725", "#90d743", "#35b779", "#21918c", "#31688e", "#443983", "#440154"][::-1]
+        if _cb else
+        ["#ffffe5", "#f7fcb9", "#d9f0a3", "#addd8e", "#78c679", "#41ab5d", "#238443", "#005a32"]
+    )
     _SUCCESS_COL = "#0072B2" if _cb else "#2ca02c"
     _FAILURE_COL = "#D55E00" if _cb else "#d62728"
     def _diverging(t: float) -> str:
         return _BINS[min(4, int(max(0.0, min(1.0, t)) * 5))]
+    def _sequential(t: float) -> str:
+        n = len(_SEQ_BINS)
+        return _SEQ_BINS[min(n - 1, int(max(0.0, min(1.0, t)) * n))]
     # Pre-compute V range for value mode. Exclude SUCCESS / FAILURE /
     # END / START terminals — their hardcoded ±1 values dominate the
     # range and squash every behavioral cluster into the grey middle.
@@ -252,6 +263,21 @@ def _render_native_svg(
              if nd["cluster_id"] not in _terminal_ids),
             default=1.0,
         ) or 1.0
+    ds_lo = 0.0
+    ds_hi = 1.0
+    if color_mode == "data_support":
+        _terminal_ids = {SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID}
+        _ds_vals = [
+            float(node_values.get(int(nd["cluster_id"]), float("nan")))
+            for nd in nodes_f
+            if nd["cluster_id"] not in _terminal_ids
+        ]
+        _ds_vals = [v for v in _ds_vals if v == v]  # drop NaN
+        if _ds_vals:
+            ds_lo = min(_ds_vals)
+            ds_hi = max(_ds_vals)
+            if ds_hi <= ds_lo:
+                ds_hi = ds_lo + 1.0
 
     for nd in nodes_f:
         p = tuple(nd["path"])
@@ -272,6 +298,12 @@ def _render_native_svg(
             elif color_mode == "value" and not is_special:
                 v = _v_for_cluster(cid, nd["n_success"], nd["n_episodes"])
                 color_override[next_id] = _diverging(0.5 + v / (2 * v_range))
+            elif color_mode == "data_support" and not is_special:
+                ds = node_values.get(int(cid))
+                if ds is None or ds != ds:  # NaN guard
+                    color_override[next_id] = "#cccccc"
+                else:
+                    color_override[next_id] = _sequential((float(ds) - ds_lo) / (ds_hi - ds_lo))
             elif cid == SUCCESS_NODE_ID: color_override[next_id] = _SUCCESS_COL
             elif cid == FAILURE_NODE_ID: color_override[next_id] = _FAILURE_COL
             elif cid == END_NODE_ID:     color_override[next_id] = "#888888"
