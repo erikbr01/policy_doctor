@@ -9,15 +9,16 @@ Two Streamlit apps are deployed from the same Docker image:
 Everything below must be done before the survey link can go out.
 
 ### Task data
-- [ ] Render rollout MP4s + `index.json` for kendama → `data/study_mp4s/kendama_may20/`
-- [ ] Run clustering pipeline for Group B; note the output directory path
+- [x] Rollout MP4s (88 episodes, 22 successes) — source: `/mnt/ssdB/erik/rollouts/rollouts_kendama_latest_may19`
+- [x] State-based clustering (K=8, W=20, S=10) — `data/demo_sweep/kendama_may20/run_clustering/clustering/state_w20_s10_k8`
+- [x] MP4 index built — `/tmp/study_mp4s/kendama_may20/index.json` (88 episodes linked)
+- [x] Session YAML wired (`clustering_dir` set)
 - [ ] Film 3 representative training demos per strategy → `data/study_mp4s/kendama_may20/demo_videos/<ep_xxx.mp4>`
 
 ### Config
 - [ ] Fill in strategies in `policy_doctor/configs/user_study/kendama_may20.yaml`:
   - Replace placeholder names/descriptions with real (behavior mode × initial condition) pairs
   - Add `video_paths` under each `example_demos` once demo MP4s exist
-- [ ] Set `clustering_dir` in `policy_doctor/configs/user_study/sessions/kendama_may20.yaml`
 
 ### Infrastructure
 - [ ] Create GCS bucket and grant IAM roles (see [GCS response storage](#gcs-response-storage))

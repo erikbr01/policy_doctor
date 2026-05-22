@@ -1,9 +1,8 @@
 label: "Kendama (May 20)"
 
-# Paths — fill in before deploying
 mp4_dir: /tmp/study_mp4s/kendama_may20
 study_config: policy_doctor/configs/user_study/kendama_may20.yaml
-clustering_dir: ""   # fill in: path to cluster_labels.npy + metadata.json directory
+clustering_dir: data/demo_sweep/kendama_may20/run_clustering/clustering/state_w20_s10_k8
 
 # Example demo videos for each strategy in the allocator.
 # MP4 files placed here are referenced by strategy.example_demos.video_paths.
