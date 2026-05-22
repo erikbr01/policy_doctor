@@ -24,3 +24,6 @@ pyvis>=0.3
 imageio>=2.31
 imageio-ffmpeg>=0.4.9
 pillow>=10
+
+# GCS response storage (optional — only imported when SURVEY_GCS_BUCKET is set).
+google-cloud-storage>=2.10

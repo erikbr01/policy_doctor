@@ -37,6 +37,7 @@ from policy_doctor.streamlit_app.user_study.strategies import (
     render_strategy_allocator,
     render_strategy_summary,
 )
+from policy_doctor.streamlit_app.user_study.response_store import get_store
 from policy_doctor.streamlit_app.user_study.video_browser import render_video_browser
 
 st.set_page_config(page_title="User Study — Group B", layout="wide")
@@ -694,13 +695,10 @@ notes = st.text_area(
 
 if st.button("Submit", type="primary"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = mp4_dir / "study_responses"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"group_b_{timestamp}.json"
-
     result = {
         "participant_id": participant_id,
         "group": "B",
+        "session": session_choice,
         "allocations": allocations,
         "nasa_tlx": tlx_responses,
         "likert_graph": likert_graph,
@@ -709,10 +707,10 @@ if st.button("Submit", type="primary"):
         "notes": notes,
         "timestamp": timestamp,
     }
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
 
-    st.success(f"Response saved to {out_path}")
+    store = get_store(mp4_dir / "study_responses")
+    response_id = store.save(result)
+    st.success(f"Response saved (ID: {response_id})")
     st.download_button(
         label="Download your response",
         data=json.dumps(result, indent=2),
