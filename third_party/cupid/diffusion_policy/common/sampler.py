@@ -953,25 +953,33 @@ class SequenceSampler:
             if key not in self.key_first_k:
                 sample = input_arr[buffer_start_idx:buffer_end_idx]
             else:
-                # performance optimization, only load used obs steps
+                # Only load the k_data frames we actually use — avoids allocating
+                # a full (horizon, H, W, C) NaN buffer when k_data << n_data.
+                # Proof that end-padding within k_data is never needed:
+                #   n_data = sample_end_idx - sample_start_idx
+                #   k_data = min(n_obs_steps, n_data)
+                #   → k_data + sample_start_idx ≤ sample_end_idx
+                #   so all k_data frames are covered by real episode data.
                 n_data = buffer_end_idx - buffer_start_idx
                 k_data = min(self.key_first_k[key], n_data)
-                # fill value with Nan to catch bugs
-                # the non-loaded region should never be used
-                sample = np.full(
-                    (n_data,) + input_arr.shape[1:],
-                    fill_value=np.nan,
-                    dtype=input_arr.dtype,
-                )
                 try:
-                    sample[:k_data] = input_arr[
-                        buffer_start_idx : buffer_start_idx + k_data
-                    ]
+                    loaded = input_arr[buffer_start_idx : buffer_start_idx + k_data]
                 except Exception as e:
                     raise RuntimeError(
                         f"Failed to load key '{key}' for buffer range "
                         f"[{buffer_start_idx}:{buffer_start_idx + k_data}]: {e}"
                     ) from e
+                if sample_start_idx == 0:
+                    data = loaded
+                else:
+                    # Start padding: replicate first episode frame for obs history.
+                    data = np.empty((k_data,) + input_arr.shape[1:], dtype=input_arr.dtype)
+                    n_pad = min(sample_start_idx, k_data)
+                    data[:n_pad] = loaded[0]
+                    if n_pad < k_data:
+                        data[n_pad:] = loaded[:k_data - n_pad]
+                result[key] = data
+                continue
             data = sample
             if (sample_start_idx > 0) or (sample_end_idx < self.sequence_length):
                 data = np.zeros(
