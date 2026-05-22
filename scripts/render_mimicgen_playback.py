@@ -3,8 +3,8 @@
 Replays states from demo.hdf5 and demo_failed.hdf5 through the robosuite
 simulator and saves MP4 videos — one for successful demos, one for failures.
 
-Run in the mimicgen conda env:
-    conda run -n mimicgen --no-capture-output python scripts/render_mimicgen_playback.py
+Run in the mimicgen_torch2 conda env:
+    conda run -n mimicgen_torch2 --no-capture-output python scripts/render_mimicgen_playback.py
 
 Outputs (written to --out_dir, default /tmp/mimicgen_eef_test):
     playback_success.mp4   — first --n_success successful demos side-by-side

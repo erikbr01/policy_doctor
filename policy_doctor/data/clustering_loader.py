@@ -10,7 +10,7 @@ to the correct cluster.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,6 +30,10 @@ class ClusteringModels:
     reducer: Optional[Any]             # fitted UMAP / PCA model
     reducer_method: str                # e.g. "umap", "pca"
     kmeans: Optional[Any]              # fitted KMeans model (or None if not kmeans)
+    pipeline_steps: List[str] = field(default_factory=list)
+    # Ordered list of processing steps, e.g.:
+    #   umap_first:   ["normalize", "umap", "window", "kmeans"]
+    #   agg_first:    ["window", "normalize", "umap", "kmeans"]
 
 
 def save_clustering_models(

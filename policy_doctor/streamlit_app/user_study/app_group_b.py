@@ -24,6 +24,13 @@ from policy_doctor.streamlit_app.user_study.initial_conditions import (
     _initial_slice_per_episode,
     _success_per_episode,
 )
+from policy_doctor.streamlit_app.user_study.intro import gate_or_render
+from policy_doctor.streamlit_app.user_study.likert_survey import (
+    render_block1_graph_interaction,
+    render_block2_strategy,
+    render_block3_final,
+)
+from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.path_explorer import render_path_explorer
 from policy_doctor.streamlit_app.user_study.strategies import (
     load_study_config,
@@ -33,6 +40,8 @@ from policy_doctor.streamlit_app.user_study.strategies import (
 from policy_doctor.streamlit_app.user_study.video_browser import render_video_browser
 
 st.set_page_config(page_title="User Study — Group B", layout="wide")
+
+gate_or_render()
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.header("Configuration")
@@ -45,6 +54,12 @@ _session_labels = {f.stem: yaml.safe_load(f.read_text()).get("label", f.stem) fo
 
 participant_id = st.sidebar.text_input("Participant ID", value="anonymous")
 
+colorblind_mode = st.sidebar.toggle(
+    "Colorblind",
+    value=st.session_state.get("colorblind_mode", False),
+    key="colorblind_mode",
+)
+
 if not _session_files:
     st.sidebar.warning("No session configs found in configs/user_study/sessions/")
     st.stop()
@@ -55,14 +70,16 @@ session_choice = st.sidebar.selectbox(
     format_func=lambda k: _session_labels.get(k, k),
 )
 
-if st.sidebar.button("Load"):
+
+def _resolve(p: str) -> Path:
+    path = Path(p)
+    return path if path.is_absolute() else _REPO_ROOT / path
+
+
+# Auto-load on session change (no Load button click required).
+if st.session_state.get("gb_loaded_session") != session_choice:
     sess_path = _SESSIONS_DIR / f"{session_choice}.yaml"
     sess = yaml.safe_load(sess_path.read_text())
-
-    # Resolve relative paths from repo root
-    def _resolve(p: str) -> Path:
-        path = Path(p)
-        return path if path.is_absolute() else _REPO_ROOT / path
 
     mp4_dir = _resolve(sess["mp4_dir"])
     config_path = _resolve(sess["study_config"])
@@ -111,7 +128,7 @@ if st.sidebar.button("Load"):
             level="rollout" if any("rollout_idx" in m for m in metadata) else "demo",
         )
         st.session_state["gb_graph"] = graph
-        st.sidebar.success("Loaded.")
+        st.session_state["gb_loaded_session"] = session_choice
 
 if "gb_index" in st.session_state:
     n_ep = len(st.session_state["gb_index"]["episodes"])
@@ -127,11 +144,7 @@ graph: BehaviorGraph | None = st.session_state.get("gb_graph")
 
 if index is None or strategies is None or graph is None:
     st.title("User Study: Data Collection Strategy Design")
-    st.markdown(
-        "**Group B** — You have access to rollout videos and a behavior graph. "
-        "Use the sidebar to load data, then follow the guided steps below."
-    )
-    st.info("Select a session from the sidebar and click **Load** to begin.")
+    st.error("Failed to load session — check the sidebar for errors.")
     st.stop()
 
 mp4_dir = Path(mp4_dir_str)
@@ -143,19 +156,32 @@ n_success = sum(1 for ep in index["episodes"] if ep.get("success") is True)
 n_total = len(index["episodes"])
 
 # ── Guided flow ───────────────────────────────────────────────────────────────
-st.title("User Study: Data Collection Strategy Design")
+st.title("User Study: Teaching Robots from Examples")
 st.markdown(
-    "**Group B** — Work through the sections below in order. Each section gives you a "
-    "different lens on the robot's current behavior. At the end, allocate your data "
-    "collection budget across the available strategies."
+    "**Welcome!** In this study, you will help improve a robot arm that learns by watching "
+    "human demonstrations. Work through the steps below in order — each gives you a "
+    "different view of the robot's behavior to inform your data collection decisions."
 )
 
+with st.expander("📖 Background: How does the robot learn?", expanded=False):
+    st.markdown("""
+**Learning from Demonstrations (LfD)**
+
+Instead of programming the robot with explicit rules, we show it many examples of the task being done correctly.
+The robot learns a *policy* — a mapping from what it sees (camera images, joint positions) to what action to take next.
+
+**The task:** The robot must pick up an object from a table and transport it to a goal location.
+- ✓ **Success** — the object reaches the goal
+- ✗ **Failure** — the robot drops it, misses, or runs out of time
+
+**Your role:** You'll watch videos of the robot's current behavior and explore a *behavior graph* that groups similar movement patterns together. Then you'll allocate a *data collection budget* — choosing how many new demonstrations to collect, and of what kind.
+""")
+
 # ── Section 1: Task & base policy overview ────────────────────────────────────
-st.header("Step 1 — Understand the Task & Base Policy")
+st.header("Step 1 — Watch the Robot in Action")
 st.markdown(
-    "The robot must pick up an object and transport it to a goal location. "
-    "The videos below show rollouts from the **base policy** — the starting point "
-    "we want to improve with additional data."
+    "These videos show **rollouts** — the robot attempting the task from scratch. "
+    "Watch several to understand what it does well and where it struggles."
 )
 
 ov_c1, ov_c2, ov_c3 = st.columns(3)
@@ -168,86 +194,178 @@ render_video_browser(mp4_dir, index, page_size=4, key_prefix="gb_vbrow")
 
 # ── Section 2: Behavior graph ────────────────────────────────────────────────
 st.divider()
-st.header("Step 2 — Behavior Graph")
+st.header("Step 2 — Explore the Behavior Graph")
 st.markdown(
-    "We clustered the policy's rollouts into **behavioral modes** — recurring movement "
-    "patterns that appear across many episodes. The graph below shows how the policy "
-    "transitions between these modes, and which transitions tend to lead to success or failure."
+    "The robot's rollouts have been automatically grouped into **behavioral modes** — "
+    "recurring movement patterns that appear across many episodes. "
+    "Think of these like chapters in the robot's playbook: "
+    "each chapter describes a distinct way the robot moves during part of the task."
 )
 st.markdown(
-    "> **How to read it:** Each circle is a behavioral mode. "
-    "Arrows show how often the policy moves from one mode to another. "
-    "**Click any node** to see example videos and outgoing transitions from that mode."
+    "The graph below shows how often the robot moves from one behavioral mode to another, "
+    "and which transitions tend to lead to **success ✓** or **failure ✗**."
 )
+with st.expander("❓ How to read this graph", expanded=False):
+    st.markdown("""
+- **Each circle** is a behavioral mode (a cluster of similar movements)
+- **Arrows** show transitions — how often the robot moves from one mode to another
+- **Larger circles** = more episodes passed through that mode
+- **Color** = success rate of that mode (green = high success, red = low success)
+- **Click any node or edge** to see example videos for that mode or transition
+- **Click the background** to deselect
+""")
 
 highlighted_path = st.session_state.get("gb_pex_highlighted_path")
 
-# ── Graph simplification + filters ───────────────────────────────────────────
-from policy_doctor.behaviors.behavior_graph import degree_one_prune_to_fixed_point
+# ── Visualization picker + filter ───────────────────────────────────────────
+_VIZ_OPTIONS = [
+    "tree_native_svg",
+    "tree_sunburst",
+    "tree_icicle",
+    "markov_svg_bfs",
+    "markov_svg_temporal",
+]
+_VIZ_LABELS = {
+    "tree_native_svg":     "Trajectory tree",
+    "tree_sunburst":       "Sunburst",
+    "tree_icicle":         "Icicle",
+    "markov_svg_bfs":      "Markov graph — BFS-layered",
+    "markov_svg_temporal": "Markov graph — temporal mean",
+}
 
-_col_np, _col_ep = st.columns(2)
-_prune_pct = _col_np.slider(
-    "Hide nodes visited in fewer than X% of episodes",
-    min_value=0, max_value=80, value=0, step=1,
-    format="%d%%",
-    key="gb_graph_prune_pct",
-    help="Removes infrequent nodes and any node that becomes unreachable from START.",
-)
-_edge_pct = _col_ep.slider(
-    "Hide edges with transition probability below X%",
-    min_value=0, max_value=80, value=0, step=1,
-    format="%d%%",
-    key="gb_graph_edge_pct",
-    help="Hides weak transitions. Nodes that become unreachable from START are also removed.",
-)
-_min_edge_prob = _edge_pct / 100.0
+_c_viz, _c_color = st.columns([2, 1])
+with _c_viz:
+    _viz_type = st.selectbox(
+        "Visualization",
+        options=_VIZ_OPTIONS,
+        format_func=lambda v: _VIZ_LABELS[v],
+        index=0,
+        key="gb_viz_type",
+    )
+_is_tree = _viz_type.startswith("tree_")
+with _c_color:
+    if _is_tree:
+        _color_opts = ["outcome", "id"]
+        _color_labels = {"outcome": "Outcome (success rate)", "id": "Cluster ID"}
+    else:
+        _color_opts = ["id", "timesteps"]
+        _color_labels = {"id": "Cluster ID", "timesteps": "Timestep count"}
+    _color_by = st.selectbox(
+        "Color nodes by",
+        options=_color_opts,
+        format_func=lambda v: _color_labels[v],
+        index=0,
+        key="gb_color_by",
+    )
 
-_simplify = st.checkbox(
-    "Merge pass-through nodes (single in/out connection)",
-    value=False,
-    key="gb_graph_simplify",
+_min_branch = st.slider(
+    "Hide transitions where count(s, s′) < N",
+    1, 50, 2,
+    key="gb_min_branch",
     help=(
-        "Iteratively collapses nodes that always come from the same place "
-        "or always go to the same place. Applied after the filters above, "
-        "so only surviving nodes are considered for merging."
+        "count(s, s′) is the number of rollouts in which the transition s → s′ "
+        "was observed. Edges with fewer than N observations are hidden, and "
+        "any nodes that become unreachable from START are pruned as a "
+        "consequence."
     ),
 )
 
-# Simplify first (on the full graph), then apply slider filters to what remains.
-# This way merging can absorb any node regardless of visit frequency, and the
-# sliders prune whatever is left in the simplified graph.
-if _simplify:
-    _active_graph, _active_labels, _n_rounds, _n_merged = degree_one_prune_to_fixed_point(
-        graph, labels, metadata
-    )
-    _n_orig = sum(1 for nid in graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
-    _n_simp = sum(1 for nid in _active_graph.nodes if nid not in {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID})
-    st.caption(f"Simplified: {_n_orig} → {_n_simp} behavior nodes ({_n_merged} merged over {_n_rounds} pass(es)).")
-else:
-    _active_graph, _active_labels = graph, labels
-
-# Slider filters applied to whichever graph is active.
-_excluded_nodes = compute_pruned_graph_nodes(_active_graph, _prune_pct / 100.0, n_total, _min_edge_prob)
-
-_summary = []
-if _excluded_nodes:
-    _summary.append(f"{len(_excluded_nodes)} node(s) hidden")
-if _edge_pct > 0:
-    _summary.append(f"edges < {_edge_pct}% hidden")
-if _summary:
-    st.caption(" · ".join(_summary))
-
-render_graph_full_width(
-    graph=_active_graph,
-    labels=_active_labels,
-    metadata=metadata,
-    mp4_dir=mp4_dir,
-    mp4_index=index,
-    key_prefix="gb_gex",
-    highlighted_path=highlighted_path,
-    excluded_node_ids=_excluded_nodes,
-    min_edge_prob=_min_edge_prob,
+# Stats summary
+_active_graph, _active_labels = graph, labels
+_excluded_nodes = compute_pruned_graph_nodes(
+    _active_graph, min_visit_prob=0.0, n_total=_active_graph.num_episodes,
+    min_edge_count=int(_min_branch),
 )
+_n_nodes_total = len(_active_graph.nodes)
+_n_edges_total = sum(len(t) for t in _active_graph.transition_counts.values())
+_n_edges_hidden = sum(
+    1
+    for src, targets in _active_graph.transition_counts.items()
+    for tgt, cnt in targets.items()
+    if src in _excluded_nodes or tgt in _excluded_nodes or cnt < int(_min_branch)
+)
+st.caption(
+    f"Hidden {_n_edges_hidden} / {_n_edges_total} edges  ·  "
+    f"{len(_excluded_nodes)} / {_n_nodes_total} nodes pruned"
+)
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+if _is_tree:
+    from policy_doctor.streamlit_app.components.trajectory_tree_view import (
+        render_trajectory_tree,
+    )
+    render_trajectory_tree(
+        labels=_active_labels,
+        metadata=metadata,
+        view_mode=_viz_type.replace("tree_", ""),
+        min_branch=int(_min_branch),
+        max_depth_cap=500,
+        color_mode=_color_by,
+        node_values={},
+        cluster_names=None,
+        mp4_dir=mp4_dir,
+        mp4_index=index,
+        height=600,
+        level=getattr(_active_graph, "level", "rollout"),
+        key_prefix="gb_tree",
+        edge_style="lines",
+        edge_width_slope=5.0,
+        node_size_slope=24.0,
+    )
+else:
+    # Markov view with color override matching the demo's logic
+    _SUCCESS_COL = "#0072B2" if colorblind_mode else "#2ca02c"
+    _FAILURE_COL = "#D55E00" if colorblind_mode else "#d62728"
+    _SPECIAL_TERM = {START_NODE_ID, END_NODE_ID, SUCCESS_NODE_ID, FAILURE_NODE_ID}
+    _color_override = {
+        nid: (_SUCCESS_COL if node.cluster_id == SUCCESS_NODE_ID else _FAILURE_COL)
+        for nid, node in _active_graph.nodes.items()
+        if node.cluster_id in (SUCCESS_NODE_ID, FAILURE_NODE_ID)
+    }
+    if _color_by == "timesteps":
+        _SPECIAL = _SPECIAL_TERM
+        try:
+            import plotly.express as _px
+            _viridis = _px.colors.sequential.Viridis
+        except Exception:
+            _viridis = ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"]
+        _ts_max = max(
+            (np.log1p(_active_graph.nodes[nid].num_timesteps)
+             for nid in _active_graph.nodes if nid not in _SPECIAL),
+            default=1.0,
+        ) or 1.0
+        _color_override = {}
+        for nid in _active_graph.nodes:
+            if nid in _SPECIAL:
+                continue
+            _t = np.log1p(_active_graph.nodes[nid].num_timesteps) / _ts_max
+            _idx = int(min(len(_viridis) - 1, max(0, _t * (len(_viridis) - 1))))
+            _color_override[nid] = _viridis[_idx]
+
+    _pos = None
+    if _viz_type == "markov_svg_temporal":
+        from policy_doctor.behaviors import graph_simplification as _gs
+        try:
+            _pos = _gs.temporal_layout(
+                _active_graph, _active_labels, metadata,
+                level=getattr(_active_graph, "level", "rollout"),
+            )
+        except Exception as _e:
+            st.warning(f"Temporal layout failed ({_e}); falling back to BFS-layered.")
+
+    render_graph_full_width(
+        graph=_active_graph,
+        labels=_active_labels,
+        metadata=metadata,
+        mp4_dir=mp4_dir,
+        mp4_index=index,
+        key_prefix="gb_gex",
+        highlighted_path=highlighted_path,
+        excluded_node_ids=_excluded_nodes,
+        min_edge_count=int(_min_branch),
+        pos=_pos,
+        color_override=_color_override,
+    )
 
 # ── Section 3: Path explorer ──────────────────────────────────────────────────
 st.divider()
@@ -519,14 +637,19 @@ else:
                     )
 
 st.info(
-    "Use what you found above to guide your choices in Step 5 below. "
+    "Use what you found above to guide your choices in Step 6 below. "
     "For example, nodes that frequently exit to failure suggest targeted data collection "
     "around those behaviors (e.g. constrained initial positions or recovery demos)."
 )
 
-# ── Section 5: Strategy design ────────────────────────────────────────────────
+# ── Section 5: Behavior-graph interaction survey ─────────────────────────────
 st.divider()
-st.header("Step 5 — Design Your Data Collection Strategy")
+st.header("Step 5 — Behavior-Graph Survey")
+likert_graph = render_block1_graph_interaction(key_prefix="gb_likert")
+
+# ── Section 6: Strategy design ────────────────────────────────────────────────
+st.divider()
+st.header("Step 6 — Design Your Data Collection Strategy")
 st.markdown(
     "Based on what you observed above, allocate your **{} demo budget** across the "
     "strategies below. Each strategy targets a specific data collection protocol. "
@@ -541,9 +664,26 @@ allocations = render_strategy_allocator(
 )
 render_strategy_summary(allocations, strategies, total_budget)
 
-# ── Section 6: Submit ─────────────────────────────────────────────────────────
+# ── Section 7: Strategy-selection survey ──────────────────────────────────────
 st.divider()
-st.header("Step 6 — Submit")
+st.header("Step 7 — Strategy-Selection Survey")
+likert_strategy = render_block2_strategy(key_prefix="gb_likert")
+
+# ── Section 8: NASA Task Load Index ──────────────────────────────────────────
+st.divider()
+st.header("Step 8 — NASA Task Load Index")
+tlx_responses = render_nasa_tlx(key_prefix="gb_tlx")
+
+# ── Section 9: Final assessment ──────────────────────────────────────────────
+st.divider()
+st.header("Step 9 — Final Assessment")
+likert_final = render_block3_final(
+    key_prefix="gb_likert", include_graph_questions=True,
+)
+
+# ── Section 10: Submit ───────────────────────────────────────────────────────
+st.divider()
+st.header("Step 10 — Submit")
 
 notes = st.text_area(
     "Any additional notes or reasoning about your choices",
@@ -562,6 +702,10 @@ if st.button("Submit", type="primary"):
         "participant_id": participant_id,
         "group": "B",
         "allocations": allocations,
+        "nasa_tlx": tlx_responses,
+        "likert_graph": likert_graph,
+        "likert_strategy": likert_strategy,
+        "likert_final": likert_final,
         "notes": notes,
         "timestamp": timestamp,
     }

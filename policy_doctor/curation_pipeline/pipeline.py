@@ -21,7 +21,9 @@ ALL_STEPS: List[str] = [
     "finalize_attribution",
     "compute_demonstration_scores",
     "compute_infembed",
+    "compute_policy_embeddings_demos",
     "run_clustering",
+    "compute_data_support",
     "export_markov_report",
     "annotate_slices_vlm",
     "summarize_behaviors_vlm",
@@ -62,11 +64,21 @@ ALL_STEPS: List[str] = [
     "mimicgen_budget_sweep",
     # Rep-2/3 arms for budget sweep (fixed upstream, varying draw — controlled heuristic comparison):
     "mimicgen_budget_rep_sweep",
+    # Failure-targeting arm (graph-guided IC + intermediate state constraints):
+    "mimicgen_failure_targeting",
+    # Ablation: failure-state IC targeting only (no intermediate chained-warp constraint):
+    "mimicgen_failure_ic_only",
     # Flat steps (standalone / legacy runs):
     "select_mimicgen_seed_from_graph",
     "select_mimicgen_seed",
     "generate_mimicgen_demos",
     "train_on_combined_data",
+    # Standalone failure analysis:
+    "analyze_failure_states",
+    # Demo clustering sweep (W × S × K × rep × ordering grid):
+    "run_clustering_demo_sweep",
+    # Evaluation metrics for demo-sweep clusterings (silhouette, Markov, V(START)):
+    "compute_clustering_metrics",
 ]
 
 
@@ -78,7 +90,11 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.finalize_attribution import FinalizeAttributionStep
     from policy_doctor.curation_pipeline.steps.compute_demonstration_scores import ComputeDemonstrationScoresStep
     from policy_doctor.curation_pipeline.steps.compute_infembed import ComputeInfembedStep
+    from policy_doctor.curation_pipeline.steps.compute_policy_embeddings_demos import (
+        ComputePolicyEmbeddingsDemosStep,
+    )
     from policy_doctor.curation_pipeline.steps.run_clustering import RunClusteringStep
+    from policy_doctor.curation_pipeline.steps.compute_data_support import ComputeDataSupportStep
     from policy_doctor.curation_pipeline.steps.export_markov_report import ExportMarkovReportStep
     from policy_doctor.curation_pipeline.steps.annotate_slices_vlm import AnnotateSlicesVLMStep
     from policy_doctor.curation_pipeline.steps.summarize_behaviors_vlm import SummarizeBehaviorsVLMStep
@@ -119,6 +135,17 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         MimicgenBehaviorGraph20Rep3ArmStep,
         MimicgenDiversity20Rep2ArmStep,
         MimicgenDiversity20Rep3ArmStep,
+        MimicgenFailureTargetingArmStep,
+        MimicgenFailureICOnlyArmStep,
+    )
+    from policy_doctor.curation_pipeline.steps.analyze_failure_states import (
+        AnalyzeFailureStatesStep,
+    )
+    from policy_doctor.curation_pipeline.steps.run_clustering_demo_sweep import (
+        RunClusteringDemoSweepStep,
+    )
+    from policy_doctor.curation_pipeline.steps.compute_clustering_metrics import (
+        ComputeClusteringMetricsStep,
     )
     from policy_doctor.curation_pipeline.steps.eval_baseline import EvalBaselineStep
     from policy_doctor.curation_pipeline.steps.mimicgen_budget_sweep import (
@@ -133,7 +160,9 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "finalize_attribution": FinalizeAttributionStep,
         "compute_demonstration_scores": ComputeDemonstrationScoresStep,
         "compute_infembed": ComputeInfembedStep,
+        "compute_policy_embeddings_demos": ComputePolicyEmbeddingsDemosStep,
         "run_clustering": RunClusteringStep,
+        "compute_data_support": ComputeDataSupportStep,
         "export_markov_report": ExportMarkovReportStep,
         "annotate_slices_vlm": AnnotateSlicesVLMStep,
         "summarize_behaviors_vlm": SummarizeBehaviorsVLMStep,
@@ -170,6 +199,11 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "select_mimicgen_seed": SelectMimicgenSeedStep,
         "generate_mimicgen_demos": GenerateMimicgenDemosStep,
         "train_on_combined_data": TrainOnCombinedDataStep,
+        "mimicgen_failure_targeting": MimicgenFailureTargetingArmStep,
+        "mimicgen_failure_ic_only": MimicgenFailureICOnlyArmStep,
+        "analyze_failure_states": AnalyzeFailureStatesStep,
+        "run_clustering_demo_sweep": RunClusteringDemoSweepStep,
+        "compute_clustering_metrics": ComputeClusteringMetricsStep,
     }
     return registry
 

@@ -36,6 +36,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
             fit_reduce_dimensions,
         )
         from policy_doctor.data.clustering_loader import save_clustering_models
+        from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
         from influence_visualizer.clustering_results import save_clustering_result
         from influence_visualizer.data_loader import get_eval_dir_for_seed
 
@@ -123,6 +124,15 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                     window_width, stride, aggregation, demo_split, level,
                     train_ckpt=train_ckpt, exp_date=exp_date,
                 )
+            elif influence_source in ("policy_emb", "pi05_activations"):
+                if level == "demo":
+                    raise ValueError(
+                        "level='demo' not supported for policy_emb/pi05_activations source"
+                    )
+                layer = OmegaConf.select(cfg, "clustering_policy_emb_layer") or "pi05"
+                rep = PolicyEmbeddingRepresentation()
+                params_rep = SliceWindowParams(window_width=window_width, stride=stride, aggregation=aggregation)
+                embeddings_arr, all_metadata = rep.extract(eval_dir_abs, params_rep, layer=layer)
             else:
                 if level == "demo":
                     raise ValueError(
@@ -132,6 +142,15 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                 embeddings_arr, all_metadata = extract_infembed_slice_windows(
                     eval_dir_abs, window_width, stride, aggregation,
                 )
+
+            # Track per-run params on the manifest so downstream consumers
+            # (e.g. compute_data_support) can reproduce the exact windowing
+            # without depending on cfg matching at consumer time.
+            policy_emb_layer_for_manifest = (
+                OmegaConf.select(cfg, "clustering_policy_emb_layer")
+                if influence_source in ("policy_emb", "pi05_activations")
+                else None
+            )
 
             print(f"  Slice embeddings: {embeddings_arr.shape}")
             print(f"  Normalizing: {normalize}")
@@ -154,6 +173,15 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
                 clustering_name = f"{experiment_name}_seed{seed}_kmeans_k{k}"
                 k_output_dir = self.step_dir / "clustering" / f"k{k}"
+                extra_manifest = {
+                    "window_width": int(window_width),
+                    "stride": int(stride),
+                    "aggregation": aggregation,
+                    "umap_n_components": int(umap_n_components),
+                    "umap_prescale": umap_prescale,
+                }
+                if policy_emb_layer_for_manifest:
+                    extra_manifest["policy_emb_layer"] = policy_emb_layer_for_manifest
                 result_dir = save_clustering_result(
                     name=clustering_name,
                     cluster_labels=labels,
@@ -167,6 +195,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                     n_samples=len(labels),
                     embeddings_reduced=embeddings_reduced,
                     output_dir=k_output_dir,
+                    extra_manifest_fields=extra_manifest,
                 )
                 models_path = save_clustering_models(
                     result_dir=result_dir,

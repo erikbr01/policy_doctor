@@ -1,0 +1,4 @@
+task: pi05_libero_spatial
+name: "pi0.5 Libero Spatial"
+eval_dir: /home/erbauer/policy_doctor/data/pi05_libero/libero_spatial
+obs_key: agentview_image

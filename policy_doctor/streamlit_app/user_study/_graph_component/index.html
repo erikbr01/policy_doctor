@@ -8,14 +8,9 @@
   html, svg { background: transparent; }
   svg { display: block; width: 100%; height: 100%; cursor: default; }
 
-  .node-circle {
-    cursor: pointer;
-    transition: opacity 0.15s, transform 0.1s;
-    transform-origin: center;
-  }
-  .node-circle:hover { opacity: 0.85; filter: brightness(1.1); }
-  .node-circle.selected { stroke: #1a1a1a; stroke-width: 3px; }
-
+  /* Theme: dark (default) — labels are light on a dark Streamlit canvas.
+     The light-theme override below flips just the bits that need to be
+     visible on paper. */
   .node-label {
     pointer-events: none;
     font-size: 10px;
@@ -25,6 +20,18 @@
     dominant-baseline: auto;
     user-select: none;
   }
+  body.theme-light .node-label { fill: #1a1a1a; }
+  /* Selected-node stroke is fine to gate by class — only the visible
+     shape sets the .selected class, the hit-area circle never does. */
+  body.theme-light .node-circle.selected { stroke: #000 !important; }
+
+  .node-circle {
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    transform-origin: center;
+  }
+  .node-circle:hover { opacity: 0.85; filter: brightness(1.1); }
+  .node-circle.selected { stroke: #1a1a1a; stroke-width: 3px; }
 
   .edge { pointer-events: none; }
 
@@ -65,13 +72,34 @@
     pointer-events: none;
     white-space: nowrap;
   }
+  #reset-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    background: rgba(40, 40, 40, 0.85);
+    color: #ddd;
+    border: 1px solid #555;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    display: none;  /* shown only after a manual drag */
+  }
+  #reset-btn:hover { background: rgba(70, 70, 70, 0.95); }
+  body.theme-light #reset-btn {
+    background: rgba(255,255,255,0.92); color: #222; border-color: #c8c8cf;
+  }
+  body.theme-light #reset-btn:hover { background: #ebebed; }
 </style>
 </head>
 <body>
 
 <div id="tooltip"></div>
+<button id="reset-btn" title="Restore the computed layout">↺ Reset positions</button>
 <svg id="graph"></svg>
-<div id="instructions">Click any node to explore it</div>
+<div id="instructions">Drag any node to move it · Click to explore</div>
 
 <script>
 // ── Streamlit messaging ───────────────────────────────────────────────────
@@ -98,7 +126,25 @@ function setHeight(h) {
 let graphData = null;
 let selectedNodeId = null;
 let selectedEdge = null;   // {src, tgt} when an edge is selected
+let clickSeq = 0;          // bumps per user click so repeats are distinct
+                           // even when the payload (node id) is the same
 let highlightedPath = null; // array of node IDs forming the highlighted path
+let pixPosMut = {};         // mutable pixel positions (live, including user drags)
+let initialPixPos = {};     // snapshot from the most recent layout (for reset)
+let userOverrides = {};     // nodes the user has manually moved; cleared on reset
+let dragging = null;        // {nodeId, startMouse, startNode, moved}
+let lastRenderArgs = null;  // svgW, svgH for re-render on reset
+
+// ── Viz options (settable from Python) ─────────────────────────────────────
+let theme = "dark";              // "dark" | "light"
+let edgeStyle = "lines";         // "arrows" | "lines"
+// Linear scaling. Width = EDGE_BASE_W + edgeWidthSlope * prob; the slope
+// (in px) is the slider value, so the user reads it as "how many extra
+// pixels of stroke at p=1". Same shape for node radius vs visit fraction.
+let edgeWidthSlope = 5.0;
+let nodeSizeSlope = 24.0;
+// lastSentSvg + svgCaptureScheduled are declared next to the export
+// builders below, near the SVG export section.
 
 // ── Layout helpers ────────────────────────────────────────────────────────
 function toSvgCoords(pos, svgW, svgH, padding) {
@@ -120,39 +166,120 @@ function toSvgCoords(pos, svgW, svgH, padding) {
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────
+// Compute the SVG path `d` attribute and arrowhead-direction vector for an
+// edge between two pixel positions. Curvature scales with chord length so
+// short hops are nearly straight, long hops arc clearly.
+function edgePathD(x0, y0, x1, y1, side) {
+  const chord = Math.sqrt((x1 - x0)**2 + (y1 - y0)**2) || 1;
+  const pcx = -(y1 - y0) / chord;
+  const pcy =  (x1 - x0) / chord;
+  const curve = Math.min(60, Math.max(0, (chord - 80) * 0.18));
+  const arc = (side !== undefined) ? side : ((x1 >= x0) ? -1 : 1);
+  const cx = (x0 + x1) / 2 + pcx * curve * arc;
+  const cy = (y0 + y1) / 2 + pcy * curve * arc;
+  return `M ${x0} ${y0} Q ${cx} ${cy} ${x1} ${y1}`;
+}
+
+// Recompute the path for every edge touching nodeId and update DOM.
+function redrawEdgesFor(nodeId) {
+  if (!graphData) return;
+  const svg = document.getElementById("graph");
+  const maxEpisodes = Math.max(...graphData.nodes.map(n => n.num_episodes), 1);
+  for (const edge of graphData.edges) {
+    if (edge.src !== nodeId && edge.tgt !== nodeId) continue;
+    const [x0, y0] = pixPosMut[edge.src] || [0, 0];
+    const [x1, y1] = pixPosMut[edge.tgt] || [0, 0];
+    const rSrc = nodeRadius(graphData.nodes.find(n => n.id === edge.src), maxEpisodes);
+    const targetNode = graphData.nodes.find(n => n.id === edge.tgt);
+    const rTgtVis = visualRadius(targetNode, maxEpisodes);
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    // Match the offset to the live path's marker (which is userSpaceOnUse,
+    // so the arrow is a fixed pixel size — 10/12 px or 0 for lines mode).
+    const sel = `[data-src="${edge.src}"][data-tgt="${edge.tgt}"]`;
+    const livePath = svg.querySelector(`path.edge${sel}`);
+    let markerWidthPx = 10;
+    if (livePath) {
+      const me = livePath.getAttribute("marker-end") || "url(#arrow)";
+      markerWidthPx = me === "url(#arrow)" ? 10 : me === "none" ? 0 : 12;
+    }
+    const idealOffset = rTgtVis + markerWidthPx + 3;
+    const maxOffset = Math.max(0, len - rSrc - 2);
+    const endOffset = Math.min(idealOffset, maxOffset);
+    const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
+    const ex = x1 - ux * endOffset, ey = y1 - uy * endOffset;
+    let ox = 0, oy = 0;
+    if (graphData.edges.some(e => e.src === edge.tgt && e.tgt === edge.src)) {
+      ox = -uy * 5; oy = ux * 5;
+    }
+    const d = edgePathD(sx + ox, sy + oy, ex + ox, ey + oy);
+    // Update both visible and hit-area paths
+    svg.querySelectorAll(`path${sel}`).forEach(p => p.setAttribute("d", d));
+  }
+}
+
 function render(data, svgW, svgH) {
   graphData = data;
+  lastRenderArgs = { svgW, svgH };
   const svg = document.getElementById("graph");
   svg.setAttribute("viewBox", `0 0 ${svgW} ${svgH}`);
   svg.innerHTML = "";
 
   const padding = 60;
-  const pixPos = toSvgCoords(data.positions, svgW, svgH, padding);
+  // Compute fresh positions from data, then overlay any user drags.
+  const freshPos = toSvgCoords(data.positions, svgW, svgH, padding);
+  initialPixPos = JSON.parse(JSON.stringify(freshPos));
+  pixPosMut = {};
+  for (const id of Object.keys(freshPos)) {
+    pixPosMut[id] = userOverrides[id] ? [...userOverrides[id]] : [...freshPos[id]];
+  }
+  const pixPos = pixPosMut;  // alias for the rest of this function
 
   const maxEpisodes = Math.max(...data.nodes.map(n => n.num_episodes), 1);
+  // START's episode count is the natural denominator for "P(reach
+  // terminal)" — it's all episodes the policy ran. Fall back to the
+  // overall max if there's no START in the graph (custom callers).
+  const startNode = data.nodes.find(n => n.symbol === "diamond");
+  const totalEpisodes = (startNode && startNode.num_episodes) || maxEpisodes;
 
   // ── defs: arrowhead marker ─────────────────────────────────────────────
   const pathSet = highlightedPath ? new Set(highlightedPath.map(String)) : null;
   const hasPath = pathSet && pathSet.size > 0;
 
   const defs = svgEl("defs");
-  const marker = svgEl("marker", { id: "arrow", markerWidth: "6", markerHeight: "6",
-    refX: "5", refY: "3", orient: "auto" });
-  marker.appendChild(svgEl("polygon", { points: "0 0, 6 3, 0 6", fill: "rgba(180,180,180,0.7)" }));
+  // Arrowhead anchored at its BASE (refX=0), not its tip — the polygon
+  // extends only forward from the line endpoint, so the line never
+  // crosses underneath it.
+  //
+  // `markerUnits="userSpaceOnUse"` pins the arrow to a fixed pixel size
+  // regardless of stroke-width. With the default (strokeWidth units),
+  // a thick edge into a small terminal node ended up with an arrow
+  // visibly larger than the node itself — looked bizarre. Fixed sizing
+  // keeps arrows consistent and always smaller than typical nodes.
+  // Sizes are picked to be readable (≥ 10 px) but smaller than the
+  // smallest cluster (r=6 px → diameter 12 px).
+  //
+  // Default arrow: inherits the line's RGB via the SVG-2
+  // `context-stroke` keyword (Chrome 91+, Firefox, Safari 16+).
+  const ARROW_BASE = { markerUnits: "userSpaceOnUse", orient: "auto" };
+  const marker = svgEl("marker", { ...ARROW_BASE, id: "arrow",
+    markerWidth: "10", markerHeight: "10", refX: "0", refY: "5" });
+  marker.appendChild(svgEl("polygon", { points: "0 0, 10 5, 0 10", fill: "context-stroke" }));
   defs.appendChild(marker);
-  const markerHL = svgEl("marker", { id: "arrow-hl", markerWidth: "7", markerHeight: "7",
-    refX: "5", refY: "3.5", orient: "auto" });
-  markerHL.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#f5a623" }));
+  const markerHL = svgEl("marker", { ...ARROW_BASE, id: "arrow-hl",
+    markerWidth: "12", markerHeight: "12", refX: "0", refY: "6" });
+  markerHL.appendChild(svgEl("polygon", { points: "0 0, 12 6, 0 12", fill: "#f5a623" }));
   defs.appendChild(markerHL);
   // Selected-node edge arrowhead (cyan)
-  const markerSel = svgEl("marker", { id: "arrow-sel", markerWidth: "7", markerHeight: "7",
-    refX: "5", refY: "3.5", orient: "auto" });
-  markerSel.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#64c8ff" }));
+  const markerSel = svgEl("marker", { ...ARROW_BASE, id: "arrow-sel",
+    markerWidth: "12", markerHeight: "12", refX: "0", refY: "6" });
+  markerSel.appendChild(svgEl("polygon", { points: "0 0, 12 6, 0 12", fill: "#64c8ff" }));
   defs.appendChild(markerSel);
   // Selected-edge arrowhead (gold)
-  const markerEdgeSel = svgEl("marker", { id: "arrow-edge-sel", markerWidth: "7", markerHeight: "7",
-    refX: "5", refY: "3.5", orient: "auto" });
-  markerEdgeSel.appendChild(svgEl("polygon", { points: "0 0, 7 3.5, 0 7", fill: "#ffc832" }));
+  const markerEdgeSel = svgEl("marker", { ...ARROW_BASE, id: "arrow-edge-sel",
+    markerWidth: "12", markerHeight: "12", refX: "0", refY: "6" });
+  markerEdgeSel.appendChild(svgEl("polygon", { points: "0 0, 12 6, 0 12", fill: "#ffc832" }));
   defs.appendChild(markerEdgeSel);
   svg.appendChild(defs);
 
@@ -167,17 +294,11 @@ function render(data, svgW, svgH) {
     if (!pixPos[edge.src] || !pixPos[edge.tgt]) continue;
 
     const rSrc = nodeRadius(data.nodes.find(n => n.id === edge.src), maxEpisodes);
-    const rTgt = nodeRadius(data.nodes.find(n => n.id === edge.tgt), maxEpisodes);
+    const targetNode = data.nodes.find(n => n.id === edge.tgt);
+    const rTgtVis = visualRadius(targetNode, maxEpisodes);
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.sqrt(dx*dx + dy*dy) || 1;
     const ux = dx/len, uy = dy/len;
-    const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
-    const ex = x1 - ux * (rTgt + 6), ey = y1 - uy * (rTgt + 6);
-
-    let ox = 0, oy = 0;
-    if (data.edges.some(e => e.src === edge.tgt && e.tgt === edge.src)) {
-      ox = -uy * 5; oy = ux * 5;
-    }
 
     const onPath = hasPath &&
       pathSet.has(String(edge.src)) && pathSet.has(String(edge.tgt)) &&
@@ -187,65 +308,124 @@ function render(data, svgW, svgH) {
     const isIncoming = hasSelected && edge.tgt === selectedNodeId;
     const isEdgeSel = hasSelectedEdge && edge.src === selectedEdge.src && edge.tgt === selectedEdge.tgt;
 
+    // Linear encoding. Width = base + slope * prob, where slope is set by
+    // the user. Grey "darkness" goes from ~background (essentially
+    // invisible, matching the 0.2-opacity spec) to the theme's foreground
+    // grey (solid), tracking prob linearly so width and shade stay
+    // coupled — wider edges are also darker.
+    //
+    // Implementation note: we encode the grey by mixing two fully-opaque
+    // RGB values, not by varying alpha. The arrowhead inherits the line
+    // colour via `fill=context-stroke`, and any line stroke that overlaps
+    // the marker polygon at the tip would otherwise alpha-compound and
+    // darken there. Using opaque RGB on both sides means line + arrow
+    // join seamlessly with no double-alpha at the seam.
+    const probClamped = Math.max(0, Math.min(1, edge.prob));
+    const defaultW = (0.6 + probClamped * edgeWidthSlope);
+    const defaultOpacity = (0.2 + probClamped * 0.8);  // used only for non-default branches
+    const probShaped = probClamped;
+    function mix(a, b, t) {
+      const m = (i) => Math.round(a[i] + (b[i] - a[i]) * t);
+      return `rgb(${m(0)},${m(1)},${m(2)})`;
+    }
+    const defaultStroke = theme === "light"
+        ? mix([255, 255, 255], [60, 60, 60], defaultOpacity)
+        : mix([14, 17, 23], [180, 180, 180], defaultOpacity);
+
     let stroke, strokeW, markerEnd;
     if (onPath) {
       stroke = "rgba(245,166,35,0.95)";
-      strokeW = (1.5 + edge.prob * 5).toFixed(1);
+      strokeW = (1.5 + probShaped * 5).toFixed(1);
       markerEnd = "url(#arrow-hl)";
     } else if (hasPath) {
-      stroke = `rgba(120,120,120,${(0.1 + edge.prob * 0.15).toFixed(2)})`;
-      strokeW = (0.5 + edge.prob * 2).toFixed(1);
+      stroke = `rgba(120,120,120,${(0.1 + probShaped * 0.15).toFixed(2)})`;
+      strokeW = (0.5 + probShaped * 2).toFixed(1);
       markerEnd = "url(#arrow)";
     } else if (isEdgeSel) {
       stroke = "rgba(255,200,50,0.97)";
       strokeW = "3.5";
       markerEnd = "url(#arrow-edge-sel)";
     } else if (hasSelectedEdge) {
-      stroke = `rgba(80,80,80,${(0.05 + edge.prob * 0.06).toFixed(2)})`;
-      strokeW = (0.4 + edge.prob * 1.5).toFixed(1);
+      stroke = `rgba(80,80,80,${(0.05 + probShaped * 0.06).toFixed(2)})`;
+      strokeW = (0.4 + probShaped * 1.5).toFixed(1);
       markerEnd = "url(#arrow)";
     } else if (isOutgoing) {
-      stroke = `rgba(100,200,255,${(0.75 + edge.prob * 0.25).toFixed(2)})`;
-      strokeW = (1.8 + edge.prob * 4).toFixed(1);
+      stroke = `rgba(100,200,255,${(0.75 + probShaped * 0.25).toFixed(2)})`;
+      strokeW = (1.8 + probShaped * 4).toFixed(1);
       markerEnd = "url(#arrow-sel)";
     } else if (isIncoming) {
-      stroke = `rgba(100,200,255,${(0.45 + edge.prob * 0.25).toFixed(2)})`;
-      strokeW = (1.0 + edge.prob * 3).toFixed(1);
+      stroke = `rgba(100,200,255,${(0.45 + probShaped * 0.25).toFixed(2)})`;
+      strokeW = (1.0 + probShaped * 3).toFixed(1);
       markerEnd = "url(#arrow-sel)";
     } else if (hasSelected) {
-      stroke = `rgba(100,100,100,${(0.06 + edge.prob * 0.08).toFixed(2)})`;
-      strokeW = (0.4 + edge.prob * 1.5).toFixed(1);
+      stroke = `rgba(100,100,100,${(0.06 + probShaped * 0.08).toFixed(2)})`;
+      strokeW = (0.4 + probShaped * 1.5).toFixed(1);
       markerEnd = "url(#arrow)";
     } else {
-      stroke = `rgba(180,180,180,${(0.25 + edge.prob * 0.55).toFixed(2)})`;
-      strokeW = (0.8 + edge.prob * 4).toFixed(1);
+      stroke = defaultStroke;
+      strokeW = defaultW.toFixed(1);
       markerEnd = "url(#arrow)";
     }
+    if (edgeStyle === "lines") markerEnd = "none";
 
-    const line = svgEl("line", {
+    // Compute the line-end offset *after* the stroke width is decided.
+    // Markers are userSpaceOnUse so they're a fixed pixel size: 10 px for
+    // the default arrow, 12 px for the highlight/selection markers,
+    // 0 when arrowheads are disabled ("lines" mode).
+    //
+    // Clamp the offset to the chord length so the line endpoint never
+    // crosses past the source — that would reverse the path's tangent
+    // and the auto-oriented marker would point backward, which looked
+    // like "arrows flipping" on short edges.
+    const markerWidthPx = markerEnd === "url(#arrow)" ? 10
+                        : markerEnd === "none" ? 0 : 12;
+    const tipGap = 3;
+    const idealOffset = rTgtVis + markerWidthPx + tipGap;
+    const maxOffset = Math.max(0, len - rSrc - 2);
+    const endOffset = Math.min(idealOffset, maxOffset);
+    const sx = x0 + ux * (rSrc + 2), sy = y0 + uy * (rSrc + 2);
+    const ex = x1 - ux * endOffset, ey = y1 - uy * endOffset;
+
+    let ox = 0, oy = 0;
+    if (data.edges.some(e => e.src === edge.tgt && e.tgt === edge.src)) {
+      ox = -uy * 5; oy = ux * 5;
+    }
+
+    // Build a path. Short edges → straight line. Long edges → quadratic
+    // Bezier whose control point sits perpendicular to the chord.
+    const x0p = sx + ox, y0p = sy + oy, x1p = ex + ox, y1p = ey + oy;
+    const d = edgePathD(x0p, y0p, x1p, y1p);
+
+    const line = svgEl("path", {
       class: "edge",
-      x1: sx + ox, y1: sy + oy, x2: ex + ox, y2: ey + oy,
+      d,
+      fill: "none",
       stroke, "stroke-width": strokeW,
       "marker-end": markerEnd,
+      "data-src": String(edge.src),
+      "data-tgt": String(edge.tgt),
     });
     edgeGroup.appendChild(line);
 
-    // Transparent wider hit-area line so edges are easy to click
-    const hit = svgEl("line", {
-      x1: sx + ox, y1: sy + oy, x2: ex + ox, y2: ey + oy,
-      stroke: "transparent", "stroke-width": "10",
+    // Transparent wider hit-area path so edges are easy to click
+    const hit = svgEl("path", {
+      d,
+      fill: "none",
+      stroke: "transparent", "stroke-width": "12",
       "pointer-events": "stroke", cursor: "pointer",
+      "data-src": String(edge.src),
+      "data-tgt": String(edge.tgt),
     });
     (function(e) {
       hit.addEventListener("click", function(evt) {
         evt.stopPropagation();
         if (selectedEdge && selectedEdge.src === e.src && selectedEdge.tgt === e.tgt) {
           selectedEdge = null;
-          sendValue(-1);
+          sendValue([-1, ++clickSeq]);
         } else {
           selectedEdge = {src: e.src, tgt: e.tgt};
           selectedNodeId = null;
-          sendValue([e.src, e.tgt]);
+          sendValue([e.src, e.tgt, ++clickSeq]);
         }
         render(graphData, svgW, svgH);
       });
@@ -259,46 +439,60 @@ function render(data, svgW, svgH) {
   for (const node of data.nodes) {
     const [cx, cy] = pixPos[node.id] || [0, 0];
     const r = nodeRadius(node, maxEpisodes);
-    const g = svgEl("g", { class: "node-group", transform: `translate(${cx},${cy})` });
+    const g = svgEl("g", {
+      class: "node-group",
+      transform: `translate(${cx},${cy})`,
+      "data-node-id": String(node.id),
+    });
 
-    // Main circle/shape
+    // Selection halo: a translucent ring rendered behind the node so the
+    // node keeps its normal white stroke when selected (no jarring restyle).
+    if (node.id === selectedNodeId) {
+      const haloR = r + 8;
+      const halo = svgEl("circle", {
+        r: haloR,
+        fill: "none",
+        stroke: "rgba(80, 200, 255, 0.95)",
+        "stroke-width": "3",
+        "pointer-events": "none",
+      });
+      g.appendChild(halo);
+    }
+
+    // Main circle/shape. Stroke is inlined per-theme so the (transparent)
+    // hit-area circles below stay invisible regardless of the canvas
+    // colour; only the visible shape gets the dark outline.
+    const nodeStroke = theme === "light" ? "#1a1a1a" : "white";
+    const _GLYPH = { star: "★", x: "✕", diamond: "▶", square: "■" };
+    const _isSpecial = node.symbol in _GLYPH;
     let shape;
-    if (node.symbol === "diamond") {
-      const s = r * 1.3;
-      shape = svgEl("polygon", {
-        points: `0,${-s} ${s},0 0,${s} ${-s},0`,
-        fill: node.color,
-        stroke: "white",
-        "stroke-width": "2",
-        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
-      });
-    } else if (node.symbol === "star") {
-      shape = svgEl("text", {
-        "text-anchor": "middle",
-        "dominant-baseline": "central",
-        "font-size": r * 2.2,
-        "user-select": "none",
-        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
-      });
-      shape.textContent = "★";
-      shape.style.fill = node.color;
-    } else if (node.symbol === "x") {
-      shape = svgEl("text", {
-        "text-anchor": "middle",
-        "dominant-baseline": "central",
-        "font-size": r * 2.4,
-        "user-select": "none",
-        "font-weight": "bold",
-        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
-      });
-      shape.textContent = "✕";
-      shape.style.fill = node.color;
-    } else {
+    let _innerGlyph = null;
+    if (_isSpecial) {
+      // All special nodes → circle + inner glyph so radius is governed by
+      // nodeSizeSlope like any cluster node.
       shape = svgEl("circle", {
         r: r,
         fill: node.color,
-        stroke: node.id === selectedNodeId ? "#1a1a1a" : "white",
-        "stroke-width": node.id === selectedNodeId ? "3" : "2",
+        stroke: nodeStroke,
+        "stroke-width": "2",
+        class: "node-circle" + (node.id === selectedNodeId ? " selected" : ""),
+      });
+      _innerGlyph = svgEl("text", {
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+        "font-size": String(Math.max(10, Math.round(r * 1.1))),
+        "user-select": "none",
+        "pointer-events": "none",
+        fill: "#fff",
+      });
+      _innerGlyph.textContent = _GLYPH[node.symbol];
+    } else {
+      // Regular cluster node — plain circle.
+      shape = svgEl("circle", {
+        r: r,
+        fill: node.color,
+        stroke: nodeStroke,
+        "stroke-width": "2",
         class: "node-circle",
       });
     }
@@ -320,15 +514,29 @@ function render(data, svgW, svgH) {
     const hit = svgEl("circle", { r: Math.max(r + 8, 18), fill: "transparent", class: "node-circle", cursor: "pointer" });
 
     g.appendChild(shape);
+    if (_innerGlyph) g.appendChild(_innerGlyph);
     g.appendChild(hit);
 
-    // Label
+    // Label. Terminal nodes (★ SUCCESS, ✕ FAILURE, ■ END) get the
+    // reach-probability appended — `P(reach this terminal)` is one of the
+    // most useful numbers in the whole figure, and the symbol size alone
+    // doesn't make small differences readable.
     const label = svgEl("text", {
       class: "node-label",
       x: 0,
       y: r + 13,
     });
-    label.textContent = node.label;
+    let labelText = node.label;
+    const isTerminal = node.symbol === "star" || node.symbol === "x" || node.symbol === "square";
+    if (isTerminal && totalEpisodes > 0) {
+      const frac = node.num_episodes / totalEpisodes;
+      // Sub-1% terminals get an extra significant digit so they don't all
+      // collapse to "0%". Anything >= 1% rounds to integer for legibility.
+      const pct = frac >= 0.01 ? Math.round(frac * 100) + "%"
+                                : (frac * 100).toFixed(1) + "%";
+      labelText = `${node.label} ${pct}`;
+    }
+    label.textContent = labelText;
     g.appendChild(label);
 
     // Click + tooltip
@@ -356,14 +564,38 @@ function render(data, svgW, svgH) {
     });
     g.addEventListener("mousemove", positionTooltip);
     g.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
-    g.addEventListener("click", () => {
+
+    // ── Drag: mousedown captures the node; mousemove updates pos; mouseup
+    // either fires the click (if no movement) or just ends the drag.
+    g.style.cursor = "grab";
+    g.addEventListener("mousedown", (evt) => {
+      evt.preventDefault();
+      const pt = svgPoint(evt);
+      dragging = {
+        nodeId: node.id,
+        startMouse: { x: pt.x, y: pt.y },
+        startNode: [...pixPosMut[node.id]],
+        moved: false,
+      };
+      g.style.cursor = "grabbing";
+      // Hide tooltip while dragging
+      document.getElementById("tooltip").style.display = "none";
+    });
+    g.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      // The mouseup handler clears `dragging` and sets dragMovedRecently
+      // if the drag actually moved. If so, suppress this click.
+      if (dragMovedRecently) {
+        dragMovedRecently = false;
+        return;
+      }
       if (selectedNodeId === node.id) {
         selectedNodeId = null;
-        sendValue(-1);
+        sendValue([-1, ++clickSeq]);
       } else {
         selectedNodeId = node.id;
         selectedEdge = null; // clear edge selection
-        sendValue(node.id);
+        sendValue([node.id, ++clickSeq]);
       }
       render(graphData, svgW, svgH);
     });
@@ -371,11 +603,39 @@ function render(data, svgW, svgH) {
     nodeGroup.appendChild(g);
   }
   svg.appendChild(nodeGroup);
+
+  // Background click → deselect everything (always fire so Python can also
+  // clear path selection, which lives only in Streamlit session state)
+  svg.onclick = function(evt) {
+    const hadSelection = selectedNodeId !== null || selectedEdge !== null;
+    selectedNodeId = null;
+    selectedEdge = null;
+    sendValue([-1, ++clickSeq]);
+    if (hadSelection) render(graphData, svgW, svgH);
+  };
 }
 
 function nodeRadius(node, maxEpisodes) {
-  if (!node || node.is_special) return 12;
-  return Math.round(10 + 16 * Math.sqrt(node.num_episodes / maxEpisodes));
+  if (!node) return 12;
+  // START stays a fixed visual anchor — it represents the entry point,
+  // not a "visited" cluster in any meaningful frequency sense. Every
+  // other node (clusters, ★ SUCCESS, ✕ FAILURE, ■ END) scales linearly
+  // with its episode count so a dominant failure mode is bigger than a
+  // rare one — especially useful in the trajectory tree, where each
+  // terminal leaf has its own visit count.
+  if (node.symbol === "diamond") return 12;
+  const frac = Math.max(0, Math.min(1, node.num_episodes / Math.max(1, maxEpisodes)));
+  return Math.round(6 + nodeSizeSlope * frac);
+}
+
+// Visual extent of a node from its centre. Circle = r; the diamond
+// polygon extends ~1.3 r (corners at ±r·1.3); text glyphs (★, ✕) at
+// font-size 2.0 r render with a glyph height ≈ 1.17 × font-size = 2.34 r,
+// so their effective radius is ~1.17 r. Edges land at this distance plus
+// a tiny gap so the arrow tip just touches the visible node.
+function visualRadius(node, maxEpisodes) {
+  // All nodes are circles; edge endpoints land at the circle rim.
+  return nodeRadius(node, maxEpisodes);
 }
 
 function svgEl(tag, attrs = {}) {
@@ -392,6 +652,138 @@ function positionTooltip(e) {
   tt.style.top = Math.max(0, y) + "px";
 }
 
+// ── Drag plumbing ─────────────────────────────────────────────────────────
+let dragMovedRecently = false;
+function svgPoint(evt) {
+  const svg = document.getElementById("graph");
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX;
+  pt.y = evt.clientY;
+  const ctm = svg.getScreenCTM();
+  return ctm ? pt.matrixTransform(ctm.inverse()) : { x: evt.clientX, y: evt.clientY };
+}
+
+window.addEventListener("mousemove", (evt) => {
+  if (!dragging) return;
+  const pt = svgPoint(evt);
+  const dx = pt.x - dragging.startMouse.x;
+  const dy = pt.y - dragging.startMouse.y;
+  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragging.moved = true;
+  const nx = dragging.startNode[0] + dx;
+  const ny = dragging.startNode[1] + dy;
+  pixPosMut[dragging.nodeId] = [nx, ny];
+  const svg = document.getElementById("graph");
+  const ng = svg.querySelector(`.node-group[data-node-id="${dragging.nodeId}"]`);
+  if (ng) ng.setAttribute("transform", `translate(${nx},${ny})`);
+  redrawEdgesFor(dragging.nodeId);
+});
+
+window.addEventListener("mouseup", (evt) => {
+  if (!dragging) return;
+  if (dragging.moved) {
+    userOverrides[dragging.nodeId] = [...pixPosMut[dragging.nodeId]];
+    dragMovedRecently = true;
+    document.getElementById("reset-btn").style.display = "inline-block";
+    // Drag moved a node → the SVG snapshot Python holds is now stale.
+    // Republish so st.download_button picks up the new layout.
+    scheduleSvgPublish();
+  }
+  const svg = document.getElementById("graph");
+  const ng = svg.querySelector(`.node-group[data-node-id="${dragging.nodeId}"]`);
+  if (ng) ng.style.cursor = "grab";
+  dragging = null;
+});
+
+document.getElementById("reset-btn").addEventListener("click", (evt) => {
+  evt.stopPropagation();
+  userOverrides = {};
+  document.getElementById("reset-btn").style.display = "none";
+  if (graphData && lastRenderArgs) {
+    render(graphData, lastRenderArgs.svgW, lastRenderArgs.svgH);
+    scheduleSvgPublish();
+  }
+});
+
+// ── SVG export ────────────────────────────────────────────────────────────
+// Build a self-contained SVG of the current view (separate from the live
+// view: hit-area paths/circles and the cyan selection halo are stripped,
+// the viewBox is fitted to the actual content bbox + 12 px padding so
+// labels survive, and a minimal CSS block is inlined so the file renders
+// identically outside this iframe's stylesheet).
+//
+// We auto-publish the result to Python after every render via sendValue,
+// deduped against the last-sent content so we don't loop. Python then
+// serves it through st.download_button — that anchor lives in the parent
+// window where the user's click is a real user gesture, so Chrome
+// actually downloads (unlike anchor.click() inside this iframe).
+let lastSentSvg = "";
+let svgCaptureScheduled = false;
+
+function buildExportXml() {
+  const live = document.getElementById("graph");
+  if (!live) return "";
+
+  let bbox;
+  try {
+    bbox = live.getBBox();
+  } catch (e) {
+    bbox = { x: 0, y: 0, width: live.clientWidth || 800, height: live.clientHeight || 600 };
+  }
+  if (!bbox.width || !bbox.height) return "";
+  const PAD = 12;
+  const vbX = Math.floor(bbox.x - PAD);
+  const vbY = Math.floor(bbox.y - PAD);
+  const vbW = Math.ceil(bbox.width + 2 * PAD);
+  const vbH = Math.ceil(bbox.height + 2 * PAD);
+
+  const clone = live.cloneNode(true);
+  clone.querySelectorAll('path[stroke="transparent"]').forEach(n => n.remove());
+  clone.querySelectorAll('circle[fill="transparent"]').forEach(n => n.remove());
+  clone.querySelectorAll('circle[stroke="rgba(80, 200, 255, 0.95)"]').forEach(n => n.remove());
+
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  clone.setAttribute("viewBox", `${vbX} ${vbY} ${vbW} ${vbH}`);
+  clone.setAttribute("width", String(vbW));
+  clone.setAttribute("height", String(vbH));
+
+  const labelFill = theme === "light" ? "#1a1a1a" : "#cccccc";
+  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = `
+    .node-label {
+      font-family: -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+      font-size: 10px;
+      font-weight: 400;
+      text-anchor: middle;
+      dominant-baseline: auto;
+      fill: ${labelFill};
+    }
+  `;
+  clone.insertBefore(style, clone.firstChild);
+  clone.querySelectorAll(".node-label").forEach(t => {
+    t.setAttribute("fill", labelFill);
+  });
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n'
+       + new XMLSerializer().serializeToString(clone);
+}
+
+function scheduleSvgPublish() {
+  // Coalesce multiple render() calls in the same frame into one capture.
+  // rAF runs after layout so getBBox sees the just-rendered tree.
+  if (svgCaptureScheduled) return;
+  svgCaptureScheduled = true;
+  requestAnimationFrame(() => {
+    svgCaptureScheduled = false;
+    const xml = buildExportXml();
+    if (!xml || xml === lastSentSvg) return;
+    lastSentSvg = xml;
+    // Dict shape — Python's receiver distinguishes this from the
+    // list-shaped click protocol.
+    sendValue({ svg_export: xml });
+  });
+}
+
 // ── Message handling ───────────────────────────────────────────────────────
 window.addEventListener("message", (event) => {
   const msg = event.data;
@@ -405,12 +797,22 @@ window.addEventListener("message", (event) => {
     selectedEdge = args.selected_edge ? {src: args.selected_edge[0], tgt: args.selected_edge[1]} : null;
     highlightedPath = args.highlighted_path || null;  // list of node IDs
 
+    // New viz options (with safe defaults so older callers still work).
+    theme = args.theme === "light" ? "light" : "dark";
+    edgeStyle = args.edge_style === "arrows" ? "arrows" : "lines";
+    edgeWidthSlope = typeof args.edge_width_slope === "number" ? args.edge_width_slope : 5.0;
+    nodeSizeSlope = typeof args.node_size_slope === "number" ? args.node_size_slope : 24.0;
+    document.body.classList.toggle("theme-light", theme === "light");
+
     document.body.style.height = height + "px";
     document.getElementById("graph").style.height = height + "px";
     setHeight(height);
 
     if (graphJson) {
       render(JSON.parse(graphJson), document.getElementById("graph").clientWidth || 700, height);
+      // Publish a fresh SVG snapshot to Python (deduped) so its
+      // st.download_button always has the latest exportable content.
+      scheduleSvgPublish();
     }
   }
 });

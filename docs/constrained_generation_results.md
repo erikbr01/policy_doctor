@@ -672,6 +672,18 @@ python scripts/aggregate_sweep_results.py \
   a clear outlier at that K
 - `random` should be unaffected by K (it ignores the graph), serving as a flat baseline
 
+### K-sweep run log
+
+Run dir pattern: `third_party/cupid/data/pipeline_runs/mimicgen_square_apr26_seed1_d60_budget300_nut_constrained_tight_k{K}/`
+Script: `scripts/run_k_sweep_tight.sh` (PID 14213)
+Started: 2026-05-14 22:29 UTC
+
+- **2026-05-14 22:29**: K-sweep launched. Step 1 (clustering) completed in ~1 min — UMAP (12978×100 → 100d) fit once, K-means run for K=5,10,15,20,25. K=5 Phase A generation started: 3 arms (random, behavior_graph, diversity) generating 300 demos each via `mimicgen_torch2` env.
+- **Bugs fixed during launch** (2026-05-14):
+  - `clustering_results.py`: `Path | None` → `Optional[Path]` (Python 3.9 compat)
+  - `select_mimicgen_seed.py`: `OmegaConf.select` on plain dict `{}` when `failure_analysis` key absent → use `OmegaConf.create({})` as fallback
+  - `run_k_sweep_tight.sh`: `+experiment=` → `experiment=`; `clustering_n_clusters_sweep` / `clustering_run_dir` need `+` prefix (not in struct); `evaluation.eval_output_dir` needs `~` delete + `+` re-add; `run_name=` → `run_dir=` for per-K routing
+
 ---
 
 ## Notes / Incidents

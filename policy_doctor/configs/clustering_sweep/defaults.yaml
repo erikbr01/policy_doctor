@@ -1,0 +1,40 @@
+# @package clustering_sweep
+# Shared defaults for the demo clustering sweep.
+# Override per-task in clustering_sweep/<task>.yaml.
+
+
+# Sweep grid
+k_values: [5, 10, 15, 20]
+w_values: [3, 5, 8]
+s_values: [1, 2]
+aggregation: mean
+
+# Orderings to generate. Each produces a separate subtree under run_clustering/clustering/.
+#   umap_first:  normalize → UMAP on per-timestep embeddings (trunk) → window → K-means
+#   agg_first:   window → normalize → UMAP → K-means (UMAP per W×S combo)
+orderings: [umap_first, agg_first]
+
+# UMAP
+umap_n_components: 50
+umap_n_jobs: 4
+umap_init: spectral
+
+# Representations to sweep. Each entry:
+#   id:             slug prefix used in output directory names
+#   representation: registered SliceRepresentation name
+#   layer:          (policy_emb only) which embedding file to load
+reps:
+  - id: infembed
+    representation: infembed
+  - id: policy_emb_bottleneck_plan_t0
+    representation: policy_emb
+    layer: bottleneck_plan_t0
+  - id: trak
+    representation: trak
+  - id: state_full_history
+    representation: state
+    obs_strategy: full_history
+  - id: state_action_full_history_full_plan
+    representation: state_action
+    obs_strategy: full_history
+    action_strategy: full_plan

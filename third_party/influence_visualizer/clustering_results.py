@@ -142,8 +142,9 @@ def save_clustering_result(
     n_clusters: int,
     n_samples: int,
     embeddings_reduced: Optional[np.ndarray] = None,
-    output_dir: Path | None = None,
-    task_config: str | None = None,
+    output_dir: Optional[Path] = None,
+    task_config: Optional[str] = None,
+    extra_manifest_fields: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Save a clustering result to disk.
 
@@ -194,6 +195,8 @@ def save_clustering_result(
         "created": datetime.now().isoformat(),
         "task_config": task_config,
     }
+    if extra_manifest_fields:
+        manifest.update(extra_manifest_fields)
 
     with open(result_dir / "manifest.yaml", "w") as f:
         yaml.safe_dump(manifest, f, default_flow_style=False, sort_keys=False)

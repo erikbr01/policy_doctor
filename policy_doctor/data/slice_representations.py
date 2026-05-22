@@ -413,12 +413,43 @@ class TRAKRepresentation(SliceRepresentation):
         from sklearn.decomposition import TruncatedSVD
         import yaml as _yaml
 
-        full = self._load_full(eval_dir)
-        print(f"  TruncatedSVD {full.shape[1]}D → {n_svd_components}D …", flush=True)
-        svd = TruncatedSVD(n_components=n_svd_components, random_state=svd_seed)
+        full = self._load_full(eval_dir).astype(np.float64, copy=False)
+
+        # Percentile-based winsorize + min-max scale.
+        # The raw TRAK score matrix is roughly zero-symmetric with 99%
+        # of values in ±0.01 but a handful of catastrophic outliers
+        # (max ~1e+37) that destroy any matrix factorization. Clip
+        # values outside the 1st / 99th percentile band, then scale to
+        # [-1, 1] using those percentiles as the new extremes.
+        p1, p99 = np.percentile(full, [1.0, 99.0])
+        rng = max(abs(p1), abs(p99))  # symmetric scale
+        if rng > 0:
+            n_clipped = int(np.sum(np.abs(full) > rng))
+            print(
+                f"  Winsorize: clip to [{-rng:.3g}, {rng:.3g}] (1st / 99th "
+                f"pct bounds {p1:.3g}, {p99:.3g}); {n_clipped} values "
+                f"({n_clipped / full.size * 100:.4f}%) outside.",
+                flush=True,
+            )
+            np.clip(full, -rng, rng, out=full)
+            full /= rng  # now in [-1, 1]
+
+        # PCA = mean-centered SVD on the cleaned + scaled matrix.
+        n_max = max(1, min(full.shape) - 1)
+        n_components = int(min(n_svd_components, n_max))
+        print(
+            f"  PCA {full.shape[1]}D → {n_components}D "
+            f"(requested {n_svd_components}, capped at {n_max}) …", flush=True,
+        )
+        full -= full.mean(axis=0, keepdims=True)
+        svd = TruncatedSVD(
+            n_components=n_components,
+            algorithm="arpack",
+            random_state=svd_seed,
+        )
         features = svd.fit_transform(full).astype(np.float32)
-        explained = svd.explained_variance_ratio_.sum()
-        print(f"  SVD explained variance: {explained:.3f}", flush=True)
+        explained = float(svd.explained_variance_ratio_.sum())
+        print(f"  PCA explained variance: {explained:.3f}", flush=True)
 
         meta_path = eval_dir / "episodes" / "metadata.yaml"
         with open(meta_path) as f:

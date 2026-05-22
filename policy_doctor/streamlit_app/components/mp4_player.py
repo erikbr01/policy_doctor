@@ -124,6 +124,7 @@ def mp4_player(
     slice2_end: int | None = None,
     bar1_label: str = "",
     bar2_label: str = "",
+    segments: Optional[List] = None,  # [(start_frame, end_frame, label, color), ...]
 ) -> None:
     if label:
         st.caption(label)
@@ -257,9 +258,9 @@ def mp4_player(
         lbl1 = f" {bar1_label}" if bar1_label else ""
         timeline = f"""
         <div id="tl_{uid}" style="margin-top:6px;position:relative;height:10px;
-             background:#333;border-radius:5px;cursor:pointer;">
+             background:#333;border-radius:5px;overflow:hidden;cursor:pointer;">
           <div id="bar1_{uid}" style="position:absolute;left:0%;width:0%;height:100%;
-                      background:#f5a623;border-radius:5px;opacity:0.85;"></div>
+                      background:#f5a623;opacity:0.85;"></div>
           {bar2_div}
           <div id="ph_{uid}" style="position:absolute;top:-3px;left:0%;width:3px;height:16px;
                background:#fff;border-radius:2px;transition:left 0.1s linear;"></div>
@@ -294,17 +295,166 @@ def mp4_player(
     v.currentTime=pct*dur;
   }});"""
         extra_h += 38
+
+        # ── Segment glow overlay (border + badge on the video wrapper) ────────
+        seg_overlay_html = (
+            f'<div id="segb_{uid}" style="position:absolute;top:0;left:0;width:100%;height:100%;'
+            f'pointer-events:none;border-radius:4px;border:3px solid transparent;'
+            f'box-sizing:border-box;transition:border-color 0.1s,box-shadow 0.1s;"></div>'
+            f'<div id="segbadge_{uid}" style="position:absolute;top:8px;right:8px;'
+            f'font-size:10px;font-weight:700;color:#fff;background:#d62728;'
+            f'padding:2px 8px;border-radius:10px;pointer-events:none;'
+            f'transition:background 0.1s;">behavior inactive</div>'
+        )
+        highlight_js = f"""
+  var segb=document.getElementById('segb_{uid}');
+  var segbadge=document.getElementById('segbadge_{uid}');
+  function _hl(){{
+    var ins=v.currentTime>={slice_start}/{fps}&&v.currentTime<={slice_end}/{fps};
+    if(segb){{segb.style.borderColor=ins?'#2ca02c':'#d62728';
+              segb.style.boxShadow=ins?'0 0 0 3px rgba(44,160,44,0.35)':'0 0 0 3px rgba(214,39,40,0.35)';}}
+    if(segbadge){{segbadge.style.background=ins?'#2ca02c':'#d62728';
+                  segbadge.textContent=ins?'behavior active':'behavior inactive';}}
+  }}
+  _hl();
+  v.addEventListener('loadedmetadata',_hl);
+  v.addEventListener('timeupdate',_hl);"""
+
+        # ── Loop-segment button ───────────────────────────────────────────────
+        loop_btn_html = (
+            f'<div style="margin-top:4px;">'
+            f'<button id="lbtn_{uid}" title="Loop over the annotated segment only" '
+            f'style="font-size:10px;padding:2px 8px;border-radius:4px;'
+            f'border:1px solid #555;background:#222;color:#999;cursor:pointer;">'
+            f'⟳ Loop segment</button></div>'
+        )
+        loop_js = f"""
+  var _lp_{uid}=true;
+  var lbtn=document.getElementById('lbtn_{uid}');
+  if(lbtn){{
+    lbtn.style.color='#2ca02c';lbtn.style.borderColor='#2ca02c';
+    lbtn.addEventListener('click',function(){{
+      _lp_{uid}=!_lp_{uid};
+      lbtn.style.color=_lp_{uid}?'#2ca02c':'#999';
+      lbtn.style.borderColor=_lp_{uid}?'#2ca02c':'#555';
+      if(_lp_{uid}){{v.currentTime={slice_start}/{fps};v.play();}}
+    }});
+  }}
+  v.addEventListener('timeupdate',function(){{
+    if(_lp_{uid}&&v.currentTime>={slice_end}/{fps}){{v.currentTime={slice_start}/{fps};}}
+  }});"""
+        extra_h += 28
+    elif segments:
+        # ── Multi-segment mode: colored bars + dynamic behavior-name badge ─────
+        total_s_fb = f"{total_s:.3f}" if total_s else "0"
+        bars_html = ""
+        segs_json_data = []
+        for seg_s, seg_e, seg_lbl, seg_col in segments:
+            bars_html += (
+                f'<div id="msbar_{uid}_{seg_s}" '
+                f'style="position:absolute;left:0%;width:0%;height:100%;'
+                f'background:{seg_col};border-radius:5px;opacity:0.85;"></div>'
+            )
+            segs_json_data.append({"s": seg_s, "e": seg_e, "l": seg_lbl, "c": seg_col})
+        segs_json = json.dumps(segs_json_data)
+
+        timeline = f"""
+        <div id="tl_{uid}" style="margin-top:6px;position:relative;height:10px;
+             background:#333;border-radius:5px;cursor:pointer;">
+          {bars_html}
+          <div id="ph_{uid}" style="position:absolute;top:-3px;left:0%;width:3px;height:16px;
+               background:#fff;border-radius:2px;transition:left 0.1s linear;"></div>
+        </div>
+        <div style="font-size:10px;color:#888;margin-top:3px;">{"  |  ".join(
+            f'<span style="color:{c};">■</span> {l}'
+            for _, _, l, c in segments
+        )}</div>"""
+
+        seg_overlay_html = (
+            f'<div id="segb_{uid}" style="position:absolute;top:0;left:0;width:100%;height:100%;'
+            f'pointer-events:none;border-radius:4px;border:3px solid transparent;'
+            f'box-sizing:border-box;transition:border-color 0.1s,box-shadow 0.1s;"></div>'
+            f'<div id="segbadge_{uid}" style="position:absolute;top:8px;right:8px;'
+            f'font-size:10px;font-weight:700;color:#fff;'
+            f'padding:2px 8px;border-radius:10px;pointer-events:none;display:none;'
+            f'transition:background 0.1s;"></div>'
+        )
+
+        playhead_js = f"""
+  var ph=document.getElementById('ph_{uid}');
+  var tl=document.getElementById('tl_{uid}');
+  var _msegs={segs_json};
+  function updateMsBars(){{
+    var dur=v.duration||{total_s_fb};
+    if(!dur||!isFinite(dur)) return;
+    for(var i=0;i<_msegs.length;i++){{
+      var b=document.getElementById('msbar_{uid}_'+_msegs[i].s);
+      if(b){{
+        b.style.left=Math.max(0,_msegs[i].s/{fps}/dur*100).toFixed(2)+'%';
+        b.style.width=Math.max(0.5,(_msegs[i].e-_msegs[i].s)/{fps}/dur*100).toFixed(2)+'%';
+      }}
+    }}
+  }}
+  v.addEventListener('loadedmetadata',updateMsBars);
+  if(v.readyState>=1) updateMsBars();
+  v.addEventListener('timeupdate',function(){{
+    var dur=v.duration||{total_s_fb};
+    var pct=v.currentTime/dur*100;
+    if(ph) ph.style.left=Math.min(100,pct).toFixed(1)+'%';
+  }});
+  tl.addEventListener('click',function(e){{
+    var dur=v.duration||{total_s_fb};
+    var rect=tl.getBoundingClientRect();
+    v.currentTime=(e.clientX-rect.left)/rect.width*dur;
+  }});"""
+
+        highlight_js = f"""
+  var segb=document.getElementById('segb_{uid}');
+  var segbadge=document.getElementById('segbadge_{uid}');
+  var _msegs2={segs_json};
+  function _mhl(){{
+    var ct=v.currentTime;
+    var found=null;
+    for(var i=0;i<_msegs2.length;i++){{
+      if(ct>=_msegs2[i].s/{fps}&&ct<=_msegs2[i].e/{fps}){{found=_msegs2[i];break;}}
+    }}
+    if(found){{
+      if(segb){{segb.style.borderColor=found.c;
+                segb.style.boxShadow='0 0 0 3px '+found.c+'55';}}
+      if(segbadge){{segbadge.style.background=found.c;
+                    segbadge.textContent=found.l;
+                    segbadge.style.display='';}}
+    }}else{{
+      if(segb){{segb.style.borderColor='transparent';segb.style.boxShadow='none';}}
+      if(segbadge) segbadge.style.display='none';
+    }}
+  }}
+  _mhl();
+  v.addEventListener('loadedmetadata',_mhl);
+  v.addEventListener('timeupdate',_mhl);"""
+
+        loop_btn_html = ""
+        loop_js = ""
+        extra_h += 38
     else:
         timeline = ""
         playhead_js = ""
+        seg_overlay_html = ""
+        highlight_js = ""
+        loop_btn_html = ""
+        loop_js = ""
 
     html = f"""
+<div style="position:relative;width:100%;">
 <video id="{uid}" controls preload="metadata"
   style="width:100%;max-height:{vid_h}px;border-radius:4px;background:#000;display:block;">
   <source src="data:video/mp4;base64,{b64}" type="video/mp4">
 </video>
+{seg_overlay_html}
+</div>
 {cluster_tl_html}
 {timeline}
+{loop_btn_html}
 <script>
 (function(){{
   var v=document.getElementById('{uid}');
@@ -313,6 +463,8 @@ def mp4_player(
   v.readyState>=1 ? seek() : v.addEventListener('loadedmetadata',seek,{{once:true}});
   {cluster_tl_js}
   {playhead_js}
+  {highlight_js}
+  {loop_js}
 }})();
 </script>"""
 

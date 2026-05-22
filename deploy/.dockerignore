@@ -1,0 +1,25 @@
+# Trim the docker build context — these aren't needed at runtime.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.git
+**/.gitignore
+**/.DS_Store
+**/.idea
+**/.vscode
+**/node_modules
+
+# Large untracked artifacts that shouldn't go into the image.
+**/clustering_models.pkl
+**/embedding_models.pkl
+**/wandb
+**/checkpoints
+**/*.ckpt
+**/*.zarr
+**/eval_save_episodes
+**/train
+
+# Local-only worktree state.
+**/.claude

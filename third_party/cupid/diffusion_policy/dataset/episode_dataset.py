@@ -189,16 +189,29 @@ class BatchEpisodeDataset(EpisodeDataset):
         self._collate_non_batch = collate_non_batch
 
     def __iter__(self) -> Generator[Union[Dict[str, Any], List[Dict[str, Any]]], None, None]:
-        """Return batched sample."""
+        """Return batched sample.
+
+        Strips keys whose value is ``None`` before collation — episode pkls
+        carry an ``img`` column that is None whenever ``n_test_vis=0`` in the
+        runner, and ``default_collate`` can't batch a list of None.
+        """
+        def _drop_none(s):
+            if isinstance(s, dict):
+                return {k: v for k, v in s.items() if v is not None}
+            if isinstance(s, list):
+                return [_drop_none(x) for x in s]
+            return s
+
         if self._batch_size == 1 and not self._collate_non_batch:
             for sample in super().__iter__():
                 assert isinstance(sample, dict)
+                sample = _drop_none(sample)
                 yield dict_apply(sample, torch.from_numpy)
-                
+
         else:
             batch = []
             for sample in super().__iter__():
-                batch.append(sample)
+                batch.append(_drop_none(sample))
 
                 if len(batch) == self._batch_size:
                     yield default_collate(batch)

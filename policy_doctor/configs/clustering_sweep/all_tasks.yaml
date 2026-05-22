@@ -1,0 +1,62 @@
+# @package clustering_sweep
+defaults:
+  - defaults
+  - _self_
+
+tasks:
+  - task: transport_mh_jan28
+    eval_dir: third_party/cupid/data/outputs/eval_save_episodes/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0/latest
+    run_dir: data/demo_sweep/transport_mh_jan28
+  - task: square_mh_feb5
+    eval_dir: third_party/cupid/data/outputs/eval_save_episodes/feb5/feb5_train_diffusion_unet_lowdim_square_mh_0/latest
+    run_dir: data/demo_sweep/square_mh_feb5
+  - task: lift_mh_jan26
+    eval_dir: third_party/cupid/data/outputs/eval_save_episodes/jan26/jan26_train_diffusion_unet_lowdim_lift_mh_0/latest
+    run_dir: data/demo_sweep/lift_mh_jan26
+  # pi0.5-LIBERO: policy_emb + state/state_action (no trak/infembed)
+  # agg_first only — per-timestep UMAP on (~140k, 1024) wedges in optimization
+  - task: pi05_libero_spatial
+    eval_dir: data/pi05_libero/libero_spatial
+    run_dir: data/demo_sweep/pi05_libero_spatial
+    orderings: [agg_first]
+    reps:
+      - id: policy_emb_bottleneck_plan_t0
+        representation: policy_emb
+        layer: pi05
+      - id: state_full_history
+        representation: state
+        obs_strategy: full_history
+      - id: state_action_full_history_full_plan
+        representation: state_action
+        obs_strategy: full_history
+        action_strategy: full_plan
+  - task: pi05_libero_object
+    eval_dir: data/pi05_libero/libero_object
+    run_dir: data/demo_sweep/pi05_libero_object
+    orderings: [agg_first]
+    reps:
+      - id: policy_emb_bottleneck_plan_t0
+        representation: policy_emb
+        layer: pi05
+      - id: state_full_history
+        representation: state
+        obs_strategy: full_history
+      - id: state_action_full_history_full_plan
+        representation: state_action
+        obs_strategy: full_history
+        action_strategy: full_plan
+  - task: pi05_libero_goal
+    eval_dir: data/pi05_libero/libero_goal
+    run_dir: data/demo_sweep/pi05_libero_goal
+    orderings: [agg_first]
+    reps:
+      - id: policy_emb_bottleneck_plan_t0
+        representation: policy_emb
+        layer: pi05
+      - id: state_full_history
+        representation: state
+        obs_strategy: full_history
+      - id: state_action_full_history_full_plan
+        representation: state_action
+        obs_strategy: full_history
+        action_strategy: full_plan

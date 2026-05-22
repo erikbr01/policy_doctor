@@ -1,0 +1,402 @@
+From f4f87b1e5d987d6e75597556c4f4c2d893a5a8ac Mon Sep 17 00:00:00 2001
+From: Erik Bauer <erbauer@stanford.edu>
+Date: Tue, 19 May 2026 18:40:58 +0000
+Subject: [PATCH] feat(policy-doctor): add embedding extraction and pi05 libero
+ eval script
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- pi0.py: add sample_actions_with_embeddings() — runs normal denoising
+  loop then one extra forward pass at t=0 to capture suffix_out before
+  action_out_proj; returns (actions, mean-pooled embeddings [b, emb_dim]).
+  Used by policy_doctor to build per-timestep policy state embeddings.
+
+- examples/libero/eval_save_with_embeddings.py: standalone eval script
+  (run via uv) that loads pi05_libero directly, runs rollouts, saves
+  episodes/metadata.yaml, media/*.mp4, and policy_embeddings/pi05.npz.
+
+- third_party/libero: fix torch.load to pass weights_only=False for
+  compatibility with PyTorch >= 2.6.
+---
+ examples/libero/eval_save_with_embeddings.py | 290 +++++++++++++++++++
+ src/openpi/models/pi0.py                     |  69 +++++
+ 2 files changed, 359 insertions(+)
+ create mode 100644 examples/libero/eval_save_with_embeddings.py
+
+diff --git a/examples/libero/eval_save_with_embeddings.py b/examples/libero/eval_save_with_embeddings.py
+new file mode 100644
+index 0000000..7523175
+--- /dev/null
++++ b/examples/libero/eval_save_with_embeddings.py
+@@ -0,0 +1,290 @@
++"""Evaluate pi0.5 on LIBERO and save episodes + policy embeddings for behavior graph analysis.
++
++Runs the pi05_libero policy directly (no WebSocket server) and captures last-layer action embeddings
++at each policy call.  Embeddings are replicated across the action chunk so the output is one vector
++per environment timestep, matching the format expected by policy_doctor's clustering pipeline.
++
++Output layout
++-------------
++<output_dir>/
++  episodes/
++    metadata.yaml              # episode_lengths, episode_successes
++    ep0000_succ.pkl            # per-episode list of {t, action, success}
++    ep0001_fail.pkl
++    ...
++  media/
++    ep0000_succ.mp4            # video, compatible with behavior-graph tab playback
++    ...
++  policy_embeddings/
++    pi05.npz                   # rollout_embeddings: (N_total_env_steps, hidden_dim) float32
++
++Usage
++-----
++cd third_party/openpi
++uv run examples/libero/eval_save_with_embeddings.py \\
++    --task-suite-name libero_spatial \\
++    --output-dir /path/to/output \\
++    --num-trials-per-task 20
++"""
++
++from __future__ import annotations
++
++import collections
++import dataclasses
++import logging
++import math
++import pathlib
++import pickle
++
++import imageio
++import jax
++import jax.numpy as jnp
++import numpy as np
++from libero.libero import benchmark
++from libero.libero import get_libero_path
++from libero.libero.envs import OffScreenRenderEnv
++from openpi_client import image_tools
++import tqdm
++import tyro
++import yaml
++
++from openpi.models import model as _model
++from openpi.policies import policy_config as _policy_config
++from openpi.shared import nnx_utils
++from openpi.training import config as _config
++from openpi.shared import download
++
++LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
++LIBERO_ENV_RESOLUTION = 256
++
++
++@dataclasses.dataclass
++class Args:
++    task_suite_name: str = "libero_spatial"
++    """Task suite: libero_spatial | libero_object | libero_goal | libero_10 | libero_90"""
++
++    num_trials_per_task: int = 20
++    """Rollouts per task in the suite."""
++
++    output_dir: str = "data/pi05_libero"
++    """Root output directory (will be created)."""
++
++    resize_size: int = 224
++    """Image size fed to the model."""
++
++    replan_steps: int = 5
++    """Execute this many env steps per action chunk (must be <= action_horizon=10)."""
++
++    seed: int = 7
++
++    checkpoint: str = "gs://openpi-assets/checkpoints/pi05_libero"
++    """GCS path or local dir for the pi05_libero checkpoint."""
++
++    config_name: str = "pi05_libero"
++    """openpi TrainConfig name (must match the checkpoint)."""
++
++
++_MAX_STEPS = {
++    "libero_spatial": 220,
++    "libero_object": 280,
++    "libero_goal": 300,
++    "libero_10": 520,
++    "libero_90": 400,
++}
++_NUM_STEPS_WAIT = 10
++
++
++def _quat2axisangle(quat: np.ndarray) -> np.ndarray:
++    if quat[3] > 1.0:
++        quat[3] = 1.0
++    elif quat[3] < -1.0:
++        quat[3] = -1.0
++    den = np.sqrt(1.0 - quat[3] * quat[3])
++    if math.isclose(den, 0.0):
++        return np.zeros(3)
++    return (quat[:3] * 2.0 * math.acos(quat[3])) / den
++
++
++def _get_libero_env(task, resolution: int, seed: int):
++    task_description = task.language
++    task_bddl_file = pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
++    env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}
++    env = OffScreenRenderEnv(**env_args)
++    env.seed(seed)
++    return env, task_description
++
++
++def _save_results(
++    episodes_dir: pathlib.Path,
++    emb_dir: pathlib.Path,
++    ep_lengths: list[int],
++    ep_successes: list[bool],
++    embeddings: list[np.ndarray],
++) -> None:
++    meta = {"episode_lengths": ep_lengths, "episode_successes": ep_successes}
++    with open(episodes_dir / "metadata.yaml", "w") as f:
++        yaml.safe_dump(meta, f)
++    rollout_emb = np.stack(embeddings, axis=0).astype(np.float32)
++    np.savez(emb_dir / "pi05.npz", rollout_embeddings=rollout_emb)
++
++
++def run_eval(args: Args) -> None:
++    np.random.seed(args.seed)
++    rng = jax.random.key(args.seed)
++
++    out = pathlib.Path(args.output_dir)
++    episodes_dir = out / "episodes"
++    media_dir = out / "media"
++    emb_dir = out / "policy_embeddings"
++    for d in (episodes_dir, media_dir, emb_dir):
++        d.mkdir(parents=True, exist_ok=True)
++
++    max_steps = _MAX_STEPS.get(args.task_suite_name)
++    if max_steps is None:
++        raise ValueError(f"Unknown task suite: {args.task_suite_name}")
++
++    # Load model
++    logging.info("Loading pi05 model from %s ...", args.checkpoint)
++    train_config = _config.get_config(args.config_name)
++    checkpoint_dir = download.maybe_download(args.checkpoint)
++    policy = _policy_config.create_trained_policy(train_config, checkpoint_dir)
++
++    # JIT-compile embedding-capturing method
++    model = policy._model
++    jit_sample_emb = nnx_utils.module_jit(model.sample_actions_with_embeddings)
++
++    # Task suite
++    benchmark_dict = benchmark.get_benchmark_dict()
++    task_suite = benchmark_dict[args.task_suite_name]()
++    num_tasks = task_suite.n_tasks
++    logging.info("Suite %s: %d tasks, %d trials each", args.task_suite_name, num_tasks, args.num_trials_per_task)
++
++    all_ep_lengths: list[int] = []
++    all_ep_successes: list[bool] = []
++    all_embeddings: list[np.ndarray] = []  # per-env-timestep, accumulated
++    global_ep_idx = 0
++
++    for task_id in tqdm.tqdm(range(num_tasks), desc="Tasks"):
++        task = task_suite.get_task(task_id)
++        initial_states = task_suite.get_task_init_states(task_id)
++        env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
++
++        for trial_idx in tqdm.tqdm(range(args.num_trials_per_task), desc=f"Task {task_id}", leave=False):
++            env.reset()
++            obs = env.set_init_state(initial_states[trial_idx % len(initial_states)])
++
++            t = 0
++            action_plan: collections.deque = collections.deque()
++            current_chunk_emb: np.ndarray | None = None  # embedding for the active chunk
++            replay_images: list = []
++            ep_actions: list = []
++            ep_embeddings: list[np.ndarray] = []
++            done = False
++
++            while t < max_steps + _NUM_STEPS_WAIT:
++                if t < _NUM_STEPS_WAIT:
++                    obs, reward, done, info = env.step(LIBERO_DUMMY_ACTION)
++                    t += 1
++                    continue
++
++                img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
++                wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
++                img = image_tools.convert_to_uint8(
++                    image_tools.resize_with_pad(img, args.resize_size, args.resize_size)
++                )
++                wrist_img = image_tools.convert_to_uint8(
++                    image_tools.resize_with_pad(wrist_img, args.resize_size, args.resize_size)
++                )
++                replay_images.append(img)
++
++                if not action_plan:
++                    element = {
++                        "observation/image": img,
++                        "observation/wrist_image": wrist_img,
++                        "observation/state": np.concatenate((
++                            obs["robot0_eef_pos"],
++                            _quat2axisangle(obs["robot0_eef_quat"]),
++                            obs["robot0_gripper_qpos"],
++                        )),
++                        "prompt": str(task_description),
++                    }
++                    # Apply input transforms (normalize, model transforms, etc.)
++                    inputs = policy._input_transform(element)
++                    inputs_batched = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
++                    observation_jax = _model.Observation.from_dict(inputs_batched)
++
++                    rng, sample_rng = jax.random.split(rng)
++                    actions_jax, emb_jax = jit_sample_emb(sample_rng, observation_jax)
++
++                    # Unnormalize actions via output transforms
++                    raw_outputs = {"state": inputs_batched["state"], "actions": actions_jax}
++                    raw_outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), raw_outputs)
++                    outputs = policy._output_transform(raw_outputs)
++                    action_chunk = outputs["actions"]  # [action_horizon, action_dim]
++
++                    current_chunk_emb = np.asarray(emb_jax[0], dtype=np.float32)  # [hidden_dim]
++
++                    assert len(action_chunk) >= args.replan_steps
++                    action_plan.extend(action_chunk[: args.replan_steps])
++
++                action = action_plan.popleft()
++                ep_actions.append(action)
++                ep_embeddings.append(current_chunk_emb)
++
++                obs, reward, done, info = env.step(action.tolist())
++                if done:
++                    break
++                t += 1
++
++            ep_len = len(ep_actions)
++            success = bool(done)
++            suffix = "succ" if success else "fail"
++
++            # Save episode pkl (minimal: action + success per step)
++            ep_data = [{"t": i, "action": ep_actions[i].tolist(), "success": success} for i in range(ep_len)]
++            ep_path = episodes_dir / f"ep{global_ep_idx:04d}_{suffix}.pkl"
++            with open(ep_path, "wb") as f:
++                pickle.dump(ep_data, f)
++
++            # Save video
++            if replay_images:
++                video_path = media_dir / f"ep{global_ep_idx:04d}_{suffix}.mp4"
++                imageio.mimwrite(str(video_path), [np.asarray(x) for x in replay_images], fps=10)
++
++            # Accumulate embeddings for this episode
++            all_embeddings.extend(ep_embeddings)
++            all_ep_lengths.append(ep_len)
++            all_ep_successes.append(success)
++            global_ep_idx += 1
++
++            logging.info(
++                "ep%04d %s (len=%d) — total: %d/%d",
++                global_ep_idx - 1, suffix, ep_len,
++                sum(all_ep_successes), len(all_ep_successes),
++            )
++
++        env.close()
++
++        # Save intermediate checkpoint after each task so clustering can start early.
++        _save_results(episodes_dir, emb_dir, all_ep_lengths, all_ep_successes, all_embeddings)
++        logging.info("Checkpoint saved after task %d (%d episodes total)", task_id, global_ep_idx)
++
++    # Final save (same as last checkpoint).
++    _save_results(episodes_dir, emb_dir, all_ep_lengths, all_ep_successes, all_embeddings)
++
++    total = len(all_ep_successes)
++    n_succ = sum(all_ep_successes)
++    rollout_emb = np.stack(all_embeddings, axis=0)
++    logging.info(
++        "Done. %d episodes, success rate %.1f%% (%d/%d)",
++        total, 100.0 * n_succ / total if total > 0 else 0.0, n_succ, total,
++    )
++    logging.info("Embeddings: %s -> %s", rollout_emb.shape, emb_dir / "pi05.npz")
++    logging.info("Episodes:   %s", episodes_dir)
++    logging.info("Videos:     %s", media_dir)
++
++
++if __name__ == "__main__":
++    logging.basicConfig(level=logging.INFO)
++    args = tyro.cli(Args)
++    run_eval(args)
+diff --git a/src/openpi/models/pi0.py b/src/openpi/models/pi0.py
+index ae7c459..83d5ba0 100644
+--- a/src/openpi/models/pi0.py
++++ b/src/openpi/models/pi0.py
+@@ -277,3 +277,72 @@ class Pi0(_model.BaseModel):
+ 
+         x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+         return x_0
++
++    def sample_actions_with_embeddings(
++        self,
++        rng: at.KeyArrayLike,
++        observation: _model.Observation,
++        *,
++        num_steps: int | at.Int[at.Array, ""] = 10,
++        noise: at.Float[at.Array, "b ah ad"] | None = None,
++    ) -> tuple[_model.Actions, at.Float[at.Array, "b emb"]]:
++        """Like sample_actions(), but also returns mean-pooled last-layer action embeddings.
++
++        The embeddings are captured via one extra forward pass at t=0 after the denoising loop,
++        conditioned on the final denoised actions. shape: (batch, action_expert_hidden_dim).
++        """
++        observation = _model.preprocess_observation(None, observation, train=False)
++        dt = -1.0 / num_steps
++        batch_size = observation.state.shape[0]
++        if noise is None:
++            noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
++
++        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
++        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
++        positions = jnp.cumsum(prefix_mask, axis=1) - 1
++        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
++
++        def step(carry):
++            x_t, time = carry
++            suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
++                observation, x_t, jnp.broadcast_to(time, batch_size)
++            )
++            suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
++            full_prefix_attn_mask = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_tokens.shape[1])
++            full_attn_mask = jnp.concatenate([full_prefix_attn_mask, suffix_attn_mask], axis=-1)
++            step_positions = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask, axis=-1) - 1
++            (prefix_out, suffix_out), _ = self.PaliGemma.llm(
++                [None, suffix_tokens],
++                mask=full_attn_mask,
++                positions=step_positions,
++                kv_cache=kv_cache,
++                adarms_cond=[None, adarms_cond],
++            )
++            assert prefix_out is None
++            v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
++            return x_t + dt * v_t, time + dt
++
++        def cond(carry):
++            x_t, time = carry
++            return time >= -dt / 2
++
++        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
++
++        # One extra forward pass at t=0 with the denoised actions to capture last-layer activations.
++        suffix_tokens_0, suffix_mask_0, suffix_ar_mask_0, adarms_cond_0 = self.embed_suffix(
++            observation, x_0, jnp.zeros(batch_size)
++        )
++        suffix_attn_mask_0 = make_attn_mask(suffix_mask_0, suffix_ar_mask_0)
++        full_prefix_attn_mask_0 = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_tokens_0.shape[1])
++        full_attn_mask_0 = jnp.concatenate([full_prefix_attn_mask_0, suffix_attn_mask_0], axis=-1)
++        positions_0 = jnp.sum(prefix_mask, axis=-1)[:, None] + jnp.cumsum(suffix_mask_0, axis=-1) - 1
++        (_, suffix_out_0), _ = self.PaliGemma.llm(
++            [None, suffix_tokens_0],
++            mask=full_attn_mask_0,
++            positions=positions_0,
++            kv_cache=kv_cache,
++            adarms_cond=[None, adarms_cond_0],
++        )
++        # Mean-pool action horizon tokens -> [batch, hidden_dim]
++        embeddings = jnp.mean(suffix_out_0[:, -self.action_horizon :], axis=1)
++        return x_0, embeddings
+-- 
+2.34.1
+

@@ -242,8 +242,8 @@ class BehaviorGraphPathHeuristic(TrajectorySelectionHeuristic):
             )
 
         if len(results) < n:
-            print(
-                f"  [BehaviorGraphPathHeuristic] WARNING: requested {n} seeds but only "
+            raise RuntimeError(
+                f"BehaviorGraphPathHeuristic: requested {n} seeds but only "
                 f"{len(results)} distinct rollouts matched top-{self.top_k_paths} paths."
             )
         return results
@@ -388,8 +388,8 @@ class DiversitySelectionHeuristic(TrajectorySelectionHeuristic):
                 "DiversitySelectionHeuristic: no rollout matched any path to SUCCESS."
             )
         if len(results) < n:
-            print(
-                f"  [DiversitySelectionHeuristic] WARNING: requested {n} seeds but only "
+            raise RuntimeError(
+                f"DiversitySelectionHeuristic: requested {n} seeds but only "
                 f"{len(results)} distinct rollouts available across top-{self.top_k_paths} paths."
             )
         return results
@@ -459,14 +459,13 @@ class RandomSelectionHeuristic(TrajectorySelectionHeuristic):
                 f"(success_only={self.success_only}, total episodes={len(success_map)})."
             )
 
-        actual_n = min(n, len(eligible))
-        if actual_n < n:
-            print(
-                f"  [RandomSelectionHeuristic] WARNING: requested {n} seeds but only "
-                f"{actual_n} eligible rollouts available."
+        if len(eligible) < n:
+            raise RuntimeError(
+                f"RandomSelectionHeuristic: requested {n} seeds but only "
+                f"{len(eligible)} eligible rollouts available."
             )
 
-        chosen = self.rng.choice(eligible, size=actual_n, replace=False)
+        chosen = self.rng.choice(eligible, size=n, replace=False)
         results: list[SeedSelectionResult] = []
         for rollout_idx in chosen:
             rollout_idx = int(rollout_idx)
@@ -488,22 +487,31 @@ class RandomSelectionHeuristic(TrajectorySelectionHeuristic):
 
 
 class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
-    """Select seeds from successful paths that traverse nodes with high failure probability.
+    """Select seeds from paths that traversed high-failure-risk nodes.
 
-    Scores each success path by the maximum probability of eventually reaching
-    FAILURE from any node on the path, computed by solving the Bellman equations
-    on the behavior graph (gamma=1.0, reward_failure=1, all others 0).  Paths
-    scoring highest succeeded but passed through risky territory.
+    Builds a behavior graph, solves for the probability of eventually reaching
+    FAILURE from each node (by setting ``reward_failure=1.0, reward_success=0.0``
+    in :meth:`~policy_doctor.behaviors.behavior_graph.BehaviorGraph.compute_values`),
+    then scores each SUCCESS path by the maximum per-node failure probability
+    along that path.  Seeds are drawn from the highest-risk paths first.
+
+    This is the *proposed method* for failure-targeted seed selection: seeds
+    that traversed dangerous regions teach MimicGen to generate data covering
+    those regions.
+
+    An optional ``eligible_rollout_idxs`` filter (set at construction time)
+    restricts candidates to a pre-computed subset of episodes, enabling
+    per-cluster seed allocation from :class:`AnalyzeFailureStatesStep`.
 
     Args:
-        top_k_paths:          Number of success paths to enumerate.
-        failure_weight:       ``"max"`` (default) — score a path by the highest
-                              per-node failure probability on it.  ``"sum"``
-                              accumulates risk across all nodes on the path.
-        min_path_probability: Minimum path probability to consider (default 0.0).
-        success_only:         Only consider successful rollouts (default True).
-        random_seed:          If set, shuffle eligible rollouts within each path
-                              before selecting, enabling reproducible variance trials.
+        top_k_paths:             Number of paths to score (default 30).
+        failure_weight:          ``"max"`` (highest failure prob on path) or
+                                 ``"sum"`` (accumulated risk).
+        min_path_probability:    Minimum path probability to consider.
+        success_only:            Only consider successful rollouts.
+        random_seed:             RNG seed for shuffling within paths.
+        eligible_rollout_idxs:   When not None, only these episode indices are
+                                 considered as candidates.
     """
 
     def __init__(
@@ -513,6 +521,7 @@ class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
         min_path_probability: float = 0.0,
         success_only: bool = True,
         random_seed: int | None = None,
+        eligible_rollout_idxs: list[int] | None = None,
     ) -> None:
         if failure_weight not in ("max", "sum"):
             raise ValueError(f"failure_weight must be 'max' or 'sum', got {failure_weight!r}")
@@ -521,6 +530,9 @@ class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
         self.min_path_probability = min_path_probability
         self.success_only = success_only
         self.rng = np.random.default_rng(random_seed) if random_seed is not None else None
+        self.eligible_rollout_idxs: set[int] | None = (
+            set(eligible_rollout_idxs) if eligible_rollout_idxs is not None else None
+        )
 
     def _score_path(
         self,
@@ -553,10 +565,11 @@ class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
 
         if SUCCESS_NODE_ID not in graph.nodes:
             raise RuntimeError(
-                "Behavior graph has no SUCCESS node — all rollouts may have failed."
+                "Behavior graph has no SUCCESS node. "
+                "Cannot select near-failure paths: no successful rollouts found."
             )
 
-        # P(eventually reach FAILURE | start at node n), solved via Bellman.
+        # Solve for P(eventually reach FAILURE | start at node).
         failure_probs = graph.compute_values(
             gamma=1.0,
             reward_success=0.0,
@@ -606,8 +619,10 @@ class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
                 for _k in _f["data"].keys():
                     _idx = int(_k.split("_")[1])
                     hdf5_success[_idx] = bool(_f["data"][_k].attrs.get("success", False))
-        except Exception:
-            pass
+        except Exception as _err:
+            raise RuntimeError(
+                f"NearFailurePathHeuristic: failed to read HDF5 {rollout_hdf5_path}: {_err}"
+            ) from _err
 
         results: list[SeedSelectionResult] = []
         seen: set[int] = set()
@@ -623,6 +638,8 @@ class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
                 if hdf5_success and not hdf5_success.get(rollout_idx, False):
                     continue
                 if rollout_idx in seen:
+                    continue
+                if self.eligible_rollout_idxs is not None and rollout_idx not in self.eligible_rollout_idxs:
                     continue
                 traj = MimicGenSeedTrajectory.from_rollout_hdf5(
                     rollout_hdf5_path, demo_key=f"demo_{rollout_idx}"
@@ -648,13 +665,21 @@ class NearFailurePathHeuristic(TrajectorySelectionHeuristic):
                     return results
 
         if not results:
-            raise RuntimeError(
-                f"NearFailurePathHeuristic: no rollout matched any of the top-{self.top_k_paths} "
-                "paths to SUCCESS.  Try increasing top_k_paths."
+            eligible_note = (
+                f", eligible_rollout_idxs={sorted(self.eligible_rollout_idxs)[:10]}"
+                if self.eligible_rollout_idxs is not None
+                else ""
             )
+            raise RuntimeError(
+                f"NearFailurePathHeuristic: no rollout matched any of the top-"
+                f"{self.top_k_paths} near-failure paths{eligible_note}.\n"
+                f"  success_only={self.success_only}\n"
+                "  Try increasing top_k_paths or relaxing eligible_rollout_idxs."
+            )
+
         if len(results) < n:
-            print(
-                f"  [NearFailurePathHeuristic] WARNING: requested {n} seeds but only "
+            raise RuntimeError(
+                f"NearFailurePathHeuristic: requested {n} seeds but only "
                 f"{len(results)} distinct rollouts matched top-{self.top_k_paths} paths."
             )
         return results
@@ -769,14 +794,13 @@ class PathLikelihoodHeuristic(TrajectorySelectionHeuristic):
         weights = np.array(pool_weights, dtype=float)
         weights /= weights.sum()
 
-        actual_n = min(n, len(pool_idxs))
-        if actual_n < n:
-            print(
-                f"  [PathLikelihoodHeuristic] WARNING: requested {n} seeds but only "
-                f"{actual_n} eligible rollouts available across top-{self.top_k_paths} paths."
+        if len(pool_idxs) < n:
+            raise RuntimeError(
+                f"PathLikelihoodHeuristic: requested {n} seeds but only "
+                f"{len(pool_idxs)} eligible rollouts available across top-{self.top_k_paths} paths."
             )
 
-        chosen_positions = self.rng.choice(len(pool_idxs), size=actual_n, replace=False, p=weights)
+        chosen_positions = self.rng.choice(len(pool_idxs), size=n, replace=False, p=weights)
 
         top_paths_info = [
             {
@@ -939,8 +963,8 @@ class ReversePathLikelihoodHeuristic(TrajectorySelectionHeuristic):
                 "paths to SUCCESS.  Try increasing top_k_paths."
             )
         if len(results) < n:
-            print(
-                f"  [ReversePathLikelihoodHeuristic] WARNING: requested {n} seeds but only "
+            raise RuntimeError(
+                f"ReversePathLikelihoodHeuristic: requested {n} seeds but only "
                 f"{len(results)} distinct rollouts matched top-{self.top_k_paths} paths."
             )
         return results
@@ -952,6 +976,7 @@ def build_heuristic(
     min_path_probability: float = 0.0,
     success_only: bool = True,
     random_seed: int | None = None,
+    eligible_rollout_idxs: list[int] | None = None,
     failure_weight: str = "max",
 ) -> TrajectorySelectionHeuristic:
     """Factory: build a heuristic by name.
@@ -968,6 +993,8 @@ def build_heuristic(
                         order within each path so replicates pick different
                         individuals.
         failure_weight: ``"max"`` or ``"sum"`` — only used by ``"near_failure"``.
+        eligible_rollout_idxs: When provided, only these episode indices are
+                        considered.  Only honoured by :class:`NearFailurePathHeuristic`.
 
     Returns:
         A concrete :class:`TrajectorySelectionHeuristic` instance.
@@ -991,11 +1018,12 @@ def build_heuristic(
         )
     if heuristic_name == "near_failure":
         return NearFailurePathHeuristic(
-            top_k_paths=top_k_paths,
+            top_k_paths=max(top_k_paths, 30),
             failure_weight=failure_weight,
             min_path_probability=min_path_probability,
             success_only=success_only,
             random_seed=random_seed,
+            eligible_rollout_idxs=eligible_rollout_idxs,
         )
     if heuristic_name == "path_likelihood":
         return PathLikelihoodHeuristic(

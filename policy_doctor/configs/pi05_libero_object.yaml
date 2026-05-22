@@ -1,0 +1,4 @@
+task: pi05_libero_object
+name: "pi0.5 Libero Object"
+eval_dir: /home/erbauer/policy_doctor/data/pi05_libero/libero_object
+obs_key: agentview_image

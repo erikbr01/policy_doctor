@@ -14,7 +14,7 @@ Usage::
 
 The output can then be fed into MimicGen generation::
 
-    conda run -n mimicgen python scripts/run_mimicgen_generate.py \\
+    conda run -n mimicgen_torch2 python scripts/run_mimicgen_generate.py \\
         --seed_hdf5 /tmp/seed_from_rollout.hdf5 \\
         --output_dir /tmp/gen_output \\
         --task_name square \\

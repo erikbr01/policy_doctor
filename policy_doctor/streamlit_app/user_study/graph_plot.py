@@ -41,20 +41,25 @@ def compute_pruned_graph_nodes(
     min_visit_prob: float,
     n_total: int,
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
 ) -> frozenset[int]:
     """Return the set of node IDs to EXCLUDE from the graph.
 
     Algorithm:
-    1. Remove regular nodes whose visit frequency < min_visit_prob.
-    2. BFS from START following only edges with prob >= min_edge_prob through
-       surviving nodes; remove anything unreachable.
+    1. Remove regular nodes whose visit frequency < min_visit_prob
+       (or whose num_episodes < min_edge_count, when min_edge_count > 0).
+    2. BFS from START following only edges with prob >= min_edge_prob
+       (and transition_count >= min_edge_count when > 0) through surviving
+       nodes; remove anything unreachable.
     Special nodes (START/SUCCESS/FAILURE) are never excluded by the threshold but
     may disappear if all paths to them are cut by node or edge pruning.
     """
     surviving = {
         nid for nid, node in graph.nodes.items()
-        if nid in _SPECIAL_IDS or n_total == 0 or
-        node.num_episodes / n_total >= min_visit_prob
+        if nid in _SPECIAL_IDS or (
+            (n_total == 0 or node.num_episodes / n_total >= min_visit_prob)
+            and (min_edge_count <= 0 or node.num_episodes >= min_edge_count)
+        )
     }
 
     reachable: set[int] = set()
@@ -65,8 +70,15 @@ def compute_pruned_graph_nodes(
             continue
         reachable.add(nid)
         for tgt, prob in graph.transition_probs.get(nid, {}).items():
-            if tgt in surviving and tgt not in reachable and prob >= min_edge_prob:
-                queue.append(tgt)
+            if tgt not in surviving or tgt in reachable:
+                continue
+            if prob < min_edge_prob:
+                continue
+            if min_edge_count > 0:
+                cnt = graph.transition_counts.get(nid, {}).get(tgt, 0)
+                if cnt < min_edge_count:
+                    continue
+            queue.append(tgt)
 
     return frozenset(nid for nid in graph.nodes if nid not in reachable)
 
@@ -166,15 +178,15 @@ def _compute_layout(
     return pos
 
 
-def _extract_node_thumbnails(
-    graph: BehaviorGraph,
-    mp4_dir: Path,
+@st.cache_resource(show_spinner=False)
+def _extract_node_thumbnails_cached(
+    cache_key: str,
+    node_eps: tuple[tuple[int, tuple[int, ...]], ...],
+    mp4_dir_str: str,
 ) -> dict[int, list[str]]:
-    """Extract representative frame thumbnails for each cluster node.
-
-    Returns a mapping from node_id to a list of up to 2 base64-encoded JPEG
-    strings (each suitable as a ``data:image/jpeg;base64,...`` src).
-    Missing or unreadable mp4 files are silently skipped.
+    """Cached worker: ``cache_key`` is unused except to dedup the cache key
+    by graph identity + mp4_dir; ``node_eps`` is the canonical hashable form
+    of ``{node_id: episode_indices[:2]}`` and is what we actually iterate.
     """
     try:
         import imageio  # type: ignore
@@ -182,12 +194,11 @@ def _extract_node_thumbnails(
     except ImportError:
         return {}
 
+    mp4_dir = Path(mp4_dir_str)
     thumbnails: dict[int, list[str]] = {}
-    for nid, node in graph.nodes.items():
-        if nid in _SPECIAL_IDS:
-            continue
+    for nid, ep_indices in node_eps:
         imgs: list[str] = []
-        for ep_idx in node.episode_indices[:2]:
+        for ep_idx in ep_indices:
             mp4_path = mp4_dir / f"ep{ep_idx}.mp4"
             if not mp4_path.exists():
                 continue
@@ -208,19 +219,46 @@ def _extract_node_thumbnails(
     return thumbnails
 
 
+def _extract_node_thumbnails(
+    graph: BehaviorGraph,
+    mp4_dir: Path,
+) -> dict[int, list[str]]:
+    """Cached wrapper. Hashes the graph's non-special nodes' first-two
+    episode_indices + mp4_dir so the imageio decode runs once per graph
+    revision, not on every Streamlit rerun."""
+    node_eps = tuple(
+        (nid, tuple(node.episode_indices[:2]))
+        for nid, node in sorted(graph.nodes.items())
+        if nid not in _SPECIAL_IDS
+    )
+    cache_key = f"{mp4_dir}|{hash(node_eps)}"
+    return _extract_node_thumbnails_cached(cache_key, node_eps, str(mp4_dir))
+
+
 def _build_graph_json(
     graph: BehaviorGraph,
     pos: dict[int, tuple[float, float]],
     thumbnails: dict[int, list[str]] | None = None,
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
+    symbol_override: Optional[dict[int, str]] = None,
+    color_override: Optional[dict[int, str]] = None,
 ) -> str:
     """Serialize graph data for the SVG component."""
+    symbol_override = symbol_override or {}
+    color_override = color_override or {}
     nodes = []
     for nid, node in graph.nodes.items():
         if nid not in pos:
             continue
-        if nid in _SPECIAL_IDS:
-            color = _NODE_COLOR.get(nid, "#888")
+        if nid in symbol_override:
+            symbol = symbol_override[nid]
+            color = color_override.get(nid, CLUSTER_COLORS[nid % len(CLUSTER_COLORS)])
+            tooltip = node.name
+            label = node.name
+            is_special = True
+        elif nid in _SPECIAL_IDS:
+            color = color_override.get(nid, _NODE_COLOR.get(nid, "#888"))
             symbol = (
                 "star" if nid == SUCCESS_NODE_ID else
                 "x" if nid == FAILURE_NODE_ID else
@@ -229,8 +267,9 @@ def _build_graph_json(
             )
             tooltip = node.name
             label = node.name
+            is_special = True
         else:
-            color = CLUSTER_COLORS[nid % len(CLUSTER_COLORS)]
+            color = color_override.get(nid, CLUSTER_COLORS[nid % len(CLUSTER_COLORS)])
             symbol = "circle"
             label = node.name
             outgoing = graph.transition_probs.get(nid, {})
@@ -245,6 +284,7 @@ def _build_graph_json(
                 f"Episodes: {node.num_episodes}  •  Timesteps: {node.num_timesteps}\n"
                 f"Top transitions:\n{out_lines}"
             )
+            is_special = False
         node_dict: dict = {
             "id": nid,
             "label": label,
@@ -252,7 +292,7 @@ def _build_graph_json(
             "symbol": symbol,
             "num_episodes": node.num_episodes,
             "num_timesteps": node.num_timesteps,
-            "is_special": nid in _SPECIAL_IDS,
+            "is_special": is_special,
             "tooltip": tooltip,
         }
         if thumbnails and nid in thumbnails:
@@ -264,7 +304,13 @@ def _build_graph_json(
     edges = []
     for src, targets in graph.transition_probs.items():
         for tgt, prob in targets.items():
-            if prob >= max(0.01, min_edge_prob) and src in pos and tgt in pos:
+            if prob < max(0.01, min_edge_prob):
+                continue
+            if min_edge_count > 0:
+                cnt = graph.transition_counts.get(src, {}).get(tgt, 0)
+                if cnt < min_edge_count:
+                    continue
+            if src in pos and tgt in pos:
                 edges.append({"src": src, "tgt": tgt, "prob": round(prob, 4)})
 
     positions = {str(nid): list(xy) for nid, xy in pos.items()}
@@ -280,6 +326,14 @@ def render_graph_component(
     mp4_dir: Optional[Path] = None,
     excluded_node_ids: frozenset[int] = frozenset(),
     min_edge_prob: float = 0.0,
+    min_edge_count: int = 0,
+    pos: Optional[dict[int, tuple[float, float]]] = None,
+    symbol_override: Optional[dict[int, str]] = None,
+    color_override: Optional[dict[int, str]] = None,
+    theme: str = "dark",
+    edge_style: str = "lines",
+    edge_width_slope: float = 5.0,
+    node_size_slope: float = 24.0,
 ) -> Optional[int]:
     """Render the custom SVG behavior graph component.
 
@@ -291,14 +345,34 @@ def render_graph_component(
     Returns:
         The node_id that was clicked, or the previously selected node.
     """
-    pos = _compute_layout(graph, excluded=excluded_node_ids)
+    if pos is None:
+        pos = _compute_layout(graph, excluded=excluded_node_ids)
+    else:
+        # Caller-supplied layout: ensure every node has a position.
+        pos = dict(pos)
+        for nid in graph.nodes:
+            if nid not in pos:
+                pos[nid] = (0.0, 0.0)
+    # Thumbnails on tooltip-hover were costing 3-10s of imageio frame
+    # extraction on every Streamlit rerun for ~zero user-visible benefit
+    # (only seen on hover; the panel below the graph shows the videos
+    # anyway). Disabled.
     thumbnails: dict[int, list[str]] | None = None
-    if mp4_dir is not None:
-        thumbnails = _extract_node_thumbnails(graph, mp4_dir)
-    graph_json = _build_graph_json(graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob)
+    graph_json = _build_graph_json(
+        graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob,
+        min_edge_count=min_edge_count,
+        symbol_override=symbol_override, color_override=color_override,
+    )
     selected = st.session_state.get(f"{key}_selected")
     selected_edge = st.session_state.get(f"{key}_selected_edge")
-    last_click = st.session_state.get(f"{key}_last_click", _SENTINEL)
+    last_seq = st.session_state.get(f"{key}_last_seq", -1)
+
+    # X-button handlers bump `{key}_render_token` so iframe args differ and
+    # Streamlit pushes a fresh render (otherwise the iframe's local state
+    # would not update). Click-sequence numbers (see JS clickSeq) make
+    # repeat clicks on the same node distinct so the persisted sendValue
+    # replay doesn't get treated as a fresh click after dismiss.
+    render_token = st.session_state.get(f"{key}_render_token", 0)
 
     clicked = _graph_component(
         graph_json=graph_json,
@@ -306,28 +380,73 @@ def render_graph_component(
         selected_node_id=selected,
         selected_edge=list(selected_edge) if selected_edge else None,
         highlighted_path=highlighted_path,
+        render_token=render_token,
+        theme=theme,
+        edge_style=edge_style,
+        edge_width_slope=float(edge_width_slope),
+        node_size_slope=float(node_size_slope),
         key=key,
         default=None,
     )
 
-    if clicked is not None and clicked != last_click:
-        st.session_state[f"{key}_last_click"] = clicked
-        # Edge click: component sends [src_id, tgt_id]
-        if isinstance(clicked, list) and len(clicked) == 2:
-            st.session_state[f"{key}_selected_edge"] = tuple(clicked)
-            st.session_state.pop(f"{key}_selected", None)
-            return None
+    # Protocol from JS:
+    #   {svg_export: xml}    — auto-published SVG snapshot for export
+    #                          (dispatched first; dicts never look like
+    #                          a click). The JS side already dedupes by
+    #                          content; here we dedupe on the stored
+    #                          value so st.rerun() doesn't fire when the
+    #                          SVG hasn't actually changed.
+    #   [node_id, seq]       — node click  (node_id == -1 means deselect)
+    #   [src, tgt, seq]      — edge click
+    if isinstance(clicked, dict) and "svg_export" in clicked:
+        xml = str(clicked.get("svg_export", ""))
+        if xml and xml != st.session_state.get("captured_svg"):
+            st.session_state["captured_svg"] = xml
+            st.session_state[f"{key}_svg_export"] = xml
+            st.rerun()
+        return selected
+
+    if isinstance(clicked, list) and len(clicked) >= 2:
         try:
-            node_id = int(clicked)
-            if node_id == -1:
-                st.session_state.pop(f"{key}_selected", None)
-                st.session_state.pop(f"{key}_selected_edge", None)
-                st.rerun()  # forces a second render so component receives selected_node_id=null
-            if node_id in graph.nodes:
-                st.session_state[f"{key}_selected"] = node_id
-                st.session_state.pop(f"{key}_selected_edge", None)
-                return node_id
+            seq = int(clicked[-1])
         except (TypeError, ValueError):
-            pass
+            seq = None
+        if seq is not None and seq != last_seq:
+            st.session_state[f"{key}_last_seq"] = seq
+            if len(clicked) == 2:
+                try:
+                    node_id = int(clicked[0])
+                except (TypeError, ValueError):
+                    return selected
+                if node_id == -1:
+                    _cleared = bool(st.session_state.pop(f"{key}_selected", None) is not None
+                                    or st.session_state.pop(f"{key}_selected_edge", None) is not None)
+                    # key = f"{key_prefix}_graph" — also clear path selection
+                    _kp = key[:-6] if key.endswith("_graph") else key
+                    for _k in ("_path_ep_list", "_highlighted_path",
+                               "_path_label", "_path_synth_ids"):
+                        if st.session_state.pop(f"{_kp}{_k}", None) is not None:
+                            _cleared = True
+                    if _cleared:
+                        st.rerun()
+                if node_id in graph.nodes:
+                    st.session_state[f"{key}_selected"] = node_id
+                    st.session_state.pop(f"{key}_selected_edge", None)
+                    # Force a second pass so the iframe args carry the
+                    # newly-selected node id; otherwise the iframe message
+                    # handler overwrites the JS-local halo back to the
+                    # pre-click `selected`. The seq dedup prevents the
+                    # second pass from re-processing the click.
+                    st.rerun()
+            elif len(clicked) == 3:
+                try:
+                    src_v, tgt_v = int(clicked[0]), int(clicked[1])
+                except (TypeError, ValueError):
+                    return selected
+                st.session_state[f"{key}_selected_edge"] = (src_v, tgt_v)
+                st.session_state.pop(f"{key}_selected", None)
+                # Same reasoning: ensure args reflect the new edge selection
+                # so the iframe halo lands on the correct edge.
+                st.rerun()
 
     return selected

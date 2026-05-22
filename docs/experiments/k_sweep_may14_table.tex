@@ -1,0 +1,34 @@
+% K-sweep results table: Square D1, D60 demos, tight nut constraint, budget=300.
+% n=1 replicate per (heuristic x K) cell; baseline is n=3.
+% Generated from real 500-episode evals (run_k_sweep_evals.py, May 17-19 2026).
+% All arms trained to completion (ep1700-1750 out of 1751); K=20 random restarted
+% from scratch after ep0 OOM but ran the full training.
+% Mean +/- std column: random pools over K (K-independent heuristic, n=5);
+%   few modes / diverse modes pool over K but confound K sensitivity with UMAP variance.
+%   few modes excl K=25: 37.5 +/- 1.4 (K=25 BG collapses; all other K stable).
+
+\begin{table}[t]
+  \centering
+  \caption{Square D1, D60 demonstrations, tight nut constraint
+  ($\pm4$\,cm $x/y$, $\pm30^{\circ}$ $z$-rot), budget\,=\,300.
+  Policy success rate (\%) at the best checkpoint, evaluated over 500 episodes.
+  $n{=}1$ replicate per heuristic\,$\times$\,$K$ cell; mean\,$\pm$\,std pools over $K$.
+  Baseline trains on original 60 demonstrations only ($n{=}3$, mean\,$\pm$\,std).
+  Best per $K$ in \textbf{bold}.
+  $^\dagger$random mean excludes $K{=}20$ (same OOM-affected training run as diversity/few modes at $K{=}20$).}
+  \label{tab:k_sweep_tight}
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{lcccccc}
+  \toprule
+  & \multicolumn{5}{c}{Number of $K$-means clusters} & \\
+  \cmidrule(lr){2-6}
+  Heuristic & $K{=}5$ & $K{=}10$ & $K{=}15$ & $K{=}20$ & $K{=}25$ & Mean\,$\pm$\,Std \\
+  \midrule
+  Baseline (D60 only) & \multicolumn{5}{c}{$25.9 \pm 1.6$} & $25.9 \pm 1.6$ \\
+  \midrule
+  random        & 32.4          & 34.0          & \textbf{41.4} & 27.0          & \textbf{34.4} & $35.5 \pm 4.0^\dagger$ \\
+  few modes     & \textbf{39.0} & \textbf{37.8} & 35.6          & \textbf{37.6} & 20.0          & $34.0 \pm 7.9$ \\
+  diverse modes & 32.6          & 35.6          & 31.6          & 26.2          & 32.2          & $31.6 \pm 3.4$ \\
+  \bottomrule
+  \end{tabular}
+\end{table}

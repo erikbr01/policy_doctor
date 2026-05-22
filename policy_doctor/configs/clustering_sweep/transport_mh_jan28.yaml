@@ -1,0 +1,9 @@
+# @package clustering_sweep
+defaults:
+  - defaults
+  - _self_
+
+task: transport_mh_jan28
+eval_dir: third_party/cupid/data/outputs/eval_save_episodes/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0/latest
+# run_dir is relative to PROJECT_ROOT; dedicated root keeps demo results out of pipeline_runs/
+run_dir: data/demo_sweep/transport_mh_jan28

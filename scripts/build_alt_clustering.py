@@ -70,7 +70,10 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--reducer", default="umap", choices=["umap", "pca", "none"])
     ap.add_argument("--umap_n_components", type=int, default=50,
                     help="UMAP target dim. Capped at (feature_dim - 1) automatically.")
-    ap.add_argument("--umap_n_jobs", type=int, default=-1)
+    ap.add_argument("--umap_n_jobs", type=int, default=4)
+    ap.add_argument("--umap_init", default="spectral",
+                    help="UMAP initialization method ('spectral' or 'random'). "
+                         "Use 'random' to skip spectral embedding; much faster on large disconnected graphs.")
     ap.add_argument("--cluster_method", default="kmeans", choices=["kmeans"])
     ap.add_argument("--n_clusters", type=int, default=None)
     ap.add_argument("--seed", type=int, default=42)
@@ -156,7 +159,8 @@ def main() -> int:
         n_comp = min(args.umap_n_components, per_ts.shape[1] - 1)
         t1 = time.time()
         emb_ts, reducer = fit_reduce_dimensions(
-            scaled_x, method=args.reducer, n_components=n_comp, n_jobs=args.umap_n_jobs,
+            scaled_x, method=args.reducer, n_components=n_comp,
+            n_jobs=args.umap_n_jobs, init=args.umap_init,
         )
         emb_ts = emb_ts.astype(np.float32)
         print(f"  UMAP {per_ts.shape[1]}→{n_comp}d: {time.time()-t1:.1f}s")
@@ -237,6 +241,7 @@ def main() -> int:
                 "seed": int(args.seed),
                 "rep_kwargs": kw,
                 "timestep_embed_dir": str(src),
+                "pipeline_steps": ["normalize", "umap", "window", "kmeans"],
             },
         )
         print(f"  [embed-branch] done {time.time()-t0:.1f}s → {out_dir}", flush=True)
@@ -261,7 +266,8 @@ def main() -> int:
         t1 = time.time()
         n_comp = min(args.umap_n_components, features.shape[1] - 1)
         emb_red, reducer = fit_reduce_dimensions(
-            scaled_x, method=args.reducer, n_components=n_comp, n_jobs=args.umap_n_jobs,
+            scaled_x, method=args.reducer, n_components=n_comp,
+            n_jobs=args.umap_n_jobs, init=args.umap_init,
         )
         emb_red = emb_red.astype(np.float32)
         reducer_method = args.reducer
@@ -292,6 +298,7 @@ def main() -> int:
             "eval_dir": str(args.eval_dir),
             "seed": int(args.seed),
             "rep_kwargs": kw,
+            "pipeline_steps": ["window", "normalize", "umap", "kmeans"],
         },
     )
     print(f"  [alt_clustering] done {time.time()-t0:.1f}s → {out_dir}", flush=True)

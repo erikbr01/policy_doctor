@@ -79,11 +79,13 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             with FileLock(cache_lock_path):
                 if not os.path.exists(cache_zarr_path):
                     # cache does not exists
+                    tmp_dir = cache_zarr_path + ".tmp_dir"
                     try:
                         print("Cache does not exist. Creating!")
-                        # store = zarr.DirectoryStore(cache_zarr_path)
+                        # Build directly into a DirectoryStore (streaming to disk,
+                        # no need to hold the full dataset in RAM).
                         replay_buffer = _convert_robomimic_to_replay(
-                            store=zarr.MemoryStore(),
+                            store=zarr.DirectoryStore(tmp_dir),
                             shape_meta=shape_meta,
                             dataset_path=dataset_path,
                             abs_action=abs_action,
@@ -92,8 +94,10 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                         print("Saving cache to disk.")
                         with zarr.ZipStore(cache_zarr_path) as zip_store:
                             replay_buffer.save_to_store(store=zip_store)
+                        shutil.rmtree(tmp_dir)
                     except Exception as e:
-                        shutil.rmtree(cache_zarr_path)
+                        shutil.rmtree(cache_zarr_path, ignore_errors=True)
+                        shutil.rmtree(tmp_dir, ignore_errors=True)
                         raise e
                 else:
                     print("Loading cached ReplayBuffer from Disk.")
