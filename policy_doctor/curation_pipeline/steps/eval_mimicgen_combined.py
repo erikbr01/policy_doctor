@@ -172,6 +172,8 @@ class EvalMimicgenCombinedStep(PipelineStep[dict]):
                     f"--test_start_seed={test_start_seed}",
                     f"--overwrite={overwrite}",
                     f"--device={device}",
+                    "--n_envs=28",
+                    "--save_episodes=False",
                 ]
                 result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
                 if result.returncode != 0:

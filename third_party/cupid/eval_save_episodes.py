@@ -27,15 +27,19 @@ from diffusion_policy.common.device_util import get_device
 @click.option('--test_start_seed', type=int, default=100000)
 @click.option('--overwrite', type=bool, default=False)
 @click.option('--device', type=str, default='cuda:0')
+@click.option('--n_envs', type=int, default=1, help='Parallel env count. Use 1 with --save_episodes=True, else 28+ for speed.')
+@click.option('--save_episodes', type=bool, default=True, help='Save per-episode HDF5s. Requires n_envs=1.')
 def main(
-    output_dir: str, 
-    train_dir: str, 
-    train_ckpt: str, 
+    output_dir: str,
+    train_dir: str,
+    train_ckpt: str,
     num_episodes: int,
     test_start_seed: int,
     overwrite: bool,
     device: str,
-):  
+    n_envs: int,
+    save_episodes: bool,
+):
     # Find checkpoint.
     checkpoint_dir = pathlib.Path(train_dir) / "checkpoints"
     checkpoints = list(checkpoint_dir.iterdir())
@@ -63,7 +67,7 @@ def main(
     cls = hydra.utils.get_class(cfg._target_)
 
     # Update configuration for evaluation.
-    cfg.task.env_runner.n_envs = 1
+    cfg.task.env_runner.n_envs = n_envs
     cfg.task.env_runner.n_train = 0
     cfg.task.env_runner.n_train_vis = 0
     cfg.task.env_runner.n_test = num_episodes
@@ -98,7 +102,7 @@ def main(
     env_runner = hydra.utils.instantiate(
         cfg.task.env_runner,
         output_dir=output_dir,
-        save_episodes=True)
+        save_episodes=save_episodes)
     runner_log = env_runner.run(policy)
     
     # Dump log to json.
