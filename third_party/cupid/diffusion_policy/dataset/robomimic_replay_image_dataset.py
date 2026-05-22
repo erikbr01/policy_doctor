@@ -14,6 +14,11 @@ import zarr
 from filelock import FileLock
 from omegaconf import OmegaConf
 from threadpoolctl import threadpool_limits
+
+
+def dataset_worker_init_fn(worker_id):
+    """Call once per worker process to limit numpy thread pools (not per sample)."""
+    threadpool_limits(1)
 from tqdm import tqdm
 
 from diffusion_policy.codecs.imagecodecs_numcodecs import Jpeg2k, register_codecs
@@ -100,12 +105,18 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                         shutil.rmtree(tmp_dir, ignore_errors=True)
                         raise e
                 else:
-                    print("Loading cached ReplayBuffer from Disk.")
-                    with zarr.ZipStore(cache_zarr_path, mode="r") as zip_store:
-                        store = None if load_to_memory else zarr.MemoryStore()
-                        replay_buffer = ReplayBuffer.copy_from_store(
-                            src_store=zip_store, store=store
-                        )
+                    # Prefer DirectoryStore (mmap-friendly, no copy-to-memory needed).
+                    dir_cache_path = dataset_path + ".zarr"
+                    if os.path.isdir(dir_cache_path):
+                        print("Loading cached ReplayBuffer from DirectoryStore (mmap).")
+                        replay_buffer = ReplayBuffer.create_from_path(dir_cache_path, mode='r')
+                    else:
+                        print("Loading cached ReplayBuffer from Disk.")
+                        with zarr.ZipStore(cache_zarr_path, mode="r") as zip_store:
+                            store = None if load_to_memory else zarr.MemoryStore()
+                            replay_buffer = ReplayBuffer.copy_from_store(
+                                src_store=zip_store, store=store
+                            )
                     print("Loaded!")
         else:
             replay_buffer = _convert_robomimic_to_replay(
@@ -306,7 +317,6 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         return len(self.sampler)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        threadpool_limits(1)
         data = self.sampler.sample_sequence(idx)
 
         # to save RAM, only return first n_obs_steps of OBS
@@ -317,13 +327,9 @@ class RobomimicReplayImageDataset(BaseImageDataset):
 
         obs_dict = dict()
         for key in self.rgb_keys:
-            # move channel last to channel first
-            # T,H,W,C
-            # convert uint8 image to float32
-            obs_dict[key] = (
-                np.moveaxis(data[key][T_slice], -1, 1).astype(np.float32) / 255.0
-            )
-            # T,C,H,W
+            # Keep uint8 HWC — permute + float32 conversion done on GPU.
+            # Shape: (T, H, W, C) uint8
+            obs_dict[key] = data[key][T_slice]
 
             # Visualization.
             if self._return_image and key == self._render_obs_key:

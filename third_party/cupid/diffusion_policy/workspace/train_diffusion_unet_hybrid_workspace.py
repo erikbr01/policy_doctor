@@ -31,8 +31,45 @@ from diffusion_policy.common.device_util import get_device, non_blocking_for
 from diffusion_policy.model.diffusion.ema_model import EMAModel
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusion_policy.common.step_timer import StepTimer
+from diffusion_policy.dataset.robomimic_replay_image_dataset import dataset_worker_init_fn
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
+
+
+class DataPrefetcher:
+    """Overlaps CPU→GPU transfer of batch N+1 with GPU compute on batch N."""
+    def __init__(self, loader, device, transform_fn=None):
+        self.loader = iter(loader)
+        self.device = device
+        self.stream = torch.cuda.Stream()
+        self.transform_fn = transform_fn
+        self._preload()
+
+    def _preload(self):
+        try:
+            self._next = next(self.loader)
+        except StopIteration:
+            self._next = None
+            return
+        with torch.cuda.stream(self.stream):
+            self._next = dict_apply(self._next, lambda x: x.to(self.device, non_blocking=True))
+            if self.transform_fn is not None:
+                self._next = self.transform_fn(self._next)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        batch = self._next
+        if batch is None:
+            raise StopIteration
+        dict_apply(batch, lambda x: x.record_stream(torch.cuda.current_stream()) if x.is_cuda else None)
+        self._preload()
+        return batch
+
+    def __len__(self):
+        return len(self.loader)
 
 class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
@@ -104,16 +141,29 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
             from torch.utils.data.distributed import DistributedSampler
             train_sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
             train_dl_kw = {k: v for k, v in cfg.dataloader.items() if k != "shuffle"}
-            train_dataloader = DataLoader(dataset, sampler=train_sampler, **train_dl_kw)
+            train_dataloader = DataLoader(dataset, sampler=train_sampler,
+                worker_init_fn=dataset_worker_init_fn, **train_dl_kw)
         else:
             train_sampler = None
-            train_dataloader = DataLoader(dataset, **cfg.dataloader)
+            train_dataloader = DataLoader(dataset,
+                worker_init_fn=dataset_worker_init_fn, **cfg.dataloader)
 
         normalizer = dataset.get_normalizer()
 
         # configure validation dataset (no sampler — rank 0 runs full val)
         val_dataset = dataset.get_validation_dataset()
-        val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+        val_dataloader = DataLoader(val_dataset,
+            worker_init_fn=dataset_worker_init_fn, **cfg.val_dataloader)
+
+        # GPU image normalisation: uint8 HWC → float32 CHW in [0,1].
+        # Applied inside the prefetch CUDA stream (train) or inline (val).
+        rgb_keys = getattr(dataset, 'rgb_keys', [])
+        def _gpu_image_transform(batch):
+            for key in rgb_keys:
+                t = batch['obs'][key]  # (B, T, H, W, C) uint8
+                batch['obs'][key] = t.permute(0, 1, 4, 2, 3).contiguous().float().div_(255.0)
+            return batch
+        gpu_image_transform = _gpu_image_transform if rgb_keys else None
 
         getattr(self.model, "module", self.model).set_normalizer(normalizer)
         if cfg.training.use_ema:
@@ -166,7 +216,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                 config=OmegaConf.to_container(cfg, resolve=True),
                 **cfg.logging
             )
-            wandb.config.update({"output_dir": self.output_dir})
+            wandb.config.update({"output_dir": self.output_dir}, allow_val_change=True)
 
         # configure checkpoint (main rank only)
         topk_manager = None
@@ -219,13 +269,16 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                 if train_sampler is not None:
                     train_sampler.set_epoch(self.epoch)
                 train_losses = list()
-                with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
+                prefetcher = DataPrefetcher(train_dataloader, device, transform_fn=gpu_image_transform) if device.type == 'cuda' else None
+                _iter = prefetcher if prefetcher is not None else train_dataloader
+                with tqdm.tqdm(_iter, desc=f"Training epoch {self.epoch}",
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                     for batch_idx, batch in enumerate(tepoch):
                         step_timer.reset()
-                        # device transfer
+                        # device transfer (skipped for CUDA — DataPrefetcher handles it async)
                         with step_timer.time("data_transfer"):
-                            batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
+                            if prefetcher is None:
+                                batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
                         if train_sampling_batch is None:
                             train_sampling_batch = batch
 
@@ -306,6 +359,8 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                                     leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, non_blocking=non_blocking_for(device)))
+                                    if gpu_image_transform is not None:
+                                        batch = gpu_image_transform(batch)
                                     loss = getattr(self.model, "module", self.model).compute_loss(batch)
                                     val_losses.append(loss)
                                     if (cfg.training.max_val_steps is not None) \

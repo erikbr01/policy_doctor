@@ -23,13 +23,14 @@ checkpoint:
     monitor_key: test_mean_score
 
 dataloader:
-  batch_size: 64
-  num_workers: 8
+  batch_size: 256
+  num_workers: 12
   persistent_workers: true
   pin_memory: true
   shuffle: true
+  prefetch_factor: 4
 
-dataset_obs_steps: 2
+dataset_obs_steps: 1
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
@@ -61,7 +62,7 @@ multi_run:
 
 n_action_steps: 8
 n_latency_steps: 0
-n_obs_steps: 2
+n_obs_steps: 1
 name: train_diffusion_unet_hybrid
 obs_as_global_cond: true
 
@@ -71,7 +72,7 @@ optimizer:
     - 0.95
     - 0.999
   eps: 1.0e-08
-  lr: 0.0001
+  lr: 0.0002
   weight_decay: 1.0e-06
 
 past_action_visible: false
@@ -92,7 +93,7 @@ policy:
   kernel_size: 5
   n_action_steps: 8
   n_groups: 8
-  n_obs_steps: 2
+  n_obs_steps: 1
   noise_scheduler:
     _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
     beta_end: 0.02
@@ -161,7 +162,7 @@ task:
     abs_action: false
     dataset_path: data/source/droid/droid_dataset.hdf5
     horizon: 16
-    n_obs_steps: 2
+    n_obs_steps: 1
     pad_after: 7
     pad_before: 1
     rotation_rep: rotation_6d
@@ -234,15 +235,15 @@ training:
   max_val_steps: null
   num_epochs: 3000
   resume: true
-  rollout_every: 50
+  rollout_every: 250
   sample_every: 50
   seed: 42
   tqdm_interval_sec: 1.0
   use_ema: true
-  val_every: 25
+  val_every: 250
 
 val_dataloader:
-  batch_size: 64
+  batch_size: 256
   num_workers: 4
   persistent_workers: true
   pin_memory: true

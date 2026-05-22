@@ -608,6 +608,7 @@ def get_dataset_masks(
     num_episodes: int,
     val_ratio: float,
     max_train_episodes: Optional[int] = None,
+    max_val_episodes: Optional[int] = None,
     train_ratio: Optional[float] = None,
     uniform_quality: bool = False,
     curate_dataset: bool = False,
@@ -636,6 +637,12 @@ def get_dataset_masks(
         # diverge (e.g. 94 demos × 0.04 → int=3 but round=4).
         num_val = min(max(1, round(num_episodes * val_ratio)), num_episodes - 1) if val_ratio > 0 else 0
         num_holdout = num_episodes - num_train - num_val
+
+    # Hard cap on val episodes — overrides ratio-based calculation.
+    if max_val_episodes is not None and num_val > max_val_episodes:
+        extra = num_val - max_val_episodes
+        num_val = max_val_episodes
+        num_train += extra
 
     assert_str = f"num_train ({num_train}) + num_val ({num_val}) + num_holdout ({num_holdout}) != num_episodes ({num_episodes})"
     assert num_train + num_val + num_holdout == num_episodes, assert_str
@@ -710,7 +717,7 @@ def get_dataset_masks(
         # i.i.d. sampling across all quality tiers.
         # When capped by max_train_episodes, val size is proportional to the cap
         # rather than the full dataset — use effective ratio so mask count matches.
-        _effective_val_ratio = (num_val / num_episodes) if max_train_episodes is not None else val_ratio
+        _effective_val_ratio = (num_val / num_episodes) if (max_train_episodes is not None or max_val_episodes is not None) else val_ratio
         val_mask = get_val_mask(num_episodes, _effective_val_ratio, seed=seed)
         train_mask = ~val_mask
         if max_train_episodes is not None:

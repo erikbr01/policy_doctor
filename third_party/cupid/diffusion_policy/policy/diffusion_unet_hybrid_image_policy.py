@@ -15,6 +15,12 @@ from robomimic.algo import algo_factory
 from robomimic.algo.algo import PolicyAlgo
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.models.base_nets as rmbn
+try:
+    _ = rmbn.CropRandomizer
+except AttributeError:
+    # robomimic 0.3+ moved CropRandomizer to obs_core
+    from robomimic.models.obs_core import CropRandomizer as _CropRandomizer
+    rmbn.CropRandomizer = _CropRandomizer
 import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 

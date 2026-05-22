@@ -27,7 +27,12 @@ seeds: [0]
 
 baseline:
   train_date: may20
-  num_epochs: 3000
+  diffusion_compose_overrides:
+    - "+task.dataset.dataset_mask_kwargs.max_val_episodes=1"
+    - "training.resume=false"
+    - "logging.resume=false"
+    - "logging.id=null"
+  num_epochs: 1000
   checkpoint_every: 50
   checkpoint_topk: 3
   val_ratio: 0.1
