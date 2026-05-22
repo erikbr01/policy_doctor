@@ -208,7 +208,6 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                 f"logging.project={project}",
                 f"multi_run.wandb_name_base={train_name}",
                 f"multi_run.run_dir={run_output_dir}",
-                f"hydra.run.dir={run_output_dir}",
                 f"++task.dataset.dataset_path={combined_hdf5_path}",
                 f"++task.env_runner.dataset_path={combined_hdf5_path}",
             ]
@@ -249,6 +248,27 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                     f"[train_on_combined_data] seed={seed} subprocess "
                     f"exited with code {result.returncode}"
                 )
+            # Hydra writes checkpoints to a timestamped dir, not run_output_dir.
+            # Create a symlink so eval_mimicgen_combined can find them.
+            ckpt_link = pathlib.Path(run_output_dir) / "checkpoints"
+            if not ckpt_link.exists() and not ckpt_link.is_symlink():
+                # Find the Hydra output dir by matching logging.name in overrides.yaml
+                train_name_override = f"logging.name={[o for o in cmd if 'logging.name=' in o][0].split('=',1)[1]}"
+                hydra_outputs_root = self.repo_root / "outputs"
+                match = None
+                for overrides_yaml in sorted(hydra_outputs_root.rglob(".hydra/overrides.yaml"), key=lambda p: p.stat().st_mtime, reverse=True):
+                    try:
+                        content = overrides_yaml.read_text()
+                        if train_name_override in content or f"logging.name={[o for o in cmd if 'logging.name=' in o][0].split('=',1)[1]}" in content:
+                            hydra_ckpt = overrides_yaml.parent.parent / "checkpoints"
+                            if hydra_ckpt.exists():
+                                match = hydra_ckpt
+                                break
+                    except Exception:
+                        continue
+                if match:
+                    ckpt_link.symlink_to(match)
+                    print(f"  [train_on_combined_data] linked checkpoints: {ckpt_link} -> {match}")
 
         return {
             "combined_hdf5_path": str(combined_hdf5_path.resolve()),
