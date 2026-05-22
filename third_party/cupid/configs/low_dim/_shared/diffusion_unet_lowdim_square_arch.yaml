@@ -108,6 +108,8 @@ training:
   num_epochs: 5000
   resume: true
   rollout_every: 50
+  tf32: false
+  compile: false
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0
