@@ -2,6 +2,36 @@
 
 Two Streamlit apps are deployed from the same Docker image:
 
+---
+
+## Pre-deployment checklist (kendama)
+
+Everything below must be done before the survey link can go out.
+
+### Task data
+- [ ] Render rollout MP4s + `index.json` for kendama → `data/study_mp4s/kendama_may20/`
+- [ ] Run clustering pipeline for Group B; note the output directory path
+- [ ] Film 3 representative training demos per strategy → `data/study_mp4s/kendama_may20/demo_videos/<ep_xxx.mp4>`
+
+### Config
+- [ ] Fill in strategies in `policy_doctor/configs/user_study/kendama_may20.yaml`:
+  - Replace placeholder names/descriptions with real (behavior mode × initial condition) pairs
+  - Add `video_paths` under each `example_demos` once demo MP4s exist
+- [ ] Set `clustering_dir` in `policy_doctor/configs/user_study/sessions/kendama_may20.yaml`
+
+### Infrastructure
+- [ ] Create GCS bucket and grant IAM roles (see [GCS response storage](#gcs-response-storage))
+- [ ] Set `SURVEY_GCS_BUCKET`, `SURVEY_PASSWORD_SHA256`, `APP_PASSWORD_SHA256` in `deploy/.env`
+- [ ] Run `./deploy/collect_artifacts.sh` (add `kendama_may20` to `TASKS` array first)
+- [ ] Run `./deploy/deploy_study_stack.sh` (or GCP VM deploy)
+
+### Validation
+- [ ] Open the survey app, complete all 5 steps, submit
+- [ ] Confirm the response JSON appears in GCS (or local `study_responses/`)
+- [ ] Open the Graph Demo → Survey Analytics page and verify the response shows up
+
+---
+
 | App | Port | Purpose |
 |-----|------|---------|
 | **Survey app** | 8501 | Participant-facing — randomly assigns Group A or B; this is the URL you share |
