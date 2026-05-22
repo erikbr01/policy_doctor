@@ -16,7 +16,7 @@ checkpoint:
     mode: max
     monitor_key: test_mean_score
 dataloader:
-  batch_size: 256
+  batch_size: 1024
   num_workers: 1
   persistent_workers: false
   pin_memory: true
@@ -58,7 +58,7 @@ optimizer:
   - 0.95
   - 0.999
   eps: 1.0e-08
-  lr: 0.0001
+  lr: 0.0002
   weight_decay: 1.0e-06
 past_action_visible: false
 policy:
@@ -116,7 +116,7 @@ training:
   use_ema: true
   val_every: 1
 val_dataloader:
-  batch_size: 256
+  batch_size: 1024
   num_workers: 1
   persistent_workers: false
   pin_memory: true

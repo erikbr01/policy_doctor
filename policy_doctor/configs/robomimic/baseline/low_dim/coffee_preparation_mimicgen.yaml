@@ -7,7 +7,7 @@ config_name: config.yaml
 policy: diffusion_unet_lowdim
 
 seeds: [0, 1, 2]
-num_epochs: 1751
+num_epochs: 1000
 checkpoint_topk: 5
 checkpoint_every: 50
 

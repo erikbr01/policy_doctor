@@ -197,7 +197,7 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                 f"training.num_epochs={num_epochs}",
                 f"checkpoint.topk.k={checkpoint_topk}",
                 f"training.checkpoint_every={checkpoint_every}",
-                f"training.rollout_every={checkpoint_every}",
+                f"training.rollout_every={checkpoint_every * 2}",
                 f"task.dataset.seed={seed}",
                 f"task.dataset.val_ratio=0.0",
                 f"training.device={device}",
