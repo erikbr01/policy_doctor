@@ -88,6 +88,11 @@ if st.session_state.get(f"{PFX}_loaded_session") != session_choice:
         st.session_state[f"{PFX}_alloc_step"] = cfg.get("budget", {}).get("allocation_step", 25)
         st.session_state[f"{PFX}_mp4_dir"] = str(mp4_dir)
         st.session_state[f"{PFX}_rollout_limit"] = sess.get("rollout_time_limit_seconds", 600)
+        # demo_videos_dir: explicit override or default to <mp4_dir>/demo_videos
+        _dvd = sess.get("demo_videos_dir")
+        st.session_state[f"{PFX}_demo_videos_dir"] = (
+            str(_resolve(_dvd)) if _dvd else str(mp4_dir / "demo_videos")
+        )
         st.session_state[f"{PFX}_loaded_session"] = session_choice
 
 if f"{PFX}_index" in st.session_state:
@@ -105,6 +110,8 @@ mp4_dir = Path(mp4_dir_str)
 total_budget = st.session_state.get(f"{PFX}_budget", 500)
 alloc_step = st.session_state.get(f"{PFX}_alloc_step", 25)
 rollout_limit = st.session_state.get(f"{PFX}_rollout_limit", 600)
+_dvd_str = st.session_state.get(f"{PFX}_demo_videos_dir")
+demo_videos_dir = Path(_dvd_str) if _dvd_str else None
 
 # ── Step routing ──────────────────────────────────────────────────────────────
 
@@ -247,6 +254,7 @@ elif step == 3:
         total_budget=total_budget,
         allocation_step=alloc_step,
         key_prefix=f"{PFX}_alloc",
+        demo_videos_dir=demo_videos_dir,
     )
     render_strategy_summary(allocations, strategies, total_budget)
 
