@@ -3,9 +3,9 @@
 # on the local machine using Docker Compose.
 #
 # Usage:
-#   ./deploy/deploy_both.sh               # collect, build, start both
-#   ./deploy/deploy_both.sh --no-collect  # skip artifact collection
-#   ./deploy/deploy_both.sh --no-build    # reuse existing image
+#   ./deploy/deploy_study_stack.sh               # collect, build, start both
+#   ./deploy/deploy_study_stack.sh --no-collect  # skip artifact collection
+#   ./deploy/deploy_study_stack.sh --no-build    # reuse existing image
 #
 # Env vars (optional — see docker-compose.yml):
 #   SURVEY_PASSWORD_SHA256   password hash for the survey app

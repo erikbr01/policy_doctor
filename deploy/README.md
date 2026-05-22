@@ -20,7 +20,7 @@ deploy/
 ├── requirements.txt        # Python deps (includes google-cloud-storage)
 ├── .env.example            # Template for deployment environment variables
 ├── collect_artifacts.sh    # Bundle code + clusterings + MP4s into deploy/
-├── deploy_both.sh          # Build + launch both services locally via compose
+├── deploy_study_stack.sh          # Build + launch both services locally via compose
 ├── deploy_local.sh         # Build + run single-app container (graph demo only)
 ├── deploy_gcp_vm.sh        # Push to GCE VM (single-app; see Two-app on GCP below)
 ├── deploy_gcp.sh           # Cloud Run alternative
@@ -57,7 +57,7 @@ The standard way to run both apps together for testing or local hosting:
 ./deploy/collect_artifacts.sh
 
 # 2. Build + launch both services
-./deploy/deploy_both.sh
+./deploy/deploy_study_stack.sh
 ```
 
 After startup:
@@ -66,7 +66,7 @@ After startup:
 
 To stop: `docker compose -f deploy/docker-compose.yml down`
 
-Flags for `deploy_both.sh`:
+Flags for `deploy_study_stack.sh`:
 
 | Flag | Effect |
 |------|--------|
@@ -204,10 +204,10 @@ After code or data changes:
 
 ```bash
 # Re-bundle + rebuild + restart
-./deploy/deploy_both.sh
+./deploy/deploy_study_stack.sh
 
 # Or just rebuild without re-collecting artifacts
-./deploy/deploy_both.sh --no-collect
+./deploy/deploy_study_stack.sh --no-collect
 ```
 
 For the GCP VM, rebuild and push the image, then SSH in and pull:
@@ -267,7 +267,7 @@ the image small.
 3. Place MP4s + `index.json` under `data/study_mp4s/<task>/`
 4. For Group B: place clustering data under `third_party/influence_visualizer/configs/<task>/clustering/`
 5. Add `<task>` to the `TASKS` array in `collect_artifacts.sh`
-6. Re-collect + rebuild: `./deploy/deploy_both.sh`
+6. Re-collect + rebuild: `./deploy/deploy_study_stack.sh`
 
 ---
 
