@@ -4,16 +4,14 @@
 # language instruction only.
 #
 # Episode counts in success/{2026-05-21,2026-05-22} for this instruction:
-#   "kendama - one grasp - close to box"  ->  48 episodes
-# NOTE: only 48 episodes available (target was 50). Decide whether to:
-#   (a) use all 48,  (b) cap all four arms at min(48) for fairness,
-#   (c) downsample the larger arms.
+#   "kendama - one grasp - close to box"  ->  53 episodes available;
+#   50 selected at random (seed=42) and symlinked into staging_may22/one_grasp_close/.
 #
-# Prerequisites (NOT YET EXECUTED — conversion paused pending the 48-episode decision):
-#   1. Convert may21+may22 success data, filtering on attrs['current_task']:
+# Prerequisites:
+#   1. Convert the staged 50-episode subset:
 #        LD_LIBRARY_PATH=~/zed_sdk_extracted/lib:~/nvidia_decode_extra/usr/lib/x86_64-linux-gnu \
 #        conda run -n policy_doctor python scripts/convert_droid_hdf5_debug.py \
-#            --input_path <staged-dir-with-only-this-instruction's-episodes> \
+#            --input_path ~/data/droid_data/staging_may22/one_grasp_close \
 #            --output_path ~/data/droid_data/kendama_may22_one_grasp_close_raw.hdf5 \
 #            --image_size 256 256 --num_workers 12
 #
