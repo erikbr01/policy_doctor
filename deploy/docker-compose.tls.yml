@@ -1,0 +1,64 @@
+# Compose override that enables HTTPS via Let's Encrypt.
+#
+# Prerequisites:
+#   1. DNS A records for $STUDY_DOMAIN and $DEMO_DOMAIN point at this host.
+#   2. .env has LETSENCRYPT_EMAIL set.
+#   3. Ports 80 + 443 reachable from the public internet (firewall + GCP rules).
+#   4. Run deploy/init_letsencrypt.sh once to obtain initial certs.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# What it changes vs. the base compose:
+#   - proxy:   loads templates-tls/ (HTTP→HTTPS redirect + HTTPS vhosts)
+#   - proxy:   opens host port 443 in addition to 80
+#   - certbot: adds a sidecar that renews certs every 12h and reloads nginx
+#              on success.
+
+services:
+  proxy:
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/templates-tls:/etc/nginx/templates:ro
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Try to renew every 12h. Certbot is a no-op if certs are still valid.
+    # The trap on SIGTERM ensures `docker compose down` exits promptly.
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :;
+      do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'touch /etc/letsencrypt/.reload-nginx';
+      sleep 12h & wait $${!};
+      done"
+
+  proxy-reloader:
+    image: docker:cli
+    restart: unless-stopped
+    # Watches for the reload-flag dropped by certbot's deploy-hook and tells
+    # the proxy container to gracefully reload nginx (HUP picks up new certs
+    # without dropping in-flight connections).
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :;
+      do
+        if [ -f /etc/letsencrypt/.reload-nginx ]; then
+          rm -f /etc/letsencrypt/.reload-nginx;
+          docker kill -s HUP $$(docker ps -q -f name=proxy);
+        fi;
+        sleep 1h & wait $${!};
+      done"
+    depends_on:
+      - proxy
+      - certbot
