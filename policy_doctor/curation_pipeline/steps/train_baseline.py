@@ -247,6 +247,7 @@ class TrainBaselineStep(PipelineStep[None]):
             f"logging.project={project}",
             f"multi_run.wandb_name_base={train_name}",
             f"multi_run.run_dir={run_output_dir}",
+            f"hydra.run.dir={run_output_dir}",
         ]
         if max_train_episodes is not None:
             overrides.append(f"task.dataset.max_train_episodes={max_train_episodes}")

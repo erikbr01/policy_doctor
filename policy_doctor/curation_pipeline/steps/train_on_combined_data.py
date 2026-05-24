@@ -208,6 +208,7 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
                 f"logging.project={project}",
                 f"multi_run.wandb_name_base={train_name}",
                 f"multi_run.run_dir={run_output_dir}",
+                f"hydra.run.dir={run_output_dir}",
                 f"++task.dataset.dataset_path={combined_hdf5_path}",
                 f"++task.env_runner.dataset_path={combined_hdf5_path}",
             ]

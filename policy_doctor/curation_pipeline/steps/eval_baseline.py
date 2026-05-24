@@ -45,6 +45,12 @@ class EvalBaselineStep(PipelineStep[dict]):
         test_start_seed: int = int(OmegaConf.select(evaluation, "test_start_seed") or 100000)
         overwrite: bool = bool(OmegaConf.select(evaluation, "overwrite") or False)
         device: str = OmegaConf.select(cfg, "device") or "cuda:0"
+        n_envs: int = int(OmegaConf.select(evaluation, "n_envs") or 28)
+        # When eval_ckpt=latest, evaluate only the latest checkpoint and save to
+        # a fixed "latest" subdir so downstream steps (compute_policy_embeddings)
+        # can find the eval dir via get_eval_dir(..., train_ckpt="latest").
+        eval_ckpt: str = OmegaConf.select(evaluation, "eval_ckpt") or OmegaConf.select(evaluation, "train_ckpt") or "latest"
+        eval_latest_only: bool = (eval_ckpt == "latest")
         eval_output_dir: str = (
             OmegaConf.select(evaluation, "eval_output_dir")
             or "data/outputs/eval_save_episodes"
@@ -83,21 +89,31 @@ class EvalBaselineStep(PipelineStep[dict]):
                 continue
 
             ckpt_dir = train_dir / "checkpoints"
-            ckpt_files = sorted(
-                p for p in ckpt_dir.iterdir()
-                if p.suffix == ".ckpt" and p.stem != "latest"
-            )
+            if eval_latest_only:
+                # Evaluate only the latest checkpoint; save to .../latest/ so
+                # downstream steps (compute_policy_embeddings, run_clustering)
+                # can find it via get_eval_dir(..., train_ckpt="latest").
+                latest_ckpt = ckpt_dir / "latest.ckpt"
+                if not latest_ckpt.exists():
+                    print(f"  [eval_baseline] WARNING: no latest.ckpt in {ckpt_dir}")
+                    continue
+                ckpt_files = [latest_ckpt]
+            else:
+                ckpt_files = sorted(
+                    p for p in ckpt_dir.iterdir()
+                    if p.suffix == ".ckpt" and p.stem != "latest"
+                )
             if not ckpt_files:
                 print(f"  [eval_baseline] WARNING: no checkpoints in {ckpt_dir}")
                 continue
 
             print(
-                f"  [eval_baseline] evaluating {len(ckpt_files)} checkpoints × {num_episodes} episodes"
-                f"  train_dir={train_dir.name}"
+                f"  [eval_baseline] evaluating {len(ckpt_files)} checkpoint(s) × {num_episodes} episodes"
+                f"  n_envs={n_envs}  train_dir={train_dir.name}"
             )
 
             for ckpt_path in ckpt_files:
-                ckpt_stem = ckpt_path.stem
+                ckpt_stem = ckpt_path.stem  # "latest" for latest.ckpt
                 output_dir_eval = str(
                     self.repo_root / eval_output_dir
                     / f"{train_dir.name}"
@@ -123,6 +139,7 @@ class EvalBaselineStep(PipelineStep[dict]):
                     f"--train_dir={train_dir}",
                     f"--train_ckpt={ckpt_stem}",
                     f"--num_episodes={num_episodes}",
+                    f"--n_envs={n_envs}",
                     f"--test_start_seed={test_start_seed}",
                     f"--overwrite={overwrite}",
                     f"--device={device}",

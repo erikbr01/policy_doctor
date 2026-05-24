@@ -170,7 +170,7 @@ class TrainDiffusionUnetLowdimWorkspace(BaseWorkspace):
                 config=OmegaConf.to_container(cfg, resolve=True),
                 **cfg.logging
             )
-            wandb.config.update({"output_dir": self.output_dir})
+            wandb.config.update({"output_dir": self.output_dir}, allow_val_change=True)
 
         # configure checkpoint (main rank only)
         topk_manager = None
