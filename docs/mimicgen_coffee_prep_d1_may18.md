@@ -1,6 +1,6 @@
 # MimicGen Coffee Preparation D1 — May 18 2026
 
-**Status:** Setting up experiment  
+**Status:** Re-launch in progress (May 24) after invalidation of the May 20 run.
 **Goal:** Replicate the apr26 square tight-constraint sweep for coffee preparation D1 with mug pose constrained.
 
 ---
@@ -34,6 +34,14 @@ Analogous to the square nut tight constraint (±40mm x/y, ±30° z_rot):
 
 All other objects (drawer, coffee_machine, coffee_pod): **unconstrained** (null = use D1 env range).
 
+### Heuristics
+
+`heuristics: [random, behavior_graph]`. The `diversity` heuristic was DROPPED
+on May 24 — in the May 20 run all 9 diversity arms failed with
+`DiversitySelectionHeuristic: no rollout matched any path to SUCCESS`. Whether
+the new policy_emb-based clustering fixes that is an open question; we'll add
+diversity back if early budget-100 results look clean.
+
 ### Selection Seeds
 
 Three fixed seeds (no null): `rep_seeds: [1, 2, 3]` via `mimicgen_budget_rep_sweep`.
@@ -49,12 +57,22 @@ Three fixed seeds (no null): `rep_seeds: [1, 2, 3]` via `mimicgen_budget_rep_swe
 
 ### Device
 
-`cuda:0` only — 3 slots.
+6 concurrent arms split across two GPUs:
+`devices: [cuda:0, cuda:0, cuda:0, cuda:1, cuda:1, cuda:1]`.
+Cuda:1 slots are released ~2.5h after pipeline launch (GPU 1 reserved for other
+work). In-flight arms on cuda:1 get killed; remaining work continues on cuda:0.
 
 ### Clustering
 
-Same parameters as square apr26:
-- `clustering_influence_source: infembed`
+Switched from `infembed` to **policy embeddings** on May 24 (matches the may20
+sweep configs for kitchen / threading / three_piece_assembly):
+
+- `clustering_influence_source: policy_emb`
+- `clustering_policy_emb_layer: bottleneck_plan_t0`
+  (U-Net mid-block activation at plan t=0; the documented "best known" layer
+  per `compute_policy_embeddings.py`. The regex
+  `^(?P<hook>bottleneck|decoder|encoder)(?:_(?P<action>plan8|plan|exec))?(?:_t(?P<t>\d+))?$`
+  rejects the `plan_bottleneck` form some old configs used — those are broken.)
 - `clustering_level: rollout`
 - `clustering_demo_split: train`
 - `clustering_window_width: 5`
@@ -128,11 +146,18 @@ in favor of the official 1000-demo dataset.
 
 ### Steps (in order)
 
-1. `train_baseline` — train on 100 D1 pool demos, seed=1
-2. `eval_baseline` — 500 episodes at test_start_seed=100000
-3. `compute_infembed` — InfEmbed attribution
-4. `run_clustering` — cluster with square parameters
-5. `mimicgen_budget_rep_sweep` — 3 seeds × 3 budgets × 3 heuristics = 27 arms
+1. `train_baseline` — train on 100 official D1 demos, seed=1
+2. `eval_baseline` — 500 episodes at test_start_seed=100000 (n_envs=28, save_episodes=True)
+3. `compute_policy_embeddings` — extract U-Net bottleneck activations on the eval rollouts
+4. `run_clustering` — k-means k=15 on UMAP(100) of the policy_emb representation
+5. `mimicgen_budget_rep_sweep` — 3 reps × 3 budgets × 2 heuristics = **18 arms** (budget-outer ordering)
+
+### Sweep arm ordering (May 24 update)
+
+Arms iterate **budget outer**: all 6 budget-100 arms (random×3 + behavior_graph×3)
+complete before budget-300 starts, so we get early signal on the smallest budget
+first. (Previously: heuristic-outer; small-budget arms were interleaved across
+the whole sweep.)
 
 ### Run Configuration
 
@@ -193,41 +218,73 @@ Modified to support non-square tasks. When `task_name != "square"`:
 |-------|--------|-------|
 | Phase 0: D1 pool generation | **Superseded** | Official 1000-demo dataset used instead |
 | Configs creation | **Done** | All configs created |
-| Phase 1: Baseline training | **Done** | Epoch 1751/1751; WandB `f118vzfc` |
-| Phase 1: Eval (500 eps) | **Done** | Ran in parallel (4 seeds × 125 eps) |
-| Phase 1: InfEmbed attribution | **Done** | cupid_torch2 env, ~4h |
-| Phase 1: run_clustering | **Done** | k=15, UMAP 100D, seed 1 |
-| Budget × rep sweep | **In progress** | Batch 1/3 training; see below |
+| May 20 sweep run | **INVALIDATED** | Shared-path bug (see below). 60h compute lost. |
+| May 24 relaunch — baseline train | **Done** | Reused via symlink, 1h saved |
+| May 24 relaunch — eval_baseline | **In progress** | Parallelized to n_envs=28 (was 1) |
+| May 24 relaunch — policy_emb + clustering | Pending | |
+| May 24 relaunch — sweep | Pending | 18 arms, budget-outer order |
 
-### Sweep progress as of May 20 2026 23:07 PDT
+---
 
-**Batch 1 (currently training, 3 concurrent arms on cuda:0):**
+## May 20 Run: Why It Was Invalidated
 
-| Arm | Epoch | Best score | Started |
-|-----|-------|-----------|---------|
-| random-budget100-rep2 | 1000/1751 | 0.720 | 00:37 May 20 |
-| random-budget100-rep1 | 1000/1751 | 0.740 | 00:37 May 20 |
-| random-budget300-rep1 | 1050/1751 | 0.660 | 00:38 May 20 |
+All 18 arms produced suspiciously uniform success rates (~58–69%). Root cause:
+**`generate_mimicgen_demos.py` wrote every arm's generated demos to the same
+path** — `data/outputs/mimicgen_datagen/demo_0/demo.hdf5`. Since the sweep
+runs arms concurrently with `skip_if_done=true`, the first arm to finish
+generation became the de-facto dataset for ALL subsequent arms regardless of
+heuristic, budget, or seed. The 58–69% spread was just training-time
+nondeterminism (tf32 + compile) on essentially identical data.
 
-ETA training complete: ~noon May 21. Eval (~8h each): ~8 PM May 21.
+Fixed in `e6f3f18`: each arm now writes to
+`<step_dir>/datagen/<seed_demo_key>/demo.hdf5`, isolated per arm.
 
-**Remaining arms:**
-- Batch 2: random-budget100-rep3, budget300-rep2, budget300-rep3
-- Batch 3: random-budget500 × 3
-- Then: behavior_graph arms (generate demos for 7 of 9 still needed)
-- Then: diversity arms
+The diversity heuristic separately failed all 9 of its arms with
+`DiversitySelectionHeuristic: no rollout matched any path to SUCCESS` — a
+clustering-quality issue (no rollout's cluster sequence matched any
+enumerated path through the behavior graph to a SUCCESS terminal).
 
-**Known issues fixed during run:**
-- `_orig_mod.` compiled checkpoint stripping in eval_save_episodes
-- `val_ratio=0.0` to avoid remainder assertion in combined training
-- `n_test_vis=0` to prevent offscreen render crash
-- `task_name=coffee_preparation` + `env_interface_name=MG_CoffeePreparation` in experiment config
-- `featurize_holdout=false` in attribution config (saves ~6h)
-- SSD symlinks for all data (boot drive crashed at 99% from 8 concurrent training jobs)
-- `DiversitySelectionHeuristic` pulled from main (was missing from this branch, diversity arms would have failed)
+---
 
-**Pipeline restart plan:**
-The running pipeline process (PID 3355011) has `heuristics.py` cached in memory with the old (no-diversity) version. A monitor is watching for arm completions. The pipeline will be restarted after the current Batch 1 completes (train + eval) so that subsequent batches and eventually the diversity arms load the correct code. The restart is safe because all completed steps have `done` sentinel files and will be skipped on resume.
+## May 24 Relaunch
+
+**Pipeline launched at 12:58 PDT, log: `logs/coffee_prep_d1_may18_pipeline_v2.log`.**
+
+### Issues hit and fixed this session
+
+1. **Hydra `+training.tf32` conflict** — the arch yaml now declares `tf32`/`compile`
+   as keys, so `+` (append-only) fails. Fixed: use `++` prefix in
+   `train_baseline.py` and `train_curated.py`.
+2. **`AsyncVectorEnv.reset_wait` AssertionError** — commit `f0adcdc` flipped
+   `shared_memory=False`, exposing a latent positional-arg bug in the local
+   `async_vector_env.py`: it called `concatenate(space, results, observations)`
+   but gym 0.21 expects `concatenate(items, out, space)`. Fixed both call
+   sites (lines 233, 296).
+3. **`train_baseline` checkpoint dir mismatch** — Hydra writes ckpts to
+   `outputs/<timestamp>/checkpoints/` but `eval_baseline` looks under
+   `multi_run.run_dir/checkpoints`. The fix existed in `train_on_combined_data.py`
+   (find latest `.hydra/overrides.yaml` matching `logging.name`, symlink
+   parent's `checkpoints` dir) but was missing from `train_baseline.py`.
+   Ported the symlink logic.
+4. **`eval_baseline` was sequential (n_envs=1)** — would have taken ~5h.
+   Commit `f0adcdc` lifted the `n_envs==1` restriction on `save_episodes=True`,
+   so eval_baseline now passes `--n_envs=28 --save_episodes=True`, completing
+   in ~10–15min.
+
+### Sweep config (relaunch)
+
+- 6 concurrent arms across cuda:0 (×3) and cuda:1 (×3)
+- Budget-outer ordering: all 6 budget-100 arms finish before budget-300 starts
+- Cuda:1 cutoff watcher running (PID logged in `logs/cuda1_cutoff.pid`),
+  fires 2.5h after launch (~15:24 PDT). In-flight cuda:1 arms get SIGTERM'd.
+
+### Open question
+
+**Timing of the cuda:1 cutoff:** Cutoff fires at ~15:24 but the sweep itself
+doesn't start until ~14:25 (after baseline train+eval+embed+cluster). That
+gives only ~1h of dual-GPU sweep time before cuda:1 work gets cancelled.
+Each sweep arm trains for 1.5–2h, so most cuda:1 progress would be wasted.
+Decision pending on whether to push the cutoff out.
 
 ---
 

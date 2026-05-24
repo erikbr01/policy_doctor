@@ -293,3 +293,28 @@ class TrainBaselineStep(PipelineStep[None]):
             raise RuntimeError(
                 f"[train_baseline] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"
             )
+        # Hydra writes checkpoints to a timestamped dir, not run_output_dir.
+        # Symlink so eval_baseline and downstream steps can find them.
+        ckpt_link = pathlib.Path(run_output_dir) / "checkpoints"
+        if not ckpt_link.exists() and not ckpt_link.is_symlink():
+            train_name_override = [o for o in cmd if "logging.name=" in o]
+            if train_name_override:
+                marker = train_name_override[0]
+                hydra_outputs_root = self.repo_root / "outputs"
+                match = None
+                for overrides_yaml in sorted(
+                    hydra_outputs_root.rglob(".hydra/overrides.yaml"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                ):
+                    try:
+                        if marker in overrides_yaml.read_text():
+                            hydra_ckpt = overrides_yaml.parent.parent / "checkpoints"
+                            if hydra_ckpt.exists():
+                                match = hydra_ckpt
+                                break
+                    except Exception:
+                        continue
+                if match:
+                    ckpt_link.symlink_to(match)
+                    print(f"  [train_baseline] linked checkpoints: {ckpt_link} -> {match}")
