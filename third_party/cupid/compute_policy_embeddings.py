@@ -1,204 +1,340 @@
-#!/usr/bin/env python3
-"""Compute and save policy embeddings for saved rollout episodes.
+"""Extract per-timestep policy embeddings from rollout episodes.
 
-Reads episode pkl files from <eval_dir>/episodes/, computes per-timestep
-embeddings, and writes <eval_dir>/policy_embeddings/<layer>.npz.
+Saves a (N_total_timesteps, D) array to
+    <eval_dir>/policy_embeddings/<layer>.npz   key: "rollout_embeddings"
 
-Layers
-------
-obs_encoder
-    Normalized observation history flattened: shape (D,) where
-    D = obs_dim * n_obs_steps. No UNet call needed — very fast.
-plan_bottleneck
-    UNet mid-block (last ConditionalResidualBlock1D) output averaged over
-    the time axis at denoising step t=0: shape (D,) where D = down_dims[-1].
+Layer name convention:  {hook}[_{action}][_t{T}]
 
-Usage
------
-python compute_policy_embeddings.py \\
-    --train_dir data/outputs/train/<date>/<run_name> \\
-    --train_ckpt latest \\
-    --eval_dir data/outputs/eval_save_episodes/<date>/<run_name>/latest \\
-    --layer plan_bottleneck \\
-    --device cuda:0
+  hook        Module to hook
+  --------    ------------------------------------------------------------
+  bottleneck  policy.model.mid_modules[-1]  (512D after global avg pool)
+  decoder     policy.model.up_modules[-1][1]  (up-block final resnet)
+  encoder     policy.model.down_modules[-1][1]  (down-block final resnet)
+
+  action      Action input to the UNet
+  --------    ------------------------------------------------------------
+  (omit)      Random noise — action washes out when averaged over t
+  plan        Full rollout action plan  (horizon × action_dim)
+  exec        action[0] tiled across the full horizon
+  plan8       First 8 executed steps, zero-padded to full horizon
+
+  t           Diffusion timestep
+  --------    ------------------------------------------------------------
+  (omit)      Average over n_noise_levels uniformly-spaced timesteps
+  _t{T}       Evaluate at the single timestep T  (0 = final denoising step)
+
+Examples
+--------
+  bottleneck               random noise, avg over 100t, bottleneck hook
+  bottleneck_plan_t0       actual plan,  t=0,            bottleneck hook  ← best known
+  decoder_plan_t0          actual plan,  t=0,            decoder hook
+  encoder_plan_t0          actual plan,  t=0,            encoder hook
+  bottleneck_exec_t0       exec action,  t=0,            bottleneck hook
+  bottleneck_plan8_t0      plan (8 steps + zero), t=0,   bottleneck hook
+  bottleneck_plan_t5       actual plan,  t=5,            bottleneck hook
+
+Usage (cupid_torch2 env, GPU):
+    python compute_policy_embeddings.py \\
+        --train_dir /path/to/train/run \\
+        --eval_dir  /path/to/eval/latest \\
+        --layer bottleneck_plan_t0 \\
+        --batch_size 128 --device cuda:0
 """
-
 from __future__ import annotations
 
 import pathlib
 import pickle
+import re
 import sys
-from typing import List
+from typing import Optional
 
-sys.stdout = open(sys.stdout.fileno(), mode="w", buffering=1)
-sys.stderr = open(sys.stderr.fileno(), mode="w", buffering=1)
-
-import click
 import numpy as np
-import pandas as pd
 import torch
+import tqdm
+import yaml
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from diffusion_policy.common.trak_util import (
     get_best_checkpoint,
     get_index_checkpoint,
     get_policy_from_checkpoint,
 )
+from diffusion_policy.policy.diffusion_unet_lowdim_policy import DiffusionUnetLowdimPolicy
+
+_SUPPORTED_POLICIES = (DiffusionUnetLowdimPolicy,)
 
 
-def _resolve_checkpoint(checkpoint_dir: pathlib.Path, train_ckpt: str) -> pathlib.Path:
-    checkpoints = list(checkpoint_dir.iterdir())
-    if train_ckpt == "latest":
-        # Highest epoch checkpoint (not the "latest.ckpt" symlink)
-        epoch_ckpts = sorted(
-            [c for c in checkpoints if c.suffix == ".ckpt" and "latest" not in c.name],
-            key=lambda p: int(p.stem.split("=")[1].split("-")[0]),
-        )
-        return epoch_ckpts[-1]
-    if train_ckpt == "best":
-        return get_best_checkpoint(checkpoints)
-    if train_ckpt.isdigit():
-        return get_index_checkpoint(checkpoints, int(train_ckpt))
-    return checkpoint_dir / f"{train_ckpt}.ckpt"
+# ---------------------------------------------------------------------------
+# Layer name parser
+# ---------------------------------------------------------------------------
+
+_LAYER_RE = re.compile(
+    r"^(?P<hook>bottleneck|decoder|encoder)"
+    r"(?:_(?P<action>plan8|plan|exec))?"
+    r"(?:_t(?P<t>\d+))?$"
+)
 
 
-def _load_episode_obs(pkl_path: pathlib.Path) -> np.ndarray:
-    """Return obs array of shape (T, n_obs_steps, obs_dim) from episode pkl."""
-    with open(pkl_path, "rb") as f:
-        df: pd.DataFrame = pickle.load(f)
-    obs_list = df["obs"].tolist()
-    return np.stack(obs_list, axis=0).astype(np.float32)  # (T, n_obs_steps, obs_dim)
+def _parse_layer(layer: str) -> dict:
+    """Parse a layer name into (hook, action, t_single).
 
-
-@torch.no_grad()
-def _compute_obs_encoder(
-    policy,
-    obs_windows: np.ndarray,
-    device: torch.device,
-    chunk_size: int = 256,
-) -> np.ndarray:
-    """obs_windows: (T, n_obs_steps, obs_dim) → (T, global_cond_dim)."""
-    T = obs_windows.shape[0]
-    action_dim = policy.action_dim
-    results = []
-    for start in range(0, T, chunk_size):
-        obs_chunk = torch.from_numpy(obs_windows[start : start + chunk_size]).to(device)
-        B = obs_chunk.shape[0]
-        batch = {
-            "obs": obs_chunk,
-            "action": torch.zeros(B, obs_chunk.shape[1], action_dim, device=device),
-        }
-        emb = policy.compute_obs_embedding(batch)  # (B, global_cond_dim)
-        results.append(emb.cpu().numpy())
-    return np.vstack(results)
-
-
-@torch.no_grad()
-def _compute_plan_bottleneck(
-    policy,
-    obs_windows: np.ndarray,
-    device: torch.device,
-    chunk_size: int = 128,
-) -> np.ndarray:
-    """obs_windows: (T, n_obs_steps, obs_dim) → (T, mid_dim).
-
-    Hooks the last mid_module of the ConditionalUnet1D and runs a forward
-    pass at denoising step t=0 with a zero-initialized noisy trajectory.
+    Returns dict with keys: hook, action (None/'plan'/'plan8'/'exec'), t_single (None or int).
     """
-    T = obs_windows.shape[0]
-    action_dim = policy.action_dim
+    m = _LAYER_RE.match(layer)
+    if m is None:
+        raise ValueError(
+            f"Unknown layer {layer!r}. Format: {{bottleneck|decoder|encoder}}"
+            f"[_{{plan|plan8|exec}}][_t{{0-99}}]"
+        )
+    return {
+        "hook":     m.group("hook"),
+        "action":   m.group("action"),   # None → random noise
+        "t_single": None if m.group("t") is None else int(m.group("t")),
+    }
+
+
+def _get_hook_module(model, hook: str):
+    if hook == "bottleneck":
+        return model.mid_modules[-1]
+    if hook == "decoder":
+        # last ResNet block in the last up_module (resnet, resnet2, upsample)
+        return model.up_modules[-1][1]
+    if hook == "encoder":
+        # last ResNet block in the last down_module (resnet, resnet2, downsample)
+        return model.down_modules[-1][1]
+    raise ValueError(f"Unknown hook: {hook}")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _load_episode_meta(eval_dir: pathlib.Path):
+    meta_path = eval_dir / "episodes" / "metadata.yaml"
+    with open(meta_path) as f:
+        meta = yaml.safe_load(f)
+    return meta["episode_lengths"], meta.get("episode_successes", [None] * len(meta["episode_lengths"]))
+
+
+def _list_episode_pkls(eval_dir: pathlib.Path):
+    pkls = sorted((eval_dir / "episodes").glob("ep*.pkl"))
+    if not pkls:
+        raise FileNotFoundError(f"No ep*.pkl under {eval_dir / 'episodes'}")
+    return pkls
+
+
+def _build_noise_schedule(n_infer: int, device: torch.device):
+    betas = torch.linspace(1e-4, 0.02, n_infer, device=device)
+    alphas_cumprod = torch.cumprod(1.0 - betas, dim=0)
+    return alphas_cumprod.sqrt(), (1.0 - alphas_cumprod).sqrt()
+
+
+def _build_action_batch(
+    policy,
+    action_arr: Optional[np.ndarray],  # (B, horizon, action_dim) or None
+    action_type: Optional[str],
+    device: torch.device,
+) -> Optional[torch.Tensor]:
+    """Return clean action tensor (B, horizon, action_dim) or None for random noise."""
+    if action_type is None:
+        return None
+    assert action_arr is not None
+    B, horizon, action_dim = action_arr.shape
+    if action_type == "plan":
+        clean = action_arr
+    elif action_type == "exec":
+        # tile action[0] across the full horizon
+        clean = np.tile(action_arr[:, 0:1, :], (1, horizon, 1))
+    elif action_type == "plan8":
+        # first 8 steps + zero-pad
+        clean = np.concatenate(
+            [action_arr[:, :8, :], np.zeros((B, horizon - 8, action_dim), dtype=np.float32)],
+            axis=1,
+        )
+    else:
+        raise ValueError(f"Unknown action_type: {action_type}")
+    return torch.as_tensor(clean, dtype=torch.float32, device=device)
+
+
+def _extract_batch(
+    policy: DiffusionUnetLowdimPolicy,
+    obs_batch: np.ndarray,          # (B, n_obs_steps, obs_dim)
+    action_batch: Optional[np.ndarray],  # (B, horizon, action_dim) or None
+    action_type: Optional[str],
+    hook_name: str,
+    n_noise_levels: int,
+    noise_step_indices: torch.Tensor,   # (N,) long
+    sqrt_alpha: torch.Tensor,
+    sqrt_one_minus_alpha: torch.Tensor,
+    device: torch.device,
+    batch_seed: int,
+) -> np.ndarray:
+    """Return (B, D) embedding for a batch of rollout timesteps."""
+    model = policy.model
+    B = len(obs_batch)
+    N = n_noise_levels
     horizon = policy.horizon
-    n_obs_steps = policy.n_obs_steps
+    action_dim = policy.action_dim
 
-    captured: List[np.ndarray] = []
+    # obs conditioning: (B, cond_dim) repeated N times → (B*N, cond_dim)
+    obs_t = torch.as_tensor(obs_batch, dtype=torch.float32, device=device)
+    global_cond = obs_t.reshape(B, -1).repeat_interleave(N, dim=0)  # (B*N, cond_dim)
 
-    def _hook(_module, _input, output):
-        # output: (B, mid_dim, horizon) → pool over time → (B, mid_dim)
-        captured.append(output.mean(dim=-1).cpu().numpy())
+    # fixed random noise (used as base noise regardless of action type)
+    rng = torch.Generator(device=device)
+    rng.manual_seed(batch_seed)
+    base_noise = torch.randn(B, horizon, action_dim, generator=rng, device=device)
+    base_noise_rep = base_noise.repeat_interleave(N, dim=0)  # (B*N, horizon, action_dim)
 
-    handle = policy.model.mid_modules[-1].register_forward_hook(_hook)
+    t_indices = noise_step_indices.repeat(B)    # (B*N,)
+    a = sqrt_alpha[t_indices].view(B * N, 1, 1)
+    s = sqrt_one_minus_alpha[t_indices].view(B * N, 1, 1)
 
-    results = []
-    try:
-        for start in range(0, T, chunk_size):
-            obs_chunk = torch.from_numpy(obs_windows[start : start + chunk_size]).to(device)
-            B = obs_chunk.shape[0]
+    clean_actions = _build_action_batch(policy, action_batch, action_type, device)
+    if clean_actions is not None:
+        clean_rep = clean_actions.repeat_interleave(N, dim=0)
+        noisy_actions = a * clean_rep + s * base_noise_rep
+    else:
+        noisy_actions = s * base_noise_rep
 
-            batch = {
-                "obs": obs_chunk,
-                "action": torch.zeros(B, obs_chunk.shape[1], action_dim, device=device),
-            }
-            nbatch = policy.normalizer.normalize(batch)
-            nobs = nbatch["obs"]
-            global_cond = nobs[:, :n_obs_steps, :].reshape(B, -1)
+    captured = []
+    hook_module = _get_hook_module(model, hook_name)
 
-            captured.clear()
-            noisy = torch.zeros(B, horizon, action_dim, device=device)
-            timestep = torch.zeros(B, dtype=torch.long, device=device)
-            policy.model(noisy, timestep, global_cond=global_cond)
-            results.append(captured[0])
-    finally:
-        handle.remove()
+    def _hook(module, inp, out):
+        # out may be a tuple (resnet blocks return tensor directly; but just in case)
+        feat = out[0] if isinstance(out, tuple) else out
+        captured.append(feat.detach().float().mean(dim=-1).cpu())  # global avg pool
 
-    return np.vstack(results)
+    handle = hook_module.register_forward_hook(_hook)
+    with torch.no_grad():
+        model(noisy_actions, t_indices, global_cond=global_cond)
+    handle.remove()
+
+    # (B*N, D) → (B, N, D) → mean over N → (B, D)
+    emb = captured[0].reshape(B, N, -1).mean(dim=1)
+    return emb.numpy().astype(np.float32)
 
 
-@click.command()
-@click.option("--train_dir", required=True, help="Training output directory")
-@click.option("--train_ckpt", default="latest", help="Checkpoint: 'latest', 'best', epoch index, or filename")
-@click.option("--eval_dir", required=True, help="Eval output directory (contains episodes/)")
-@click.option("--layer", default="plan_bottleneck", help="obs_encoder or plan_bottleneck")
-@click.option("--device", default="cuda:0")
-@click.option("--chunk_size", default=256, help="Batch size for embedding computation")
-@click.option("--overwrite", is_flag=True)
-def main(train_dir, train_ckpt, eval_dir, layer, device, chunk_size, overwrite):
-    train_dir = pathlib.Path(train_dir)
-    eval_dir = pathlib.Path(eval_dir)
-    out_dir = eval_dir / "policy_embeddings"
-    out_path = out_dir / f"{layer}.npz"
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
-    if out_path.exists() and not overwrite:
-        print(f"[compute_policy_embeddings] Already exists, skipping: {out_path}")
-        print("  Pass --overwrite to recompute.")
+def main():
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--train_dir", required=True)
+    ap.add_argument("--eval_dir", required=True)
+    ap.add_argument("--train_ckpt", default="best")
+    ap.add_argument("--layer", required=True,
+                    help="Layer name encoding hook, action type, and timestep.")
+    ap.add_argument("--n_noise_levels", type=int, default=None,
+                    help="Noise levels to average over. Defaults to policy.num_inference_steps. "
+                         "Ignored when layer contains _t{N} (single-step evaluation).")
+    ap.add_argument("--batch_size", type=int, default=128)
+    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--out_dir", default=None)
+    args = ap.parse_args()
+
+    parsed = _parse_layer(args.layer)
+    hook_name  = parsed["hook"]
+    action_type = parsed["action"]
+    t_single   = parsed["t_single"]
+    needs_actions = action_type is not None
+
+    train_dir = pathlib.Path(args.train_dir)
+    eval_dir  = pathlib.Path(args.eval_dir)
+    out_dir   = pathlib.Path(args.out_dir) if args.out_dir else eval_dir / "policy_embeddings"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path  = out_dir / f"{args.layer}.npz"
+    device    = torch.device(args.device)
+
+    if out_path.exists():
+        print(f"Output already exists, skipping: {out_path}")
         return
 
-    device = torch.device(device)
+    # Load checkpoint
+    checkpoint_dir = train_dir / "checkpoints"
+    checkpoints = list(checkpoint_dir.iterdir())
+    if args.train_ckpt == "best":
+        checkpoint = get_best_checkpoint(checkpoints)
+    elif args.train_ckpt.isdigit():
+        checkpoint = get_index_checkpoint(checkpoints, int(args.train_ckpt))
+    else:
+        checkpoint = checkpoint_dir / f"{args.train_ckpt}.ckpt"
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    # Load policy
-    ckpt = _resolve_checkpoint(train_dir / "checkpoints", train_ckpt)
-    print(f"[compute_policy_embeddings] Loading policy from {ckpt.name}")
-    policy, _cfg = get_policy_from_checkpoint(ckpt, device=device)
+    print(f"Loading policy from {checkpoint.name} …")
+    policy, _ = get_policy_from_checkpoint(checkpoint, device=device)
+    if not isinstance(policy, _SUPPORTED_POLICIES):
+        raise TypeError(f"Unsupported policy: {type(policy)}")
     policy.eval()
 
-    # Gather episode pkl files
-    ep_dir = eval_dir / "episodes"
-    pkl_files = sorted(ep_dir.glob("ep*.pkl"))
-    if not pkl_files:
-        raise FileNotFoundError(
-            f"No episode pkl files found in {ep_dir}. "
-            "Run eval_baseline with save_episodes=True first."
+    # Resolve noise levels and timestep indices
+    n_infer = policy.num_inference_steps
+    if t_single is not None:
+        noise_step_indices = torch.tensor([t_single], dtype=torch.long, device=device)
+        n_noise_levels = 1
+    else:
+        n_noise_levels = args.n_noise_levels or n_infer
+        noise_step_indices = torch.linspace(0, n_infer - 1, n_noise_levels,
+                                            dtype=torch.long, device=device)
+
+    print(f"Layer: {args.layer}  |  hook={hook_name}  action={action_type}  "
+          f"t={'single:'+str(t_single) if t_single is not None else f'avg:{n_noise_levels}'}  "
+          f"batch={args.batch_size}")
+
+    # Load episodes
+    ep_lens, _ = _load_episode_meta(eval_dir)
+    pkls = _list_episode_pkls(eval_dir)
+    assert len(pkls) == len(ep_lens)
+    N_total = sum(ep_lens)
+    print(f"Episodes: {len(pkls)}  |  Timesteps: {N_total}")
+
+    all_obs, all_actions = [], []
+    for ep_i, (pkl_path, ep_len) in enumerate(zip(pkls, ep_lens)):
+        with open(pkl_path, "rb") as f:
+            df = pickle.load(f)
+        assert len(df) == ep_len
+        for t in range(ep_len):
+            row = df.iloc[t]
+            obs = np.asarray(row["obs"], dtype=np.float32)
+            if obs.ndim == 1:
+                obs = obs[np.newaxis, :]
+            all_obs.append(obs)
+            if needs_actions:
+                all_actions.append(np.asarray(row["action"], dtype=np.float32))
+
+    all_obs_arr = np.stack(all_obs, axis=0)
+    all_actions_arr = np.stack(all_actions, axis=0) if needs_actions else None
+
+    sqrt_alpha, sqrt_one_minus_alpha = _build_noise_schedule(n_infer, device)
+
+    results = []
+    B = args.batch_size
+    for batch_start in tqdm.tqdm(range(0, N_total, B), desc="Batches"):
+        emb = _extract_batch(
+            policy,
+            all_obs_arr[batch_start: batch_start + B],
+            all_actions_arr[batch_start: batch_start + B] if needs_actions else None,
+            action_type,
+            hook_name,
+            n_noise_levels,
+            noise_step_indices,
+            sqrt_alpha,
+            sqrt_one_minus_alpha,
+            device,
+            batch_seed=batch_start,
         )
-    print(f"[compute_policy_embeddings] {len(pkl_files)} episodes | layer={layer} | device={device}")
+        results.append(emb)
 
-    # Compute embeddings per episode
-    all_embeddings = []
-    for i, pkl_path in enumerate(pkl_files):
-        obs_windows = _load_episode_obs(pkl_path)  # (T, n_obs_steps, obs_dim)
-        if layer == "obs_encoder":
-            emb = _compute_obs_encoder(policy, obs_windows, device, chunk_size=chunk_size)
-        elif layer == "plan_bottleneck":
-            emb = _compute_plan_bottleneck(policy, obs_windows, device, chunk_size=chunk_size)
-        else:
-            raise ValueError(f"Unknown layer: {layer!r}. Choose 'obs_encoder' or 'plan_bottleneck'.")
-        all_embeddings.append(emb)
-        if (i + 1) % 50 == 0 or (i + 1) == len(pkl_files):
-            print(f"  [{i + 1}/{len(pkl_files)}] episode shape={emb.shape}")
-
-    rollout_embeddings = np.vstack(all_embeddings)
-    print(f"[compute_policy_embeddings] Total embeddings: {rollout_embeddings.shape}")
-
-    out_dir.mkdir(parents=True, exist_ok=True)
+    rollout_embeddings = np.concatenate(results, axis=0)
+    print(f"Saving {rollout_embeddings.shape} → {out_path}")
     np.savez_compressed(out_path, rollout_embeddings=rollout_embeddings)
-    print(f"[compute_policy_embeddings] Saved: {out_path}")
+    print("Done.")
 
 
 if __name__ == "__main__":
