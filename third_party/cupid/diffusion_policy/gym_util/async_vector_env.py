@@ -231,7 +231,7 @@ class AsyncVectorEnv(VectorEnv):
 
         if not self.shared_memory:
             self.observations = concatenate(
-                self.single_observation_space, results, self.observations
+                results, self.observations, self.single_observation_space
             )
 
         return deepcopy(self.observations) if self.copy else self.observations
@@ -294,7 +294,7 @@ class AsyncVectorEnv(VectorEnv):
 
         if not self.shared_memory:
             self.observations = concatenate(
-                self.single_observation_space, observations_list, self.observations
+                observations_list, self.observations, self.single_observation_space
             )
 
         return (

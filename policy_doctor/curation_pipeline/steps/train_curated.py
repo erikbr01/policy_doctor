@@ -196,8 +196,8 @@ class TrainCuratedStep(PipelineStep[None]):
                 overrides.append(f"++task.env_runner.dataset_path={dataset_path_override}")
             overrides.extend(baseline_diffusion_extra_overrides(baseline))
             overrides.extend([
-                f"+training.tf32={str(tf32).lower()}",
-                f"+training.compile={str(compile_).lower()}",
+                f"++training.tf32={str(tf32).lower()}",
+                f"++training.compile={str(compile_).lower()}",
             ])
 
             if self.dry_run:

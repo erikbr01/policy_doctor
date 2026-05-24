@@ -209,11 +209,13 @@ class MimicgenBudgetRepSweepStep(PipelineStep[dict]):
 
         top_level_run_dir = self.run_dir
 
-        # Build the full (heuristic, budget, rep_seed) work list
+        # Build the full (heuristic, budget, rep_seed) work list.
+        # Budget OUTER so all budget-N arms (across heuristics, reps) complete
+        # before moving to budget-(N+1) — gives early signal on small budgets.
         arms = [
             (heuristic, budget, rep_seed)
-            for heuristic in heuristics
             for budget in budgets
+            for heuristic in heuristics
             for rep_seed in rep_seeds
         ]
 

@@ -130,8 +130,8 @@ class TrainBaselineStep(PipelineStep[None]):
                 )
                 overrides.extend(baseline_diffusion_extra_overrides(baseline))
                 overrides.extend([
-                    f"+training.tf32={str(tf32).lower()}",
-                    f"+training.compile={str(compile_).lower()}",
+                    f"++training.tf32={str(tf32).lower()}",
+                    f"++training.compile={str(compile_).lower()}",
                 ])
 
                 if self.dry_run:
@@ -175,8 +175,8 @@ class TrainBaselineStep(PipelineStep[None]):
                     f"logging.project={project}",
                     f"multi_run.wandb_name_base={train_name}",
                     f"multi_run.run_dir={run_output_dir}",
-                    f"+training.tf32={str(tf32).lower()}",
-                    f"+training.compile={str(compile_).lower()}",
+                    f"++training.tf32={str(tf32).lower()}",
+                    f"++training.compile={str(compile_).lower()}",
                 ]
                 overrides.extend(baseline_diffusion_extra_overrides(baseline))
 

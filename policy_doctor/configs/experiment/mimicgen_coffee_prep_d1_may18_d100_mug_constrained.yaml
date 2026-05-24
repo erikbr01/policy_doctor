@@ -21,7 +21,7 @@
 #   python -m policy_doctor.scripts.run_pipeline \
 #     data_source=mimicgen_coffee_preparation \
 #     +experiment=mimicgen_coffee_prep_d1_may18_d100_mug_constrained \
-#     steps=[train_baseline,eval_baseline,compute_infembed,run_clustering,mimicgen_budget_rep_sweep]
+#     steps=[train_baseline,eval_baseline,compute_policy_embeddings,run_clustering,mimicgen_budget_rep_sweep]
 #
 # Or via the launch script:
 #   ./scripts/run_coffee_prep_d1_may18_sweep.sh
@@ -58,8 +58,9 @@ clustering_dir: /home/erbauer/refactor_cupid/policy_doctor/third_party/influence
 # Point arms to the top-level pipeline run_dir so they can find run_clustering/result.json
 clustering_run_dir: data/pipeline_runs/mimicgen_coffee_prep_d1_may18_seed1_d100_mug_constrained
 
-# Clustering — same parameters as square apr26 experiments
-clustering_influence_source: infembed
+# Clustering — policy embeddings (bottleneck_plan_t0, U-Net mid-block at plan t=0)
+clustering_influence_source: policy_emb
+clustering_policy_emb_layer: bottleneck_plan_t0
 clustering_level: rollout
 clustering_demo_split: train
 clustering_window_width: 5
@@ -100,12 +101,13 @@ mimicgen_datagen:
 
 # ---------------------------------------------------------------------------
 # Rep sweep: three fixed selection seeds (no null/random first phase)
-# Device: cuda:0 × 3 slots (one GPU, three concurrent arms)
+# Devices: 6 concurrent arms split across cuda:0 and cuda:1.
+# After ~2.5h kill the cuda:1 slots (GPU 1 reserved for other work).
 # ---------------------------------------------------------------------------
 mimicgen_budget_rep_sweep:
-  heuristics: [random, behavior_graph, diversity]
+  heuristics: [random, behavior_graph]
   budgets: [100, 300, 500]
   rep_seeds: [1, 2, 3]
-  devices: [cuda:0, cuda:0, cuda:0]
+  devices: [cuda:0, cuda:0, cuda:0, cuda:1, cuda:1, cuda:1]
 
-steps: [mimicgen_budget_rep_sweep]
+steps: [train_baseline, eval_baseline, compute_policy_embeddings, run_clustering, mimicgen_budget_rep_sweep]
