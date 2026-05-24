@@ -37,7 +37,7 @@ attribution:
   eval_date:  may20_three_piece_assembly_d1_d100_piece1_constrained
 
 clustering_influence_source: policy_emb
-clustering_policy_emb_layer: plan_bottleneck
+clustering_policy_emb_layer: bottleneck_plan_t0
 clustering_level: rollout
 clustering_demo_split: train
 clustering_window_width: 5
