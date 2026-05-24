@@ -76,7 +76,7 @@ mimicgen_datagen:
     bread:
       x: [-0.04, 0.04]
       y: [-0.04, 0.04]
-      z_rot: [-1.047, 1.047]
+      z_rot: null
     pot:
       x: null
       y: null

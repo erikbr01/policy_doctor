@@ -67,7 +67,7 @@ mimicgen_datagen:
     piece_1:
       x: [-0.04, 0.04]
       y: [-0.04, 0.04]
-      z_rot: [-1.047, 1.047]
+      z_rot: null
     piece_2:
       x: null
       y: null
