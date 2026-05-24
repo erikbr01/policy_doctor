@@ -104,14 +104,17 @@ mimicgen_datagen:
       z_rot: null
 
 # ---------------------------------------------------------------------------
-# Rep sweep: three fixed selection seeds (no null/random first phase)
-# Devices: 6 concurrent arms split across cuda:0 and cuda:1.
-# After ~2.5h kill the cuda:1 slots (GPU 1 reserved for other work).
+# Rep sweep: 6 arms total (2 heuristics × 3 reps), budget=100 only.
+# All on cuda:0 (mimicgen generation is MuJoCo/CPU-bound; GPU 0 stays idle
+# during gen, training is the only GPU-heavy step and arms train sequentially
+# anyway). GPU 1 is reserved for other users.
+# 300/500 budgets dropped — we want a clean budget=100 random-vs-BG comparison
+# first; add larger budgets after this lands.
 # ---------------------------------------------------------------------------
 mimicgen_budget_rep_sweep:
   heuristics: [random, behavior_graph]
-  budgets: [100, 300, 500]
+  budgets: [100]
   rep_seeds: [1, 2, 3]
-  devices: [cuda:0, cuda:0, cuda:0, cuda:1, cuda:1, cuda:1]
+  devices: [cuda:0, cuda:0, cuda:0, cuda:0, cuda:0, cuda:0]
 
 steps: [train_baseline, eval_baseline, compute_policy_embeddings, run_clustering, mimicgen_budget_rep_sweep]

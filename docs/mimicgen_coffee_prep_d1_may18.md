@@ -5,6 +5,136 @@
 
 ---
 
+## Run Commands (May 24 v13 — budget=100 only, random vs BG)
+
+```bash
+# From the worktree root: /home/erbauer/refactor_cupid/policy_doctor/.claude/worktrees/feat+mimicgen-traj-pipeline
+
+# 0. ONE-TIME: pre-prepare the coffee_prep_d1 source dataset (adds datagen_info via prepare_src_dataset).
+# Skip if third_party/cupid/data/source/mimicgen/core_datasets/coffee_preparation_d1_prepared/demo.hdf5 already exists.
+cp third_party/cupid/data/source/mimicgen/core_datasets/coffee_preparation_d1_official/core/coffee_preparation_d1.hdf5 \
+   third_party/cupid/data/source/mimicgen/core_datasets/coffee_preparation_d1_prepared/demo.hdf5
+conda run -n mimicgen_torch2 --no-capture-output python -c "
+import sys; sys.path.insert(0, 'third_party/mimicgen'); sys.path.insert(0, '.')
+from scripts.run_mimicgen_generate import _ensure_mimicgen_on_path, _apply_robomimic_base_env_shim
+_ensure_mimicgen_on_path(); _apply_robomimic_base_env_shim()
+from mimicgen.scripts.prepare_src_dataset import prepare_src_dataset
+prepare_src_dataset(
+    dataset_path='third_party/cupid/data/source/mimicgen/core_datasets/coffee_preparation_d1_prepared/demo.hdf5',
+    env_interface_name='MG_CoffeePreparation', env_interface_type='robosuite',
+    filter_key=None, n=None, output_path=None,
+)
+"
+
+# 1. Clean stale per-arm state from prior failed attempts.
+RD=third_party/cupid/data/pipeline_runs/mimicgen_coffee_prep_d1_may18_seed1_d100_mug_constrained
+SSD_RD=/mnt/ssdB/erik/cupid_data/worktree_data/pipeline_runs/mimicgen_coffee_prep_d1_may18_seed1_d100_mug_constrained
+rm -rf "$RD/mimicgen_budget_rep_sweep/mimicgen_"*
+rm -rf "$SSD_RD/mimicgen_budget_rep_sweep/mimicgen_"* 2>/dev/null
+rm -f "$RD/mimicgen_budget_rep_sweep/done" "$RD/mimicgen_budget_rep_sweep/result.json"
+rm -f "$SSD_RD/mimicgen_budget_rep_sweep/done" "$SSD_RD/mimicgen_budget_rep_sweep/result.json" 2>/dev/null
+
+# 2. Launch the pipeline (cuda:0 only, 6 concurrent arms — gen is MuJoCo/CPU-bound).
+mkdir -p logs
+nohup conda run -n policy_doctor --no-capture-output python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_coffee_preparation \
+  experiment=mimicgen_coffee_prep_d1_may18_d100_mug_constrained \
+  >> logs/coffee_prep_d1_may18_pipeline_v2.log 2>&1 &
+echo $! > logs/coffee_prep_d1_may18_pipeline_v2.pid
+disown
+
+# 3. Monitor.
+tail -F logs/coffee_prep_d1_may18_pipeline_v2.log
+
+# 4. Per-arm generation rate (rolled-up across passes).
+for arm_dir in $RD/mimicgen_budget_rep_sweep/mimicgen_*; do
+  arm=$(basename "$arm_dir")
+  stats_files=$(find "$arm_dir/generate_mimicgen_demos" -name "stats.json" 2>/dev/null)
+  [ -z "$stats_files" ] && continue
+  python3 -c "
+import json, sys
+s=a=0
+for f in '''$stats_files'''.split():
+    d=json.load(open(f)); s+=d.get('num_success',0); a+=d.get('num_attempts',0)
+if a>0: print(f'  $arm: {s}/{a} = {s/a*100:.1f}%')
+"
+done
+
+# 5. Per-arm final eval (after train_on_combined_data + eval_mimicgen_combined complete).
+for d in $RD/mimicgen_budget_rep_sweep/mimicgen_*/eval_mimicgen_combined/result.json; do
+  arm=$(basename "$(dirname "$(dirname "$d")")")
+  python3 -c "
+import json
+r = json.load(open('$d'))
+print(f'  {\"$arm\"}: mean={r[\"mean_success_rate\"]:.3f}  best={r[\"best_success_rate\"]:.3f}')
+"
+done
+
+# 6. Kill if needed (process tree).
+PIPE=$(cat logs/coffee_prep_d1_may18_pipeline_v2.pid)
+pkill -KILL -P "$PIPE"; kill -KILL "$PIPE"; pkill -KILL -f "run_mimicgen_generate"
+```
+
+### Changing the budget set
+
+Two configs and one Hydra override knob control the budget × parallelism shape.
+To change the sweep (e.g. add budget=300/500 back, or split across more GPUs):
+
+**A. Edit the experiment yaml** —
+`policy_doctor/configs/experiment/mimicgen_coffee_prep_d1_may18_d100_mug_constrained.yaml`,
+block `mimicgen_budget_rep_sweep`:
+
+```yaml
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph]   # add 'diversity' if it stops failing
+  budgets: [100]                          # ← edit this; e.g. [100, 300, 500]
+  rep_seeds: [1, 2, 3]                    # variance replicates per (heuristic, budget)
+  devices: [cuda:0, cuda:0, cuda:0,       # ← one entry per concurrent worker
+            cuda:0, cuda:0, cuda:0]       #   total arms = len(heuristics)*len(budgets)*len(rep_seeds)
+```
+
+The sweep dispatches arms in **budget-outer order**
+(`for budget in budgets: for heuristic in heuristics: for rep_seed in rep_seeds`)
+so adding budgets later doesn't push the budget=100 results back. See
+`policy_doctor/curation_pipeline/steps/mimicgen_budget_sweep.py:213` (the
+`arms = [...]` list comprehension) if you want to change that order.
+
+**B. CLI Hydra override** — same change without editing the yaml:
+
+```bash
+... +mimicgen_budget_rep_sweep.budgets='[100,300]' \
+... +mimicgen_budget_rep_sweep.devices='[cuda:0,cuda:0,cuda:0,cuda:0,cuda:0,cuda:0]'
+```
+
+**C. Per-arm generation budget mechanics** — at the arm level, `budget` becomes
+`mimicgen_datagen.success_budget` (read in
+`policy_doctor/curation_pipeline/steps/generate_mimicgen_demos.py:282`). The
+adaptive retry loop (`while total_successes < success_budget and total_trials < max_total_trials`)
+keeps issuing trials in per-seed passes until either the budget's worth of
+successes lands, or `20 × success_budget` total trials have been attempted —
+whichever first. At ~30% gen success that's roughly:
+
+| budget | min trials | max trials | wall (1 arm, sequential) | wall (6 in parallel) |
+|--------|-----------|-----------|--------------------------|----------------------|
+| 100    | ~333      | 2000      | ~1.5–2h                  | ~1.5–2h              |
+| 300    | ~1000     | 6000      | ~4.5–6h                  | ~4.5–6h              |
+| 500    | ~1666     | 10000     | ~7.5–10h                 | ~7.5–10h             |
+
+The hard cap (`max_total_trials = success_budget * 20`) is set in
+`generate_mimicgen_demos.py:550` if you ever need to push it.
+
+**D. Stale state to clean before relaunching a different budget set** — the
+sweep step caches each arm's per-step `done` sentinels. Add or remove arms
+without re-running already-completed ones by leaving those step_dirs intact,
+but always nuke the **sweep-level** sentinel so the orchestrator re-scans:
+
+```bash
+RD=third_party/cupid/data/pipeline_runs/mimicgen_coffee_prep_d1_may18_seed1_d100_mug_constrained
+rm -f "$RD/mimicgen_budget_rep_sweep/done" "$RD/mimicgen_budget_rep_sweep/result.json"
+```
+
+---
+
 ## Experiment Design
 
 ### Task: CoffeePreparation_D1
@@ -41,6 +171,13 @@ on May 24 — in the May 20 run all 9 diversity arms failed with
 `DiversitySelectionHeuristic: no rollout matched any path to SUCCESS`. Whether
 the new policy_emb-based clustering fixes that is an open question; we'll add
 diversity back if early budget-100 results look clean.
+
+### Budgets (May 24 update)
+
+Scoped down to `budgets: [100]` only for the first lap — clean random vs BG
+comparison at the smallest budget gets us a result in ~3-4h instead of
+~20h+. Larger budgets (300, 500) are intentionally deferred until we've
+seen budget=100 outcomes and decided they justify the additional compute.
 
 ### Selection Seeds
 
