@@ -78,10 +78,7 @@ mimicgen_datagen:
       x: [-0.04, 0.04]
       y: [-0.04, 0.04]
       z_rot: null
-    tripod:
-      x: null
-      y: null
-      z_rot: null
+    tripod: null
 
 mimicgen_budget_rep_sweep:
   heuristics: [random, behavior_graph, diversity]

@@ -77,22 +77,10 @@ mimicgen_datagen:
       x: [-0.04, 0.04]
       y: [-0.04, 0.04]
       z_rot: null
-    pot:
-      x: null
-      y: null
-      z_rot: null
-    stove:
-      x: null
-      y: null
-      z_rot: null
-    button:
-      x: null
-      y: null
-      z_rot: null
-    serving_region:
-      x: null
-      y: null
-      z_rot: null
+    pot: null
+    stove: null
+    button: null
+    serving_region: null
 
 mimicgen_budget_rep_sweep:
   heuristics: [random, behavior_graph, diversity]
