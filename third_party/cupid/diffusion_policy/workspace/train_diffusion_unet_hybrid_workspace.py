@@ -424,6 +424,13 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                     json_logger.log(step_log)
                 self.global_step += 1
                 self.epoch += 1
+                # Release CUDA caching-allocator blocks retained by the prior
+                # epoch's DataPrefetcher stream (record_stream pins blocks
+                # until the stream catches up; recreating the prefetcher each
+                # epoch can otherwise let those pins accumulate as a slow
+                # VRAM creep across hundreds of epochs).
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
                 if terminate_training or (
                     _num_steps is not None and self.global_step >= _num_steps
                 ):

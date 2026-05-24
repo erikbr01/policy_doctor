@@ -99,6 +99,16 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                         print("Saving cache to disk.")
                         with zarr.ZipStore(cache_zarr_path) as zip_store:
                             replay_buffer.save_to_store(store=zip_store)
+                        # Re-open from the freshly-written cache before the
+                        # backing tmp_dir is removed — otherwise downstream
+                        # `replay_buffer.<accessor>` calls would hit a
+                        # KeyError('meta') / KeyError('data') on the deleted
+                        # DirectoryStore.
+                        with zarr.ZipStore(cache_zarr_path, mode="r") as zip_store:
+                            store = None if load_to_memory else zarr.MemoryStore()
+                            replay_buffer = ReplayBuffer.copy_from_store(
+                                src_store=zip_store, store=store
+                            )
                         shutil.rmtree(tmp_dir)
                     except Exception as e:
                         shutil.rmtree(cache_zarr_path, ignore_errors=True)
