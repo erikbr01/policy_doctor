@@ -19,6 +19,7 @@ from policy_doctor.data.clustering_embeddings import (
     extract_infembed_slice_windows,
     extract_trak_slice_windows,
 )
+from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
 from policy_doctor.paths import PACKAGE_ROOT, iv_task_configs_base
 
 
@@ -93,6 +94,18 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                     seed, reference_seed,
                     window_width, stride, aggregation, demo_split, level,
                 )
+            elif influence_source in ("policy_emb", "pi05_activations"):
+                if level == "demo":
+                    raise ValueError(
+                        "level='demo' is not supported for policy_emb "
+                        "(policy embeddings are per-rollout-timestep only)"
+                    )
+                layer = OmegaConf.select(cfg, "clustering_policy_emb_layer") or "plan_bottleneck"
+                rep = PolicyEmbeddingRepresentation()
+                params_rep = SliceWindowParams(
+                    window_width=window_width, stride=stride, aggregation=aggregation
+                )
+                embeddings_arr, all_metadata = rep.extract(eval_dir_abs, params_rep, layer=layer)
             else:
                 if level == "demo":
                     raise ValueError(

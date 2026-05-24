@@ -21,6 +21,7 @@ ALL_STEPS: List[str] = [
     "train_attribution",
     "finalize_attribution",
     "compute_demonstration_scores",
+    "compute_policy_embeddings",
     "compute_infembed",
     "run_clustering",
     "export_markov_report",
@@ -53,6 +54,7 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
     from policy_doctor.curation_pipeline.steps.train_attribution import TrainAttributionStep
     from policy_doctor.curation_pipeline.steps.finalize_attribution import FinalizeAttributionStep
     from policy_doctor.curation_pipeline.steps.compute_demonstration_scores import ComputeDemonstrationScoresStep
+    from policy_doctor.curation_pipeline.steps.compute_policy_embeddings import ComputePolicyEmbeddingsStep
     from policy_doctor.curation_pipeline.steps.compute_infembed import ComputeInfembedStep
     from policy_doctor.curation_pipeline.steps.run_clustering import RunClusteringStep
     from policy_doctor.curation_pipeline.steps.export_markov_report import ExportMarkovReportStep
@@ -88,6 +90,7 @@ def _build_step_registry() -> Dict[str, Type[PipelineStep]]:
         "train_attribution": TrainAttributionStep,
         "finalize_attribution": FinalizeAttributionStep,
         "compute_demonstration_scores": ComputeDemonstrationScoresStep,
+        "compute_policy_embeddings": ComputePolicyEmbeddingsStep,
         "compute_infembed": ComputeInfembedStep,
         "run_clustering": RunClusteringStep,
         "export_markov_report": ExportMarkovReportStep,
