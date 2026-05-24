@@ -39,19 +39,251 @@ All other objects unconstrained (`null` = use D1 env range). The z_rot=null chan
 
 `devices: [cuda:0, cuda:1, cuda:2, cuda:3, cuda:0, cuda:1, cuda:2, cuda:3, cuda:0]` — 9 slots = all 9 arms in parallel.
 
-### Pipeline commands
+---
+
+## How to Run This Pipeline (Full Reference)
+
+### Configs to set per experiment
+
+For each task there are **3 yaml files** to align before running. Listed for kitchen; analogous files exist for threading (`mimicgen_threading_d1_may20_d100_needle_constrained.yaml`, target=`needle`) and TPA (`mimicgen_three_piece_assembly_d1_may20_d100_piece1_constrained.yaml`, target=`piece_1`).
+
+**1. Experiment yaml** — `policy_doctor/configs/experiment/mimicgen_kitchen_d1_may20_d100_bread_constrained.yaml`
+
+Key fields (current working values):
+
+```yaml
+task_config: kitchen_d1_may20
+experiment_name: mimicgen_kitchen_d1_may20_d100_bread_constrained
+run_dir: data/pipeline_runs/mimicgen_kitchen_d1_may20_seed1_d100_bread_constrained
+
+seeds: [1]
+reference_seed: 1
+train_date: may20_kitchen_d1_d100_bread_constrained
+device: cuda:0
+project: mimicgen_kitchen
+
+baseline:
+  max_train_episodes: 100
+  checkpoint_topk: 5
+  num_epochs: 750
+
+evaluation:
+  train_date: may20_kitchen_d1_d100_bread_constrained
+  eval_date:  may20_kitchen_d1_d100_bread_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: may20_kitchen_d1_d100_bread_constrained
+  eval_date:  may20_kitchen_d1_d100_bread_constrained
+
+# Clustering — MUST be policy_emb with bottleneck_plan_t0
+clustering_influence_source: policy_emb
+clustering_policy_emb_layer: bottleneck_plan_t0
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# MimicGen generation: target the bread initial pose only; pin every other object at seed.
+# OMIT z_rot from bread → defaults to [0,0] offset = pin at seed (otherwise the
+# place_bread_in_pot subtask fails 47% of the time per the round-2 diagnosis).
+mimicgen_datagen:
+  task_name: kitchen
+  env_interface_name: MG_Kitchen
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen     # ignored — actual writes go to step_dir/datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  num_trials: 500            # initial pass size; adaptive loop overrides via success_budget
+  guarantee: true
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    bread:
+      x: [-0.04, 0.04]
+      y: [-0.04, 0.04]
+      # z_rot intentionally omitted → pin at seed
+    pot: null                # whole-object null = pin at seed (NOT per-axis null)
+    stove: null
+    button: null
+    serving_region: null
+
+# Sweep — heuristic × budget × rep
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 300, 500]
+  rep_seeds: [1, 2, 3]
+  devices: [cuda:0, cuda:0, cuda:0, cuda:1, cuda:1, cuda:1]   # baseline device pool; override on CLI
+
+# clustering_dir intentionally unset — let run_clustering produce a fresh result
+# clustering_dir: ...
+clustering_run_dir: data/pipeline_runs/mimicgen_kitchen_d1_may20_seed1_d100_bread_constrained
+
+steps: [mimicgen_budget_rep_sweep]   # default; the wave commands below override `steps=` on CLI
+```
+
+**Key YAML semantics gotchas:**
+- `pot: null` (whole-object null) → pin all axes at seed pose. ✓ what we want for non-target objects.
+- `pot: {x: null, y: null, z_rot: null}` (per-axis null) → randomize each axis over D1 env range. ✗ silently breaks the experiment.
+- Omitting an axis from a target object's dict (e.g. just `x: …, y: …`) → defaults to `[0,0]` offset = pin at seed.
+
+**2. Task IV config** — `third_party/influence_visualizer/configs/kitchen_d1_may20.yaml`
+Resolves the eval_dir for `run_clustering` and `select_mimicgen_seed`. Don't usually need to touch.
+
+**3. Cupid arch config** — `third_party/cupid/configs/low_dim/kitchen_mimicgen_lowdim/diffusion_policy_cnn/config.yaml`
+Diffusion policy hyperparameters. Already tuned.
+
+### Defaults that must be in code (not config)
+
+These live in pipeline-step code and override config defaults if the YAML doesn't set them. Confirm before running:
+
+- `run_clustering.py` defaults: `clustering_influence_source = "policy_emb"`, `clustering_policy_emb_layer = "bottleneck_plan_t0"` (commit `8629537`).
+- `compute_policy_embeddings.py` (cupid) is main's canonical version: regex-parsed layer grammar including `bottleneck_plan_t0` (restored in commit `d546a2d`).
+- `run_mimicgen_generate.py` — gates the square_nut/square_peg hardcode behind `if task_name == "square"` (commit `7ea2bb9`); applies CLI variance knobs to every subtask for non-square tasks.
+- `generate_mimicgen_demos.py` — has the adaptive retry loop (restored in `f2e42c9`): keeps passing until `success_budget` is met or `success_budget * 20` total trials.
+
+### Pre-flight checklist
 
 ```bash
-# Kitchen budget=100 (currently running)
-python -m policy_doctor.scripts.run_pipeline \
+# 1. Branch + remote in sync
+cd /home/erbauer/policy_doctor
+git log --oneline -1   # should be one of: 3b17e4c, 7ea2bb9 or later
+git status --short    # tracked changes empty
+
+# 2. No leftover pipeline/mimicgen processes
+ps -eo cmd | grep -E "run_mimicgen_generate|policy_doctor.scripts.run_pipeline|conda run -n mimicgen_torch2" | grep -v grep | wc -l   # must be 0
+
+# 3. Baseline state per task (D D . . . means train_baseline + eval_baseline done, rest pending)
+for run in mimicgen_kitchen_d1_may20_seed1_d100_bread_constrained \
+           mimicgen_threading_d1_may20_seed1_d100_needle_constrained \
+           mimicgen_three_piece_assembly_d1_may20_seed1_d100_piece1_constrained; do
+  echo "$run"
+  for sub in train_baseline eval_baseline compute_policy_embeddings run_clustering mimicgen_budget_rep_sweep; do
+    [ -f "third_party/cupid/data/pipeline_runs/$run/$sub/done" ] && echo "  ✓ $sub" || echo "  · $sub"
+  done
+done
+
+# 4. Disk + GPU + RAM
+df -h /home/erbauer | head -3
+nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader
+free -h | awk '/Mem/{print "RAM used="$3" avail="$7}'
+```
+
+### Pipeline commands (wave-by-wave)
+
+**Wave 0 (one-time per task, only if not already done):** train baseline + eval_baseline. Both are `D D` in the checklist above for all three tasks — skip unless you reset.
+
+**Wave 1 — kitchen, budget=100, 9 arms across all 4 GPUs (currently running):**
+
+```bash
+mkdir -p logs
+nohup conda run -n policy_doctor --no-capture-output python -m policy_doctor.scripts.run_pipeline \
   experiment=mimicgen_kitchen_d1_may20_d100_bread_constrained \
   data_source=mimicgen_kitchen \
   steps=[compute_policy_embeddings,run_clustering,mimicgen_budget_rep_sweep] \
-  mimicgen_budget_rep_sweep.budgets=[100] \
-  mimicgen_budget_rep_sweep.devices=[cuda:0,cuda:1,cuda:2,cuda:3,cuda:0,cuda:1,cuda:2,cuda:3,cuda:0]
+  mimicgen_budget_rep_sweep.budgets='[100]' \
+  'mimicgen_budget_rep_sweep.devices=[cuda:0,cuda:1,cuda:2,cuda:3,cuda:0,cuda:1,cuda:2,cuda:3,cuda:0]' \
+  > logs/kitchen_b100.log 2>&1 &
 ```
 
-After budget=100 wave finishes (incl. evals), repeat with `budgets=[300]`, then `[500]`. Then run the same for threading and TPA.
+Note: `experiment=...` (NOT `+experiment=...`) because the base config already declares `experiment: null`.
+
+**Wave 2 — kitchen, budget=300:** same command, change `budgets='[100]'` to `budgets='[300]'` and log to `logs/kitchen_b300.log`. (compute_policy_embeddings + run_clustering will auto-skip since they're already done.)
+
+**Wave 3 — kitchen, budget=500:** `budgets='[500]'`, log to `logs/kitchen_b500.log`.
+
+**Waves 4-6 — threading:** swap `experiment=` and `data_source=` to threading variants. Per-task device pool — kitchen + TPA share `cuda:0/1` per their yaml; threading owns `cuda:2/3`. Either let kitchen finish first or override `devices=` on CLI to spread.
+
+```bash
+nohup conda run -n policy_doctor --no-capture-output python -m policy_doctor.scripts.run_pipeline \
+  experiment=mimicgen_threading_d1_may20_d100_needle_constrained \
+  data_source=mimicgen_threading \
+  steps=[compute_policy_embeddings,run_clustering,mimicgen_budget_rep_sweep] \
+  mimicgen_budget_rep_sweep.budgets='[100]' \
+  'mimicgen_budget_rep_sweep.devices=[cuda:0,cuda:1,cuda:2,cuda:3,cuda:0,cuda:1,cuda:2,cuda:3,cuda:0]' \
+  > logs/threading_b100.log 2>&1 &
+```
+
+**Waves 7-9 — TPA:** analogous.
+
+```bash
+nohup conda run -n policy_doctor --no-capture-output python -m policy_doctor.scripts.run_pipeline \
+  experiment=mimicgen_three_piece_assembly_d1_may20_d100_piece1_constrained \
+  data_source=mimicgen_three_piece_assembly \
+  steps=[compute_policy_embeddings,run_clustering,mimicgen_budget_rep_sweep] \
+  mimicgen_budget_rep_sweep.budgets='[100]' \
+  'mimicgen_budget_rep_sweep.devices=[cuda:0,cuda:1,cuda:2,cuda:3,cuda:0,cuda:1,cuda:2,cuda:3,cuda:0]' \
+  > logs/tpa_b100.log 2>&1 &
+```
+
+### Live monitoring
+
+```bash
+# Active arm processes
+ps -eo cmd | grep "python /home/erbauer/policy_doctor/scripts/run_mimicgen_generate" | grep -v grep | wc -l
+
+# Per-arm progress (replace TASK with kitchen / threading / three_piece_assembly)
+TASK=kitchen; CONSTRAINT=bread
+SWEEP="third_party/cupid/data/pipeline_runs/mimicgen_${TASK}_d1_may20_seed1_d100_${CONSTRAINT}_constrained/mimicgen_budget_rep_sweep"
+for arm in "$SWEEP"/mimicgen_*/; do
+  name=$(basename "$arm")
+  states=""
+  [ -f "$arm/select_mimicgen_seed/done" ] && states+="SEL "
+  [ -f "$arm/generate_mimicgen_demos/done" ] && states+="GEN "
+  [ -f "$arm/train_on_combined_data/done" ] && states+="TRAIN "
+  [ -f "$arm/eval_mimicgen_combined/done" ] && states+="EVAL "
+  printf "  %-50s %s\n" "$name" "$states"
+done
+
+# Per-arm MimicGen success rate
+for s in $(find "$SWEEP" -name "stats.json" 2>/dev/null); do
+  ns=$(grep -oE '"num_success"[: ]+[0-9]+' "$s" | head -1 | awk '{print $NF}')
+  na=$(grep -oE '"num_attempts"[: ]+[0-9]+' "$s" | head -1 | awk '{print $NF}')
+  arm=$(echo "$s" | grep -oE 'mimicgen_[^/]+_budget[0-9]+_rep[0-9]')
+  echo "  $arm: $ns/$na"
+done
+```
+
+### Stop + clean (between waves or after a failed run)
+
+```bash
+# Kill all pipeline + mimicgen processes (use this — don't rely on pkill alone)
+ps -eo pid,cmd | grep -E "run_mimicgen_generate|policy_doctor.scripts.run_pipeline|conda run -n (mimicgen_torch2|policy_doctor)" \
+  | grep -v grep | awk '{print $1}' | xargs -r kill -9
+sleep 3
+
+# Clean a failed kitchen sweep (replace TASK / CONSTRAINT for other tasks)
+TASK=kitchen; CONSTRAINT=bread
+SWEEP="third_party/cupid/data/pipeline_runs/mimicgen_${TASK}_d1_may20_seed1_d100_${CONSTRAINT}_constrained/mimicgen_budget_rep_sweep"
+rm -rf "$SWEEP"/mimicgen_*
+rm -f "$SWEEP/done" "$SWEEP/result.json"
+
+# Truncate log to start fresh
+> logs/${TASK}_b100.log
+
+# Optional: also drop the clustering + policy_embeddings if you want to re-cluster
+# (only do this if you changed clustering config or the embedding layer)
+# rm -rf third_party/cupid/data/pipeline_runs/mimicgen_${TASK}_d1_may20_seed1_d100_${CONSTRAINT}_constrained/{run_clustering,compute_policy_embeddings}
+# rm -rf third_party/influence_visualizer/configs/${TASK}_d1_may20/clustering
+# find third_party/cupid/data/outputs/eval_save_episodes -name "bottleneck_plan_t0.npz" -delete
+```
+
+### After all 3 waves complete — comparison
+
+```bash
+# Aggregate eval scores across (task, heuristic, budget, rep) and run statistical comparison
+# (compare_policies.py expects all eval_log.json files in place)
+python -m policy_doctor.scripts.compare_policies \
+  --task_config kitchen_d1_may20 \
+  --train_date may20_kitchen_d1_d100_bread_constrained \
+  --output_dir reports/may20_sweep
+```
 
 ---
 
