@@ -67,7 +67,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         normalize = OmegaConf.select(cfg, "clustering_normalize") or "none"
         aggregation = OmegaConf.select(cfg, "clustering_aggregation") or "sum"
         experiment_name = OmegaConf.select(cfg, "experiment_name") or OmegaConf.select(cfg, "train_date") or "default"
-        influence_source = OmegaConf.select(cfg, "clustering_influence_source") or "infembed"
+        influence_source = OmegaConf.select(cfg, "clustering_influence_source") or "policy_emb"
         demo_split = OmegaConf.select(cfg, "clustering_demo_split") or "both"
         level = OmegaConf.select(cfg, "clustering_level") or "rollout"
         umap_n_jobs = OmegaConf.select(cfg, "clustering_umap_n_jobs") or -1
@@ -100,7 +100,7 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
                         "level='demo' is not supported for policy_emb "
                         "(policy embeddings are per-rollout-timestep only)"
                     )
-                layer = OmegaConf.select(cfg, "clustering_policy_emb_layer") or "plan_bottleneck"
+                layer = OmegaConf.select(cfg, "clustering_policy_emb_layer") or "bottleneck_plan_t0"
                 rep = PolicyEmbeddingRepresentation()
                 params_rep = SliceWindowParams(
                     window_width=window_width, stride=stride, aggregation=aggregation
