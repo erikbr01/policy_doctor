@@ -260,6 +260,8 @@ def main(argv: list[str] | None = None) -> None:
             pose_ranges: dict[str, dict[str, list | None]] = (
                 _json.loads(args.object_pose_ranges) if args.object_pose_ranges else {}
             )
+            # Normalize: whole-object null in YAML → {} dict here (pins all axes at [0,0])
+            pose_ranges = {k: ({} if v is None else v) for k, v in pose_ranges.items()}
 
             # Resolve env class from seed HDF5 env_meta (task-agnostic)
             with _h5py.File(str(seed_hdf5), "r") as _f:
