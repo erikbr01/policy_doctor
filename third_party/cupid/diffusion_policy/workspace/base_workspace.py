@@ -79,6 +79,16 @@ class BaseWorkspace:
         if include_keys is None:
             include_keys = payload['pickles'].keys()
 
+        # Strip _orig_mod. prefix added by torch.compile so checkpoints are
+        # portable across compiled and uncompiled model instantiations.
+        for sd_key in list(payload.get('state_dicts', {}).keys()):
+            sd = payload['state_dicts'][sd_key]
+            if isinstance(sd, dict) and any(k.startswith('_orig_mod.') for k in sd):
+                payload['state_dicts'][sd_key] = {
+                    (k[len('_orig_mod.'):] if k.startswith('_orig_mod.') else k): v
+                    for k, v in sd.items()
+                }
+
         for key, value in payload['state_dicts'].items():
             if key not in exclude_keys:
                 self.__dict__[key].load_state_dict(value, **kwargs)
@@ -87,16 +97,25 @@ class BaseWorkspace:
                 self.__dict__[key] = dill.loads(payload['pickles'][key])
     
     def load_checkpoint(self, path=None, tag='latest',
-            exclude_keys=None, 
-            include_keys=None, 
+            exclude_keys=None,
+            include_keys=None,
             **kwargs):
         if path is None:
             path = self.get_checkpoint_path(tag=tag)
         else:
             path = pathlib.Path(path)
         payload = torch.load(path.open('rb'), pickle_module=dill, **kwargs)
-        self.load_payload(payload, 
-            exclude_keys=exclude_keys, 
+        # Strip _orig_mod. prefix added by torch.compile so checkpoints are
+        # portable across compiled and uncompiled model instantiations.
+        for sd_key in list(payload.get('state_dicts', {}).keys()):
+            sd = payload['state_dicts'][sd_key]
+            if any(k.startswith('_orig_mod.') for k in sd):
+                payload['state_dicts'][sd_key] = {
+                    (k[len('_orig_mod.'):] if k.startswith('_orig_mod.') else k): v
+                    for k, v in sd.items()
+                }
+        self.load_payload(payload,
+            exclude_keys=exclude_keys,
             include_keys=include_keys)
         return payload
     
