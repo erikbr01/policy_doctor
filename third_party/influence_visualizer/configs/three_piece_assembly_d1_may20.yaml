@@ -1,0 +1,73 @@
+task: robomimic_three_piece_assembly
+name: "Three Piece Assembly D1 (May 20 sweep, demos=100, piece1 constrained)"
+
+# Seed 1 run — note the trailing _1 suffix on run name.
+eval_dir: "data/outputs/eval_save_episodes/may20_three_piece_assembly_d1_d100_piece1_constrained/may20_three_piece_assembly_d1_d100_piece1_constrained_train_diffusion_unet_lowdim_three_piece_assembly_mimicgen_1/latest"
+train_dir: "data/outputs/train/may20_three_piece_assembly_d1_d100_piece1_constrained/may20_three_piece_assembly_d1_d100_piece1_constrained_train_diffusion_unet_lowdim_three_piece_assembly_mimicgen_1"
+train_ckpt: "latest"
+exp_date: "default"
+seeds: ["1"]
+wandb_project: "mimicgen_three_piece_assembly"
+
+# ThreePieceAssembly D1 low-dim obs: object(42) + eef_pos(3) + eef_quat(4) + gripper_qpos(2) = 51 dims
+state_labels:
+  - obj_0
+  - obj_1
+  - obj_2
+  - obj_3
+  - obj_4
+  - obj_5
+  - obj_6
+  - obj_7
+  - obj_8
+  - obj_9
+  - obj_10
+  - obj_11
+  - obj_12
+  - obj_13
+  - obj_14
+  - obj_15
+  - obj_16
+  - obj_17
+  - obj_18
+  - obj_19
+  - obj_20
+  - obj_21
+  - obj_22
+  - obj_23
+  - obj_24
+  - obj_25
+  - obj_26
+  - obj_27
+  - obj_28
+  - obj_29
+  - obj_30
+  - obj_31
+  - obj_32
+  - obj_33
+  - obj_34
+  - obj_35
+  - obj_36
+  - obj_37
+  - obj_38
+  - obj_39
+  - obj_40
+  - obj_41
+  - eef_pos_x
+  - eef_pos_y
+  - eef_pos_z
+  - eef_quat_x
+  - eef_quat_y
+  - eef_quat_z
+  - eef_quat_w
+  - gripper_0
+  - gripper_1
+
+action_labels:
+  - pos_x
+  - pos_y
+  - pos_z
+  - rot_x
+  - rot_y
+  - rot_z
+  - gripper

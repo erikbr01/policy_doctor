@@ -1,0 +1,90 @@
+# @package _global_
+# Threading D1 MimicGen budget × rep sweep — May 20 2026
+# Base policy: 100 demos, needle initial pose tightly constrained.
+# Sweep: +100/+300/+500 generated demos × 3 reps × 3 heuristics (random, behavior_graph, diversity)
+# GPUs: cuda:2/cuda:3 (6 slots for threading; kitchen gets cuda:0/cuda:1)
+#
+# Prerequisites (run first):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_threading \
+#     +experiment=mimicgen_threading_d1_may20_d100_needle_constrained \
+#     steps=[train_baseline,eval_baseline,compute_policy_embeddings,run_clustering]
+#
+# Then fill in clustering_dir below and run the sweep:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_threading \
+#     +experiment=mimicgen_threading_d1_may20_d100_needle_constrained \
+#     steps=[mimicgen_budget_rep_sweep]
+
+task_config: threading_d1_may20
+
+experiment_name: mimicgen_threading_d1_may20_d100_needle_constrained
+
+run_dir: data/pipeline_runs/mimicgen_threading_d1_may20_seed1_d100_needle_constrained
+
+seeds: [1]
+reference_seed: 1
+train_date: may20_threading_d1_d100_needle_constrained
+device: cuda:2
+project: mimicgen_threading
+wandb_tags: [threading, mimicgen, may20, budget_sweep, rep_sweep, needle_constrained]
+
+baseline:
+  max_train_episodes: 100
+  checkpoint_topk: 5
+  num_epochs: 750
+
+evaluation:
+  train_date: may20_threading_d1_d100_needle_constrained
+  eval_date:  may20_threading_d1_d100_needle_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: may20_threading_d1_d100_needle_constrained
+  eval_date:  may20_threading_d1_d100_needle_constrained
+
+# Clustering — policy embeddings (plan_bottleneck layer) instead of infembed
+clustering_influence_source: policy_emb
+clustering_policy_emb_layer: plan_bottleneck
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+clustering_dir: /home/erbauer/policy_doctor/third_party/influence_visualizer/configs/threading_d1_may20/clustering/mimicgen_threading_d1_may20_d100_needle_constrained_seed1_kmeans_k15
+clustering_run_dir: data/pipeline_runs/mimicgen_threading_d1_may20_seed1_d100_needle_constrained
+
+mimicgen_datagen:
+  task_name: threading
+  env_interface_name: MG_Threading
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  num_trials: 2000
+  guarantee: true
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    needle:
+      x: [-0.04, 0.04]
+      y: [-0.04, 0.04]
+      z_rot: [-0.524, 0.524]
+    tripod:
+      x: null
+      y: null
+      z_rot: null
+
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 300, 500]
+  rep_seeds: [1, 2, 3]
+  devices: [cuda:2, cuda:2, cuda:2, cuda:3, cuda:3, cuda:3]
+
+steps: [mimicgen_budget_rep_sweep]

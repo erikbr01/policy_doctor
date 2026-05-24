@@ -1,0 +1,86 @@
+# @package _global_
+# ThreePieceAssembly D1 MimicGen budget × rep sweep — May 20 2026
+# Base policy: 100 demos, piece_1 initial pose tightly constrained.
+# Sweep: +100/+300/+500 generated demos × 3 reps × 3 heuristics (random, behavior_graph, diversity)
+# GPUs: cuda:1 (3 slots) — kitchen gets cuda:0/1 post-sweep
+#
+# Prerequisites (run first):
+#   train_baseline: runs directly on cuda:1
+#   steps=[eval_baseline,compute_policy_embeddings,run_clustering] via pipeline after
+
+task_config: three_piece_assembly_d1_may20
+
+experiment_name: mimicgen_three_piece_assembly_d1_may20_d100_piece1_constrained
+
+run_dir: data/pipeline_runs/mimicgen_three_piece_assembly_d1_may20_seed1_d100_piece1_constrained
+
+seeds: [1]
+reference_seed: 1
+train_date: may20_three_piece_assembly_d1_d100_piece1_constrained
+device: cuda:1
+project: mimicgen_three_piece_assembly
+wandb_tags: [three_piece_assembly, mimicgen, may20, budget_sweep, rep_sweep, piece1_constrained]
+
+baseline:
+  max_train_episodes: 100
+  checkpoint_topk: 5
+  num_epochs: 750
+
+evaluation:
+  train_date: may20_three_piece_assembly_d1_d100_piece1_constrained
+  eval_date:  may20_three_piece_assembly_d1_d100_piece1_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: may20_three_piece_assembly_d1_d100_piece1_constrained
+  eval_date:  may20_three_piece_assembly_d1_d100_piece1_constrained
+
+clustering_influence_source: policy_emb
+clustering_policy_emb_layer: plan_bottleneck
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# After run_clustering completes, fill these in:
+# clustering_dir: /home/erbauer/policy_doctor/third_party/influence_visualizer/clustering/three_piece_assembly_d1_may20_seed1_kmeans_k15
+clustering_run_dir: data/pipeline_runs/mimicgen_three_piece_assembly_d1_may20_seed1_d100_piece1_constrained
+
+mimicgen_datagen:
+  task_name: three_piece_assembly
+  env_interface_name: MG_ThreePieceAssembly
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  guarantee: true
+  num_trials: 2000
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    piece_1:
+      x: [-0.04, 0.04]
+      y: [-0.04, 0.04]
+      z_rot: [-0.524, 0.524]
+    piece_2:
+      x: null
+      y: null
+      z_rot: null
+    base:
+      x: null
+      y: null
+      z_rot: null
+
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 300, 500]
+  rep_seeds: [1, 2, 3]
+  devices: [cuda:0, cuda:0, cuda:0, cuda:1, cuda:1, cuda:1]
+
+steps: [mimicgen_budget_rep_sweep]

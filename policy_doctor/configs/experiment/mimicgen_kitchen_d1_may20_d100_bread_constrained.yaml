@@ -1,0 +1,103 @@
+# @package _global_
+# Kitchen D1 MimicGen budget × rep sweep — May 20 2026
+# Base policy: 100 demos, bread initial pose tightly constrained.
+# Sweep: +100/+300/+500 generated demos × 3 reps × 3 heuristics (random, behavior_graph, diversity)
+# GPUs: cuda:0/cuda:1 (6 slots total for kitchen; threading gets cuda:2/cuda:3)
+#
+# Prerequisites (run first):
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_kitchen \
+#     +experiment=mimicgen_kitchen_d1_may20_d100_bread_constrained \
+#     steps=[train_baseline,eval_baseline,compute_policy_embeddings,run_clustering]
+#
+# Then fill in clustering_dir below and run the sweep:
+#   python -m policy_doctor.scripts.run_pipeline \
+#     data_source=mimicgen_kitchen \
+#     +experiment=mimicgen_kitchen_d1_may20_d100_bread_constrained \
+#     steps=[mimicgen_budget_rep_sweep]
+
+task_config: kitchen_d1_may20
+
+experiment_name: mimicgen_kitchen_d1_may20_d100_bread_constrained
+
+run_dir: data/pipeline_runs/mimicgen_kitchen_d1_may20_seed1_d100_bread_constrained
+
+seeds: [1]
+reference_seed: 1
+train_date: may20_kitchen_d1_d100_bread_constrained
+device: cuda:0
+project: mimicgen_kitchen
+wandb_tags: [kitchen, mimicgen, may20, budget_sweep, rep_sweep, bread_constrained]
+
+baseline:
+  max_train_episodes: 100
+  checkpoint_topk: 5
+  num_epochs: 750
+
+evaluation:
+  train_date: may20_kitchen_d1_d100_bread_constrained
+  eval_date:  may20_kitchen_d1_d100_bread_constrained
+  overwrite: false
+  num_episodes: 500
+
+attribution:
+  train_date: may20_kitchen_d1_d100_bread_constrained
+  eval_date:  may20_kitchen_d1_d100_bread_constrained
+
+# Clustering — policy embeddings (plan_bottleneck layer) instead of infembed
+clustering_influence_source: policy_emb
+clustering_policy_emb_layer: plan_bottleneck
+clustering_level: rollout
+clustering_demo_split: train
+clustering_window_width: 5
+clustering_stride: 2
+clustering_umap_n_components: 100
+clustering_n_clusters: 15
+clustering_normalize: none
+clustering_aggregation: sum
+
+# After run_clustering completes, fill these in:
+# clustering_dir: /home/erbauer/policy_doctor/third_party/influence_visualizer/clustering/kitchen_d1_may20_seed1_kmeans_k15
+clustering_run_dir: data/pipeline_runs/mimicgen_kitchen_d1_may20_seed1_d100_bread_constrained
+
+mimicgen_datagen:
+  task_name: kitchen
+  env_interface_name: MG_Kitchen
+  num_seeds: 10
+  output_dir: data/outputs/mimicgen_datagen
+  policy_seed: 1
+  success_only: true
+  top_k_paths: 20
+  min_path_probability: 0.0
+  num_trials: 500
+  guarantee: true
+  fix_initial_object_poses: true
+  object_pose_ranges:
+    bread:
+      x: [-0.04, 0.04]
+      y: [-0.04, 0.04]
+      z_rot: [-0.524, 0.524]
+    pot:
+      x: null
+      y: null
+      z_rot: null
+    stove:
+      x: null
+      y: null
+      z_rot: null
+    button:
+      x: null
+      y: null
+      z_rot: null
+    serving_region:
+      x: null
+      y: null
+      z_rot: null
+
+mimicgen_budget_rep_sweep:
+  heuristics: [random, behavior_graph, diversity]
+  budgets: [100, 300, 500]
+  rep_seeds: [1, 2, 3]
+  devices: [cuda:0, cuda:0, cuda:0, cuda:1, cuda:1, cuda:1]
+
+steps: [mimicgen_budget_rep_sweep]

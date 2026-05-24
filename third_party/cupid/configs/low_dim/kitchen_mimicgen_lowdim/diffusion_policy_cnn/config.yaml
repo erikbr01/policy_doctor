@@ -1,0 +1,98 @@
+# Kitchen D1 low-dim diffusion — MimicgenReplayLowdimDataset + MimicgenLowdimRunner.
+#
+# Observation: object(70) + eef_pos(3) + eef_quat(4) + gripper_qpos(2) = 79 dims total
+# Action: 7-DoF delta OSC
+#
+# NOTE: n_test_vis=0 and n_train_vis=0 — video recording crashes headlessly. Keep at zero.
+defaults:
+  - ../../_shared/diffusion_unet_lowdim_square_arch@_here_
+  - _self_
+
+obs_dim: 79
+action_dim: 7
+
+# Keep last 5 checkpoints by epoch (not top-5 by rollout score).
+# Eval every 250 epochs to limit CPU-bound sim time.
+checkpoint:
+  save_last_ckpt: true
+  save_last_snapshot: false
+  topk:
+    k: 5
+    mode: max
+    monitor_key: epoch
+    format_str: "epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt"
+
+policy:
+  obs_dim: 79
+  action_dim: 7
+  model:
+    global_cond_dim: 158  # obs_dim * n_obs_steps = 79 * 2
+    input_dim: 7
+
+exp_name: mimicgen_kitchen_lowdim
+logging:
+  name: train_diffusion_unet_lowdim_kitchen_mimicgen_lowdim
+  tags:
+  - train_diffusion_unet_lowdim
+  - kitchen_mimicgen_lowdim
+  - mimicgen
+multi_run:
+  run_dir: data/outputs/mimicgen_kitchen_lowdim/train_diffusion_unet_lowdim
+  wandb_name_base: mimicgen_kitchen_lowdim_diffusion_unet_lowdim
+task:
+  abs_action: false
+  action_dim: 7
+  dataset:
+    _target_: diffusion_policy.dataset.mimicgen_replay_lowdim_dataset.MimicgenReplayLowdimDataset
+    abs_action: false
+    dataset_path: data/source/mimicgen/core_datasets/kitchen_d1/demo.hdf5
+    horizon: 16
+    max_train_episodes: null
+    obs_keys:
+    - object
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
+    pad_after: 7
+    pad_before: 1
+    seed: 42
+    use_legacy_normalizer: false
+    val_ratio: 0.02
+  dataset_path: data/source/mimicgen/core_datasets/kitchen_d1/demo.hdf5
+  dataset_type: ph
+  env_runner:
+    _target_: diffusion_policy.env_runner.mimicgen_lowdim_runner.MimicgenLowdimRunner
+    abs_action: false
+    crf: 22
+    dataset_path: data/source/mimicgen/core_datasets/kitchen_d1/demo.hdf5
+    fps: 10
+    max_steps: 800
+    n_action_steps: 8
+    n_envs: 10
+    n_latency_steps: 0
+    n_obs_steps: 2
+    n_test: 50
+    n_test_vis: 0
+    n_train: 2
+    n_train_vis: 0
+    obs_keys:
+    - object
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
+    past_action: false
+    render_hw:
+    - 128
+    - 128
+    test_start_seed: 100000
+    train_start_idx: 0
+  keypoint_dim: 3
+  name: kitchen_mimicgen_lowdim
+  obs_dim: 79
+  obs_keys:
+  - object
+  - robot0_eef_pos
+  - robot0_eef_quat
+  - robot0_gripper_qpos
+  task_name: kitchen_mimicgen
+task_name: kitchen_mimicgen_lowdim

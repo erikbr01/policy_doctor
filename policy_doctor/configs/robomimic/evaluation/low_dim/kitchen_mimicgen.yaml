@@ -1,0 +1,15 @@
+task: kitchen_mimicgen
+state: low_dim
+method: diffusion_policy_cnn
+policy: diffusion_unet_lowdim
+
+train_date: may20
+eval_date: may20
+train_ckpt: latest
+num_episodes: 500
+test_start_seed: 100000
+overwrite: false
+device: cuda:0
+
+eval_output_dir: data/outputs/eval_save_episodes
+train_output_dir: data/outputs/train

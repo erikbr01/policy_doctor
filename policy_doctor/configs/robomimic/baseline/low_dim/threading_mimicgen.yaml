@@ -1,0 +1,22 @@
+task: threading_mimicgen
+state: low_dim
+method: diffusion_policy_cnn
+config_dir: configs/low_dim/threading_mimicgen_lowdim/diffusion_policy_cnn
+config_name: config.yaml
+policy: diffusion_unet_lowdim
+
+seeds: [0, 1, 2]
+num_epochs: 1751
+checkpoint_topk: 5
+checkpoint_every: 250
+
+train_ratio: 0.64
+val_ratio: 0.04
+uniform_quality: true
+
+output_dir: data/outputs/train
+project: mimicgen_threading
+
+num_gpus: 1
+tf32: true
+compile: false

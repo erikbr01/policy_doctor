@@ -1,0 +1,26 @@
+# @package _global_
+# Threading D1 → MimicgenReplayLowdimDataset + MimicgenLowdimRunner.
+# Generate data in ``mimicgen_torch2`` conda env; train in ``mimicgen_torch2``.
+
+defaults:
+  - /robomimic/baseline/low_dim@baseline: threading_mimicgen
+  - /robomimic/curation_filtering/low_dim@curation_filtering: square_mh_mimicgen
+  - /robomimic/curation_selection/low_dim@curation_selection: square_mh_mimicgen
+  - /robomimic/attribution/low_dim@attribution: threading_mimicgen
+  - /robomimic/evaluation/low_dim@evaluation: threading_mimicgen
+
+env: robomimic
+state: low_dim
+task: threading_mimicgen
+task_config: threading_d1_may20
+
+data_source:
+  id: mimicgen_threading
+  label: MimicGen Threading D1 (merged HDF5) + cupid diffusion
+  policy_stack: diffusion_unet_lowdim
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: mimicgen_torch2
+  conda_env_datagen: mimicgen_torch2
+  robocasa_submodule: false
+  mimicgen_submodule: true

@@ -1,0 +1,60 @@
+task: robomimic_threading
+name: "Threading D1 (May 20 sweep, demos=100, needle constrained)"
+
+# Fill in after baseline training and eval complete.
+# Seed 1 run — note the trailing _1 suffix on run name.
+eval_dir: "data/outputs/eval_save_episodes/may20_threading_d1_d100_needle_constrained/may20_threading_d1_d100_needle_constrained_train_diffusion_unet_lowdim_threading_mimicgen_1/latest"
+train_dir: "data/outputs/train/may20_threading_d1_d100_needle_constrained/may20_threading_d1_d100_needle_constrained_train_diffusion_unet_lowdim_threading_mimicgen_1"
+train_ckpt: "latest"
+exp_date: "default"
+seeds: ["1"]
+wandb_project: "mimicgen_threading"
+
+# Threading D1 low-dim obs: object(28) + eef_pos(3) + eef_quat(4) + gripper_qpos(2) = 37 dims
+state_labels:
+  - obj_0
+  - obj_1
+  - obj_2
+  - obj_3
+  - obj_4
+  - obj_5
+  - obj_6
+  - obj_7
+  - obj_8
+  - obj_9
+  - obj_10
+  - obj_11
+  - obj_12
+  - obj_13
+  - obj_14
+  - obj_15
+  - obj_16
+  - obj_17
+  - obj_18
+  - obj_19
+  - obj_20
+  - obj_21
+  - obj_22
+  - obj_23
+  - obj_24
+  - obj_25
+  - obj_26
+  - obj_27
+  - eef_pos_x
+  - eef_pos_y
+  - eef_pos_z
+  - eef_quat_x
+  - eef_quat_y
+  - eef_quat_z
+  - eef_quat_w
+  - gripper_0
+  - gripper_1
+
+action_labels:
+  - pos_x
+  - pos_y
+  - pos_z
+  - rot_x
+  - rot_y
+  - rot_z
+  - gripper

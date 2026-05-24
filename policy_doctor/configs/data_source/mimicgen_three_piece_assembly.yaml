@@ -1,0 +1,25 @@
+# @package _global_
+# ThreePieceAssembly D1 → MimicgenReplayLowdimDataset + MimicgenLowdimRunner.
+
+defaults:
+  - /robomimic/baseline/low_dim@baseline: three_piece_assembly_mimicgen
+  - /robomimic/curation_filtering/low_dim@curation_filtering: square_mh_mimicgen
+  - /robomimic/curation_selection/low_dim@curation_selection: square_mh_mimicgen
+  - /robomimic/attribution/low_dim@attribution: three_piece_assembly_mimicgen
+  - /robomimic/evaluation/low_dim@evaluation: three_piece_assembly_mimicgen
+
+env: robomimic
+state: low_dim
+task: three_piece_assembly_mimicgen
+task_config: three_piece_assembly_d1_may20
+
+data_source:
+  id: mimicgen_three_piece_assembly
+  label: MimicGen ThreePieceAssembly D1 (merged HDF5) + cupid diffusion
+  policy_stack: diffusion_unet_lowdim
+  attribution_stack: trak_infembed
+  visualization: artifact_agnostic
+  conda_env_train: mimicgen_torch2
+  conda_env_datagen: mimicgen_torch2
+  robocasa_submodule: false
+  mimicgen_submodule: true
