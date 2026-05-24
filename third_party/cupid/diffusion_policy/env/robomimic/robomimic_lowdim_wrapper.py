@@ -104,6 +104,9 @@ class RobomimicLowdimWrapper(gym.Env):
         succ = self.env.is_success()["task"]
         return succ
 
+    def get_sim_state(self):
+        return self.env.get_state()['states']
+
 
 def test():
     import robomimic.utils.file_utils as FileUtils

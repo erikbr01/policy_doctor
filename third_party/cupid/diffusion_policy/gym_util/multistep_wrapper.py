@@ -85,7 +85,8 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=n_obs_steps+1))
-    
+        self._sim_states_buf: list = []   # per-MuJoCo-step sim states, filled during step()
+
     def reset(self):
         """Resets the environment using kwargs."""
         obs = super().reset()
@@ -94,6 +95,7 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=self.n_obs_steps+1))
+        self._sim_states_buf = []
 
         obs = self._get_obs(self.n_obs_steps)
         return obs
@@ -102,10 +104,17 @@ class MultiStepWrapper(gym.Wrapper):
         """
         actions: (n_action_steps,) + action_shape
         """
+        self._sim_states_buf = []
         for act in action:
             if len(self.done) > 0 and self.done[-1]:
                 # termination
                 break
+            # Capture sim state before this sub-step if env supports it.
+            if callable(getattr(self.env, "get_sim_state", None)):
+                try:
+                    self._sim_states_buf.append(self.env.get_sim_state())
+                except Exception:
+                    pass
             observation, reward, done, info = super().step(act)
 
             self.obs.append(observation)
@@ -172,3 +181,12 @@ class MultiStepWrapper(gym.Wrapper):
             return self.env._is_success()
         else:
             raise AttributeError(f"{self.env} does not have a callable method '_is_success'.")
+
+    def get_sim_state(self):
+        if callable(getattr(self.env, "get_sim_state", None)):
+            return self.env.get_sim_state()
+        raise AttributeError(f"{self.env} does not have a callable method 'get_sim_state'.")
+
+    def get_sim_states_buf(self):
+        """Return per-sub-step sim states collected during the last step() call."""
+        return list(self._sim_states_buf)

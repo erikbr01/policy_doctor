@@ -61,3 +61,13 @@ class VideoRecordingWrapper(gym.Wrapper):
             return self.env._is_success()
         else:
             raise AttributeError(f"{self.env} does not have a callable method '_is_success'.")
+
+    def get_sim_state(self):
+        if callable(getattr(self.env, "get_sim_state", None)):
+            return self.env.get_sim_state()
+        raise AttributeError(f"{self.env} does not have a callable method 'get_sim_state'.")
+
+    def get_sim_states_buf(self):
+        if callable(getattr(self.env, "get_sim_states_buf", None)):
+            return self.env.get_sim_states_buf()
+        return []

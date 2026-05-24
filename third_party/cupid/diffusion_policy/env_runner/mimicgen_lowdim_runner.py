@@ -240,7 +240,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
         
-        env = AsyncVectorEnv(env_fns)
+        env = AsyncVectorEnv(env_fns, shared_memory=False)
         # env = SyncVectorEnv(env_fns)
 
         self.env_meta = env_meta
@@ -266,7 +266,6 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
         self.save_episodes = save_episodes
         self.episode_dir = None
         if save_episodes:
-            assert n_envs == 1
             assert n_train == n_train_vis == 0
             assert n_test > 0
             self.episode_dir = pathlib.Path(output_dir) / "episodes"
@@ -292,6 +291,7 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             total_timesteps = 0
             episode_lengths = []
             episode_successes = []
+            all_sim_episodes: list = []  # for rollouts.hdf5
 
         for chunk_idx in range(n_chunks):
             start = chunk_idx * n_envs
@@ -313,7 +313,13 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             # save episodes
             if self.save_episodes:
                 timestep = 0
-                episode_data = []
+                # One episode_data list per active env
+                episode_data = [[] for _ in range(this_n_active_envs)]
+                # Per-env sim-state/action lists for rollouts.hdf5
+                sim_states = [[] for _ in range(this_n_active_envs)]
+                sim_actions = [[] for _ in range(this_n_active_envs)]
+                # Track "ever succeeded" to handle transient success states
+                ever_succeeded = [False] * this_n_active_envs
 
             # start rollout
             obs = env.reset()
@@ -349,23 +355,23 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 np_action_dict = dict_apply(action_dict,
                     lambda x: x.detach().to('cpu').numpy())
                 
-                # store timestep in episode dataset
+                # store timestep in episode dataset (all active envs)
                 if self.save_episodes:
-                    result = {
-                        "idx": total_timesteps,
-                        "episode": chunk_idx,
-                        "timestep": timestep,
-                        "obs": np_obs_dict["obs"].copy().astype(np.float32)[0],
-                    }
-
+                    obs_all = np_obs_dict["obs"].copy().astype(np.float32)
                     if "action_pred" in np_action_dict:
-                        result["action"] = np_action_dict["action_pred"].copy().astype(np.float32)[0]
+                        act_all = np_action_dict["action_pred"].copy().astype(np.float32)
                     elif "action" in np_action_dict:
-                        result["action"] = np_action_dict["action"].copy().astype(np.float32)[0]
+                        act_all = np_action_dict["action"].copy().astype(np.float32)
                     else:
                         raise ValueError(f"Actions for policy {type(policy)} cannot be retrieved.")
-
-                    episode_data.append(result)
+                    for env_i in range(this_n_active_envs):
+                        episode_data[env_i].append({
+                            "idx": total_timesteps,
+                            "episode": chunk_idx * this_n_active_envs + env_i,
+                            "timestep": timestep,
+                            "obs": obs_all[env_i],
+                            "action": act_all[env_i],
+                        })
 
                 # handle latency_steps, we discard the first n_latency_steps actions
                 # to simulate latency
@@ -373,19 +379,42 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 if not np.all(np.isfinite(action)):
                     print(action)
                     raise RuntimeError("Nan or Inf action")
-                
+
                 # step env
                 env_action = action
                 if self.abs_action:
                     env_action = self.undo_transform_action(action)
 
                 obs, reward, done, info = env.step(env_action)
+
+                # Collect per-sub-step sim states from MultiStepWrapper buffer.
+                # Each inference step covers n_action_steps MuJoCo steps; we save
+                # all of them so rollouts.hdf5 has per-timestep resolution for
+                # MimicGen trajectory replay.
+                if self.save_episodes:
+                    try:
+                        # env.call returns list[list[state]] — one list per env
+                        per_env_bufs = env.call('get_sim_states_buf')[:this_n_active_envs]
+                    except Exception:
+                        per_env_bufs = [None] * this_n_active_envs
+                    for env_i in range(this_n_active_envs):
+                        buf = per_env_bufs[env_i]
+                        if buf:  # list of per-substep states for this env
+                            for sub_i, st in enumerate(buf):
+                                sim_states[env_i].append(st)
+                                # corresponding action: env_action[env_i, sub_i, :]
+                                a_idx = min(sub_i, env_action.shape[1] - 1)
+                                sim_actions[env_i].append(env_action[env_i, a_idx])
                 done = np.all(done)
                 
                 # Terminate on success if saving episodes.
                 if self.save_episodes:
-                    success = env.call("_is_success")[0]
-                    done = success if not done else done
+                    successes = env.call("_is_success")[:this_n_active_envs]
+                    for env_i in range(this_n_active_envs):
+                        if successes[env_i]:
+                            ever_succeeded[env_i] = True
+                    success = successes[0]  # used for episode[0] postfix below
+                    done = np.all(ever_succeeded) if not done else done
 
                 past_action = action
 
@@ -393,24 +422,35 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 pbar.update(action.shape[1])
                 if self.save_episodes:
                     timestep += action.shape[1]
-                    total_timesteps += 1
+                    total_timesteps += this_n_active_envs
             pbar.close()
 
             # collect data for this round
             all_video_paths[this_global_slice] = env.render()[this_local_slice]
             all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
 
-            # save episode data
+            # save episode data for each active env
             if self.save_episodes:
-                postfix = "succ" if success else "fail"
-                episode_lengths.append(len(episode_data))
-                episode_successes.append(success)
-                episode_data = pd.DataFrame(episode_data)
-                episode_data["reward"] = reward[0]
-                episode_data["success"] = success
-                with open(self.episode_dir / f"ep{chunk_idx:04d}_{postfix}.pkl", "wb") as f:
-                    pickle.dump(episode_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-                del episode_data
+                for env_i in range(this_n_active_envs):
+                    ep_global = chunk_idx * n_envs + env_i
+                    ep_success = bool(ever_succeeded[env_i])  # use sticky success flag
+                    postfix = "succ" if ep_success else "fail"
+                    episode_lengths.append(len(episode_data[env_i]))
+                    episode_successes.append(ep_success)
+                    ep_df = pd.DataFrame(episode_data[env_i])
+                    ep_df["reward"] = float(reward[env_i])
+                    ep_df["success"] = ep_success
+                    with open(self.episode_dir / f"ep{ep_global:04d}_{postfix}.pkl", "wb") as f:
+                        pickle.dump(ep_df, f, protocol=pickle.HIGHEST_PROTOCOL)
+                    # Collect sim episode for rollouts.hdf5
+                    if sim_states[env_i]:
+                        all_sim_episodes.append({
+                            "states": np.stack(sim_states[env_i], axis=0).astype(np.float64),
+                            "actions": np.stack(sim_actions[env_i], axis=0).astype(np.float64),
+                            "success": ep_success,
+                            "model_file": None,
+                        })
+                del episode_data, sim_states, sim_actions
 
         # log
         max_rewards = collections.defaultdict(list)
@@ -445,6 +485,9 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
             value = np.mean(value)
             log_data[name] = value
 
+        if self.save_episodes and all_sim_episodes:
+            self._write_rollouts_hdf5(all_sim_episodes)
+
         if self.save_episodes:
             # rename media files based on success or failure (only if videos were recorded)
             episode_files = sorted([ep for ep in self.episode_dir.iterdir()])
@@ -464,6 +507,22 @@ class MimicgenLowdimRunner(BaseLowdimRunner):
                 yaml.safe_dump(metadata, f)
 
         return log_data
+
+    def _write_rollouts_hdf5(self, sim_episodes: list) -> pathlib.Path:
+        """Write a MimicGen-compatible ``rollouts.hdf5`` from per-episode sim data."""
+        import json as _json
+        out_path = self.episode_dir / "rollouts.hdf5"
+        with h5py.File(out_path, "w") as f:
+            grp = f.create_group("data")
+            grp.attrs["env_args"] = _json.dumps(self.env_meta)
+            grp.attrs["total"] = len(sim_episodes)
+            for i, ep in enumerate(sim_episodes):
+                demo_grp = grp.create_group(f"demo_{i}")
+                demo_grp.create_dataset("states", data=ep["states"])
+                demo_grp.create_dataset("actions", data=ep["actions"])
+                demo_grp.attrs["success"] = int(ep.get("success", False))
+        print(f"[MimicgenLowdimRunner] rollouts.hdf5 → {out_path} ({len(sim_episodes)} episodes)")
+        return out_path
 
     def undo_transform_action(self, action):
         raw_shape = action.shape
