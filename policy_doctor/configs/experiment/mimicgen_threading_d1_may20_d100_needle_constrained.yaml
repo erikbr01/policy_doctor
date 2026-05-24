@@ -56,7 +56,9 @@ clustering_n_clusters: 15
 clustering_normalize: none
 clustering_aggregation: sum
 
-clustering_dir: /home/erbauer/policy_doctor/third_party/influence_visualizer/configs/threading_d1_may20/clustering/mimicgen_threading_d1_may20_d100_needle_constrained_seed1_kmeans_k15
+# clustering_dir intentionally unset — let run_clustering produce a fresh clustering
+# (the old bottleneck embeddings were wrong; re-run uses bottleneck_plan_t0).
+# clustering_dir: /home/erbauer/policy_doctor/third_party/influence_visualizer/configs/threading_d1_may20/clustering/mimicgen_threading_d1_may20_d100_needle_constrained_seed1_kmeans_k15
 clustering_run_dir: data/pipeline_runs/mimicgen_threading_d1_may20_seed1_d100_needle_constrained
 
 mimicgen_datagen:
