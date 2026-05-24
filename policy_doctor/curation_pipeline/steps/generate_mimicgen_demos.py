@@ -113,6 +113,7 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             or OmegaConf.select(cfg_mg, "num_trials")
             or 50
         )
+        guarantee: bool = bool(OmegaConf.select(cfg_mg, "guarantee", default=False))
         output_dir_rel: str = (
             OmegaConf.select(cfg_mg, "output_dir") or "data/outputs/mimicgen_datagen"
         )
@@ -250,7 +251,9 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             print(f"  [generate_mimicgen_demos] seed HDF5 written: {seed_hdf5}")
 
         # --- Output directory for generation ---
-        gen_output_dir = self.repo_root / output_dir_rel / seed_demo_key
+        # Per-arm dir under self.step_dir to avoid collisions when sweep runs
+        # multiple arms in parallel (all share output_dir_rel/seed_demo_key otherwise).
+        gen_output_dir = self.step_dir / "datagen" / seed_demo_key
         gen_output_dir.mkdir(parents=True, exist_ok=True)
 
         if self.dry_run:
@@ -284,6 +287,8 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             "--num_interpolation_steps", str(num_interp_steps),
             "--num_fixed_steps",    str(num_fixed_steps),
         ]
+        if guarantee:
+            cmd.append("--guarantee")
         if interp_from_last:
             cmd.append("--interpolate_from_last_target_pose")
         if transform_first:
