@@ -36,9 +36,9 @@ class ComputePolicyEmbeddingsStep(PipelineStep[None]):
 
     def compute(self) -> None:
         cfg = self.cfg
-        attribution = OmegaConf.select(cfg, "attribution") or {}
-        baseline = OmegaConf.select(cfg, "baseline") or {}
-        policy_emb = OmegaConf.select(cfg, "policy_emb") or {}
+        attribution = OmegaConf.select(cfg, "attribution") or OmegaConf.create({})
+        baseline = OmegaConf.select(cfg, "baseline") or OmegaConf.create({})
+        policy_emb = OmegaConf.select(cfg, "policy_emb") or OmegaConf.create({})
 
         train_date = (
             OmegaConf.select(attribution, "train_date")
