@@ -75,6 +75,10 @@ mimicgen_datagen:
   env_interface_name: MG_CoffeePreparation
   num_seeds: 10
   output_dir: data/outputs/mimicgen_datagen
+  # Pre-prepared source: official D1 with datagen_info added (one-shot prepare_src_dataset).
+  # generate_mimicgen_demos falls back to this when select_mimicgen_seed's seed.hdf5
+  # lacks datagen_info (needed for seed_object_poses extraction).
+  source_dataset_path: data/source/mimicgen/core_datasets/coffee_preparation_d1_prepared/demo.hdf5
   policy_seed: 1
   success_only: true
   top_k_paths: 20

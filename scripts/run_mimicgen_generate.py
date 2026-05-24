@@ -324,31 +324,67 @@ def main(argv: list[str] | None = None) -> None:
     cfg.obs.collect_obs = True
     cfg.obs.camera_names = []
 
-    cfg.task.task_spec.subtask_1 = dict(
-        object_ref="square_nut",
-        subtask_term_signal="grasp",
-        subtask_term_offset_range=(args.subtask_term_offset_lo, args.subtask_term_offset_hi),
-        selection_strategy="nearest_neighbor_object",
-        selection_strategy_kwargs=dict(nn_k=args.nn_k),
-        action_noise=args.action_noise,
-        num_interpolation_steps=args.num_interpolation_steps,
-        num_fixed_steps=args.num_fixed_steps,
-        apply_noise_during_interpolation=False,
-    )
-    cfg.task.task_spec.subtask_2 = dict(
-        object_ref="square_peg",
-        subtask_term_signal=None,
-        subtask_term_offset_range=None,
-        selection_strategy="random",
-        selection_strategy_kwargs=None,
-        action_noise=args.action_noise,
-        num_interpolation_steps=args.num_interpolation_steps,
-        num_fixed_steps=args.num_fixed_steps,
-        apply_noise_during_interpolation=False,
-    )
+    # Subtask spec — SQUARE is hardcoded (2 subtasks: grasp nut, place on peg).
+    # For other tasks, keep the config_factory defaults (which load the task's
+    # native subtask spec, e.g. coffee_preparation has 5 subtasks with
+    # signals mug_grasp / mug_place / drawer_open / pod_grasp / None) and only
+    # override the dynamic per-arm knobs (action_noise, interp/fixed steps,
+    # nn_k for any nearest_neighbor_object subtasks).
+    if args.task_name == "square":
+        cfg.task.task_spec.subtask_1 = dict(
+            object_ref="square_nut",
+            subtask_term_signal="grasp",
+            subtask_term_offset_range=(args.subtask_term_offset_lo, args.subtask_term_offset_hi),
+            selection_strategy="nearest_neighbor_object",
+            selection_strategy_kwargs=dict(nn_k=args.nn_k),
+            action_noise=args.action_noise,
+            num_interpolation_steps=args.num_interpolation_steps,
+            num_fixed_steps=args.num_fixed_steps,
+            apply_noise_during_interpolation=False,
+        )
+        cfg.task.task_spec.subtask_2 = dict(
+            object_ref="square_peg",
+            subtask_term_signal=None,
+            subtask_term_offset_range=None,
+            selection_strategy="random",
+            selection_strategy_kwargs=None,
+            action_noise=args.action_noise,
+            num_interpolation_steps=args.num_interpolation_steps,
+            num_fixed_steps=args.num_fixed_steps,
+            apply_noise_during_interpolation=False,
+        )
+    else:
+        # Override the dynamic knobs on every subtask in the template spec
+        # without changing object_ref / subtask_term_signal / strategy.
+        for k in cfg.task.task_spec:
+            sub = cfg.task.task_spec[k]
+            sub["action_noise"] = args.action_noise
+            sub["num_interpolation_steps"] = args.num_interpolation_steps
+            sub["num_fixed_steps"] = args.num_fixed_steps
+            sub["apply_noise_during_interpolation"] = False
+            # Only touch subtask_term_offset_range / nn_k where they make sense:
+            if sub.get("subtask_term_signal") is not None:
+                sub["subtask_term_offset_range"] = (
+                    args.subtask_term_offset_lo, args.subtask_term_offset_hi,
+                )
+            if sub.get("selection_strategy") == "nearest_neighbor_object" and sub.get("selection_strategy_kwargs"):
+                sub["selection_strategy_kwargs"]["nn_k"] = args.nn_k
+        print(
+            f"[run_mimicgen_generate] using template subtask spec for "
+            f"task_name={args.task_name!r} ({len(cfg.task.task_spec)} subtasks); "
+            f"signals={[cfg.task.task_spec[k].get('subtask_term_signal') for k in cfg.task.task_spec]}"
+        )
 
     print(f"[run_mimicgen_generate] generate_dataset: num_trials={args.num_trials}")
-    stats = generate_dataset(cfg, auto_remove_exp=True, render=False, video_path=None)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        stats = generate_dataset(cfg, auto_remove_exp=True, render=False, video_path=None)
+    except BaseException:
+        import traceback as _tb
+        _tb.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        raise
 
     # --- Step 3: copy outputs and write stats ---
     for fname in ("demo.hdf5", "demo_failed.hdf5"):
