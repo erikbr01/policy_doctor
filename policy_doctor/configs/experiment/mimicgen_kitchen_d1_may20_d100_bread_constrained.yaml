@@ -76,7 +76,7 @@ mimicgen_datagen:
     bread:
       x: [-0.04, 0.04]
       y: [-0.04, 0.04]
-      z_rot: null
+      z_rot: [-0.1, 0.1]
     pot: null
     stove: null
     button: null
