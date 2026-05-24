@@ -338,7 +338,12 @@ def _make_budget_arm_class(
     )
     cfg_overrides: dict = {
         "mimicgen_datagen.seed_selection_heuristic": heuristic,
+        # success_budget is the historic display name; episode_budget is what
+        # the generate step actually reads. Together with guarantee=True the
+        # generator keeps issuing trials until `budget` successes are recorded.
         "mimicgen_datagen.success_budget": budget,
+        "mimicgen_datagen.episode_budget": budget,
+        "mimicgen_datagen.guarantee": True,
         "run_tag": run_tag,
     }
     if random_seed is not None:

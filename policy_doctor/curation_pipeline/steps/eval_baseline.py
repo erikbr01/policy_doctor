@@ -76,14 +76,14 @@ class EvalBaselineStep(PipelineStep[dict]):
         )
         output_dir = OmegaConf.select(baseline, "output_dir") or "data/outputs/train"
 
-        train_dirs: list[pathlib.Path] = []
+        train_dirs: list[tuple[str, pathlib.Path]] = []
         for seed in seeds:
             train_name = get_train_name(train_date, task, policy, seed)
-            train_dirs.append(self.repo_root / output_dir / train_date / train_name)
+            train_dirs.append((seed, self.repo_root / output_dir / train_date / train_name))
 
         all_checkpoint_results: list[dict] = []
 
-        for train_dir in train_dirs:
+        for seed, train_dir in train_dirs:
             if not train_dir.exists():
                 print(f"  [eval_baseline] WARNING: train dir not found, skipping: {train_dir}")
                 continue
@@ -112,12 +112,26 @@ class EvalBaselineStep(PipelineStep[dict]):
                 f"  n_envs={n_envs}  train_dir={train_dir.name}"
             )
 
+            # eval_baseline writes under {eval_output_dir}/{train_date}/{train_name}/{ckpt_stem}
+            # to match get_eval_dir() — downstream compute_policy_embeddings /
+            # compute_infembed resolve eval dirs through that helper.
             for ckpt_path in ckpt_files:
                 ckpt_stem = ckpt_path.stem  # "latest" for latest.ckpt
+                # Use eval_date if explicitly set; otherwise fall back to train_date.
+                from policy_doctor.curation_pipeline.paths import get_eval_output_dir_for_ckpt
+                eval_date_eff = (
+                    OmegaConf.select(evaluation, "eval_date") or train_date
+                )
                 output_dir_eval = str(
-                    self.repo_root / eval_output_dir
-                    / f"{train_dir.name}"
-                    / ckpt_stem
+                    self.repo_root
+                    / get_eval_output_dir_for_ckpt(
+                        eval_output_dir,
+                        eval_date_eff,
+                        task,
+                        policy,
+                        seed=seed,
+                        train_ckpt=ckpt_stem,
+                    )
                 )
 
                 if self.dry_run:
@@ -131,6 +145,33 @@ class EvalBaselineStep(PipelineStep[dict]):
                     })
                     continue
 
+                # Skip if already evaluated (output dir + eval_log.json exist).
+                # If dir exists but eval_log.json is absent (partial/crashed run),
+                # delete the partial dir so eval_save_episodes can start fresh.
+                existing_log = pathlib.Path(output_dir_eval) / "eval_log.json"
+                if pathlib.Path(output_dir_eval).exists() and not overwrite:
+                    if existing_log.exists():
+                        rate = _read_mean_score(pathlib.Path(output_dir_eval))
+                        num_success = round(rate * num_episodes)
+                        print(
+                            f"    ckpt={ckpt_stem}  [cached]  "
+                            f"successes~{num_success}/{num_episodes}  rate={rate:.3f}"
+                        )
+                        all_checkpoint_results.append({
+                            "checkpoint": ckpt_stem,
+                            "output_dir": output_dir_eval,
+                            "num_episodes": num_episodes,
+                            "num_success": num_success,
+                            "success_rate": round(rate, 4),
+                        })
+                        continue
+                    else:
+                        import shutil
+                        print(
+                            f"    ckpt={ckpt_stem}  [removing partial output dir, will re-run]"
+                        )
+                        shutil.rmtree(output_dir_eval)
+
                 print(f"    ckpt={ckpt_stem}")
                 cmd = [
                     "conda", "run", "-n", conda_env, "--no-capture-output",
@@ -143,7 +184,6 @@ class EvalBaselineStep(PipelineStep[dict]):
                     f"--test_start_seed={test_start_seed}",
                     f"--overwrite={overwrite}",
                     f"--device={device}",
-                    "--save_episodes=True",
                 ]
                 result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
                 if result.returncode != 0:

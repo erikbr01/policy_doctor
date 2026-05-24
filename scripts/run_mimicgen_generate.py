@@ -145,7 +145,13 @@ def main(argv: list[str] | None = None) -> None:
     _needs_model_file = False
     with _h5py.File(str(seed_hdf5), "r") as _f:
         for _k in _f.get("data", {}).keys():
-            if _k.startswith("demo_") and "model_file" not in _f[f"data/{_k}"].attrs:
+            if not _k.startswith("demo_"):
+                continue
+            _attrs = _f[f"data/{_k}"].attrs
+            _mf = _attrs.get("model_file", None)
+            # Treat both missing and empty model_file as "needs inject".
+            # A prior failed run may have stored "" — we want to overwrite.
+            if _mf is None or len(_mf) == 0:
                 _needs_model_file = True
                 break
     if _needs_model_file:
@@ -153,8 +159,17 @@ def main(argv: list[str] | None = None) -> None:
         with _h5py.File(str(seed_hdf5), "r") as _f:
             _env_meta_str = _f["data"].attrs.get("env_args", "{}")
         _env_name = _json.loads(_env_meta_str).get("env_name", "").lower().replace("_", "")
-        # Look for source dataset in standard locations
+        # Look for source dataset in standard locations.
+        # First entry (CUPID_ROOT/data/source/...) is the canonical pipeline
+        # path; symlinks under it point to the actual HDF5 (e.g. official D1).
+        _repo_root = Path(__file__).resolve().parents[1]
+        _cupid_data_source = _repo_root / "third_party" / "cupid" / "data" / "source" / "mimicgen" / "core_datasets"
         _source_candidates = [
+            str(_cupid_data_source / f"{args.task_name}_d1" / "demo.hdf5"),
+            str(_cupid_data_source / f"{args.task_name}_d1_official" / "core" / f"{args.task_name}_d1.hdf5"),
+            str(_cupid_data_source / f"{args.task_name}_d0" / "demo.hdf5"),
+            f"/mnt/ssdB/erik/mimicgen_data/source/{args.task_name}.hdf5",
+            f"/mnt/ssdB/erik/cupid_data/worktree_data/source/mimicgen/core_datasets/{args.task_name}_d1/demo.hdf5",
             f"/home/erbauer/data/mimicgen_data/core_datasets/core/{args.task_name}_d1.hdf5",
             f"/home/erbauer/data/mimicgen_data/source/{args.task_name}.hdf5",
         ]
@@ -168,7 +183,10 @@ def main(argv: list[str] | None = None) -> None:
                         print(f"[run_mimicgen_generate] model_file sourced from {_src_path} ({len(_model_xml)} chars)")
                         break
         if not _model_xml:
-            print("[run_mimicgen_generate] WARNING: could not find model_file source; generation may fail")
+            print(
+                "[run_mimicgen_generate] WARNING: could not find model_file source — "
+                f"checked {_source_candidates}; generation will fail"
+            )
         with _h5py.File(str(seed_hdf5), "a") as _f:
             for _k in list(_f.get("data", {}).keys()):
                 if _k.startswith("demo_"):
