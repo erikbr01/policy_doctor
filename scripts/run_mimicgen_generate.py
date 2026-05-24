@@ -135,6 +135,45 @@ def main(argv: list[str] | None = None) -> None:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- Step 0: inject model_file if missing (policy rollouts don't capture it) ---
+    # Borrow model_file from the source demo HDF5 for this task, which always has
+    # the correct MimicGen/MuJoCo 2.3.x model XML. The XML is purely structural —
+    # it doesn't encode the seed trajectory state — so sharing it across seeds is safe.
+    import json as _json
+    import h5py as _h5py
+    import os as _os
+    _needs_model_file = False
+    with _h5py.File(str(seed_hdf5), "r") as _f:
+        for _k in _f.get("data", {}).keys():
+            if _k.startswith("demo_") and "model_file" not in _f[f"data/{_k}"].attrs:
+                _needs_model_file = True
+                break
+    if _needs_model_file:
+        # Derive source dataset path from env_meta task name
+        with _h5py.File(str(seed_hdf5), "r") as _f:
+            _env_meta_str = _f["data"].attrs.get("env_args", "{}")
+        _env_name = _json.loads(_env_meta_str).get("env_name", "").lower().replace("_", "")
+        # Look for source dataset in standard locations
+        _source_candidates = [
+            f"/home/erbauer/data/mimicgen_data/core_datasets/core/{args.task_name}_d1.hdf5",
+            f"/home/erbauer/data/mimicgen_data/source/{args.task_name}.hdf5",
+        ]
+        _model_xml = ""
+        for _src_path in _source_candidates:
+            if _os.path.exists(_src_path):
+                with _h5py.File(_src_path, "r") as _sf:
+                    _demo0 = sorted(k for k in _sf["data"].keys() if k.startswith("demo_"))[0]
+                    if "model_file" in _sf[f"data/{_demo0}"].attrs:
+                        _model_xml = _sf[f"data/{_demo0}"].attrs["model_file"]
+                        print(f"[run_mimicgen_generate] model_file sourced from {_src_path} ({len(_model_xml)} chars)")
+                        break
+        if not _model_xml:
+            print("[run_mimicgen_generate] WARNING: could not find model_file source; generation may fail")
+        with _h5py.File(str(seed_hdf5), "a") as _f:
+            for _k in list(_f.get("data", {}).keys()):
+                if _k.startswith("demo_"):
+                    _f[f"data/{_k}"].attrs["model_file"] = _model_xml
+
     # --- Step 1: prepare_src_dataset (annotates seed in-place) ---
     print(f"[run_mimicgen_generate] prepare_src_dataset: {seed_hdf5}")
     prepare_src_dataset(
@@ -146,6 +185,42 @@ def main(argv: list[str] | None = None) -> None:
         output_path=None,
     )
     print("[run_mimicgen_generate] prepare_src_dataset done.")
+
+    # --- Filter seed demos with missing subtask termination signals ---
+    # After prepare_src_dataset adds datagen_info, some demos may have subtask_term_signals
+    # with sum=0 (the signal never fires), causing DataGenerator to assert-fail later.
+    # Remove those demos now to avoid a cryptic assertion error downstream.
+    import h5py as _h5py_filter
+    import numpy as _np_filter
+    with _h5py_filter.File(str(seed_hdf5), "r") as _f:
+        _demos = sorted(k for k in _f["data"].keys() if k.startswith("demo_"))
+        _bad = []
+        for _d in _demos:
+            _grp = _f["data"][_d]
+            if "datagen_info" in _grp and "subtask_term_signals" in _grp["datagen_info"]:
+                _sig = _grp["datagen_info"]["subtask_term_signals"]
+                for _s in _sig.keys():
+                    if _sig[_s][:].sum() == 0:
+                        _bad.append(_d)
+                        print(f"[run_mimicgen_generate] filtering demo {_d}: {_s}=0 (never fires)")
+                        break
+    if _bad:
+        _good = [d for d in _demos if d not in set(_bad)]
+        if not _good:
+            raise RuntimeError(
+                f"[run_mimicgen_generate] ALL seed demos have missing subtask signals; "
+                f"cannot generate. Seed HDF5: {seed_hdf5}"
+            )
+        print(f"[run_mimicgen_generate] removed {len(_bad)} demos with missing signals, "
+              f"{len(_good)} remain")
+        with _h5py_filter.File(str(seed_hdf5), "a") as _f:
+            for _d in _bad:
+                del _f["data"][_d]
+            _remaining = sorted(k for k in _f["data"].keys() if k.startswith("demo_"))
+            for _i, _old in enumerate(_remaining):
+                if _old != f"demo_{_i}":
+                    _f["data"][f"demo_{_i}"] = _f["data"][_old]
+                    del _f["data"][_old]
 
     # --- Optional: constrain object initial poses relative to seed ---
     if args.fix_initial_object_poses:
