@@ -239,8 +239,7 @@ To collect training data, you hired **two data-collection companies**:
 You trained a first policy on this combined dataset and ran it on the robot.
 Now you want to answer two questions:
 
-1. **Which collection strategy is more robust** — Company A's one-shot lifts or Company B's
-   two-step lifts?
+1. **Which collection strategy is more robust?**
 2. **Where do you need more data** — which scenarios are causing the most failures?
 
 ### How you'll explore the data
