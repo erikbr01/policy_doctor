@@ -1,0 +1,28 @@
+# Cloudflare Tunnel configuration for Policy Doctor.
+#
+# Setup (run once, from any machine with cloudflared installed):
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create policy-doctor
+#   cloudflared tunnel route dns policy-doctor study.behavior-graphs.com
+#   cloudflared tunnel route dns policy-doctor  demo.behavior-graphs.com
+#
+# Then on the GCE host:
+#   1. Copy this file:  cp config.yml.example config.yml
+#   2. Replace every <TUNNEL_ID> below with the UUID from `cloudflared tunnel list`
+#   3. Copy the <TUNNEL_ID>.json credentials file into this directory
+#      (it is gitignored — never commit it)
+#
+# The credentials file path must be the container-internal path (/etc/cloudflared/…)
+# because this directory is mounted at /etc/cloudflared inside the tunnel container.
+
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: study.behavior-graphs.com
+    service: http://proxy:80
+  - hostname: demo.behavior-graphs.com
+    service: http://proxy:80
+  # Catch-all: return 404 for any unmatched hostname.
+  - service: http_status:404

@@ -25,11 +25,6 @@ server {
     listen 80;
     server_name ${STUDY_DOMAIN};
 
-    # ACME HTTP-01 challenge (used by certbot for cert issuance/renewal).
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
     location / {
         set $upstream "survey:8501";
         proxy_pass http://$upstream;
@@ -52,10 +47,6 @@ server {
 server {
     listen 80;
     server_name ${DEMO_DOMAIN};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
 
     location / {
         set $upstream "demo:8501";

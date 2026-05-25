@@ -50,7 +50,7 @@ ENV STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-    CMD curl -fsS http://localhost:8501/_stcore/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
 
 CMD ["streamlit", "run", "/app/policy_doctor/streamlit_app/demo_app/Home.py", \
      "--server.port", "8501", \

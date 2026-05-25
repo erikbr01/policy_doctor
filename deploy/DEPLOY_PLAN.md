@@ -1,7 +1,7 @@
 # Real-Deployment TODO
 
 This is a checklist of what still has to happen before participants can
-hit a real `https://study.<domain>` URL. The **how-to** for each step
+hit a real `https://study.behavior-graphs.com` URL. The **how-to** for each step
 lives in [`README.md`](README.md) — this file is the project-management
 view of remaining work, ordered by dependency.
 
@@ -20,10 +20,10 @@ Last updated: 2026-05-24.
 | Architecture (nginx proxy + survey + demo + GCS responses) | ✅ Built and locally tested |
 | Survey app code (5-step flow, randomized A/B, timer, analytics page) | ✅ Done |
 | Local Docker stack (`./deploy/deploy_study_stack.sh`) | ✅ Working — verified end-to-end |
-| TLS scaffold (`docker-compose.tls.yml`, `init_letsencrypt.sh`, certbot sidecar) | ✅ Written, not yet exercised |
+| Cloudflare Tunnel (`docker-compose.tunnel.yml`, `cloudflared/config.yml.example`) | ✅ Written, not yet exercised |
 | Kendama task content (videos, clustering, session YAML) | ⚠️ Clustering + videos ready; strategy definitions are still placeholders |
 | GCS response bucket | ❌ Not created |
-| Public DNS + static IP + cert issuance | ❌ Not done |
+| Tunnel credentials + DNS wired up | ❌ Not done |
 
 ---
 
@@ -44,53 +44,68 @@ Last updated: 2026-05-24.
 Blocker for: nothing technical — but the survey is misleading without
 real strategies, so this gates "send link to participants."
 
-### 2. Provision GCS response storage
+### 2. ~~Provision response storage~~ (deferred)
 
-- [ ] `gsutil mb -l us-west1 gs://<bucket-name>` (region close to the VM).
-- [ ] Grant the VM's service account `roles/storage.objectCreator` and
-      `roles/storage.objectViewer` on the bucket.
-- [ ] Drop `SURVEY_GCS_BUCKET=<bucket-name>` into `deploy/.env`.
+Responses are written to a local Docker volume on the VM for now.
+No setup needed — the volume is created automatically by Compose.
+Retrieve responses at any time with `docker cp` (see README → Response storage).
 
-Without this, responses fall back to a local Docker volume on the VM —
-fine for a smoke test, but you lose them on `docker compose down -v` and
-the analytics page can't read across machines.
+### 3. Create and mount the persistent data disk
 
-### 3. Reserve a static IP + open the firewall
+Run once from your local machine (VM must already exist):
 
-- [ ] GCP Console → VPC → External IPs → promote the VM's ephemeral IP
-      to static (name it e.g. `user-study-static-ip`).
-- [ ] Open ports 80 + 443 in the firewall with the
-      `policy-doctor-http` network tag:
+```bash
+./deploy/setup_data_disk.sh
+```
+
+- [ ] Script completes — disk is mounted at `/mnt/data` on the VM.
+- [ ] Verify `auto-delete` is off:
       ```bash
-      gcloud compute firewall-rules create policy-doctor-allow-https \
-          --project=gcp-driven-data --network=default \
-          --direction=INGRESS --action=ALLOW \
-          --rules=tcp:80,tcp:443 --source-ranges=0.0.0.0/0 \
-          --target-tags=policy-doctor-http --quiet
+      gcloud compute instances describe policy-doctor-demo \
+          --zone=us-west1-a --format="value(disks[].autoDelete)"
       ```
+      Should print `false` for the data disk (the boot disk will show `true`).
 
-### 4. Point real DNS records at the static IP
+### 5. Create the Cloudflare Tunnel
 
-At your domain registrar (or in GCP Cloud DNS), create:
+Run once from any machine with `cloudflared` installed (not the VM):
 
-| Type | Host | Value |
-|------|------|-------|
-| A | `study` | `<STATIC_IP>` |
-| A | `demo`  | `<STATIC_IP>` |
+```bash
+cloudflared tunnel login
+cloudflared tunnel create policy-doctor
+cloudflared tunnel route dns policy-doctor study.behavior-graphs.com
+cloudflared tunnel route dns policy-doctor  demo.behavior-graphs.com
+```
 
-- [ ] Records created.
-- [ ] DNS resolves: `dig study.<domain> +short` returns the static IP
-      from a machine **outside** the VM. Wait if it doesn't — Let's
-      Encrypt will fail otherwise.
+- [ ] Tunnel created (`cloudflared tunnel list` shows `policy-doctor`).
+- [ ] DNS CNAME records created (Cloudflare does this automatically via
+      `tunnel route dns`; verify in the Cloudflare dashboard).
 
-### 5. Fill in the production `.env` on the VM
+### 6. Configure the tunnel on the VM
+
+```bash
+# On the VM:
+cd ~/deploy
+cp cloudflared/config.yml.example cloudflared/config.yml
+# Edit config.yml: fill in TUNNEL_ID and hostnames
+
+# From your local machine — copy the credentials JSON to the VM:
+gcloud compute scp ~/.cloudflared/<TUNNEL_ID>.json \
+    policy-doctor-demo:~/deploy/cloudflared/ \
+    --zone us-west1-a --project gcp-driven-data
+```
+
+- [ ] `cloudflared/config.yml` filled in with correct tunnel ID and domains.
+- [ ] `<TUNNEL_ID>.json` credentials file present in `~/deploy/cloudflared/`
+      on the VM (it is gitignored — never commit it).
+
+### 7. Fill in the production `.env` on the VM
 
 On the VM, in `~/deploy/.env`:
 
-- [ ] `STUDY_DOMAIN=study.<domain>`
-- [ ] `DEMO_DOMAIN=demo.<domain>`
-- [ ] `LETSENCRYPT_EMAIL=<your-email>` (used for expiry notices)
-- [ ] `SURVEY_GCS_BUCKET=<bucket-name>`
+- [ ] `STUDY_DOMAIN=study.behavior-graphs.com`
+- [ ] `DEMO_DOMAIN=demo.behavior-graphs.com`
+- [ ] `SURVEY_RESPONSES_DIR=/mnt/data/survey_responses`
 - [ ] `SURVEY_PASSWORD_SHA256=<hash>` (optional — gate the survey app)
 - [ ] `APP_PASSWORD_SHA256=<hash>` (optional — gate the demo app)
 
@@ -99,68 +114,51 @@ Generate a hash with:
 python3 -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
 ```
 
-### 6. Issue Let's Encrypt certs
+### 8. Deploy and smoke-test
 
-- [ ] **Dry run against staging** to catch DNS / firewall issues without
-      hitting the production rate limit (5 certs / week / domain):
-      ```bash
-      STAGING=1 ./deploy/init_letsencrypt.sh
-      ```
-      `curl -kI https://study.<domain>` should return a cert from
-      `Fake LE Intermediate X1` (untrusted but confirms the flow works).
-- [ ] **Production issuance** once staging works:
-      ```bash
-      ./deploy/init_letsencrypt.sh
-      ```
-- [ ] Bring up the full stack with TLS:
-      ```bash
-      ./deploy/deploy_study_stack.sh --tls
-      ```
-- [ ] Verify `https://study.<domain>` and `https://demo.<domain>` both
-      load and show a valid cert.
+```bash
+# Build + push the image from your dev machine
+./deploy/deploy_gcp_vm.sh
 
-After bootstrap, the `certbot` sidecar in `docker-compose.tls.yml` renews
-every 12h and signals nginx to reload — no host cron needed.
+# On the VM: bring up the full stack with the tunnel sidecar
+cd ~/deploy
+./deploy_study_stack.sh --tunnel
+```
 
-### 7. End-to-end validation
+- [ ] `docker compose logs tunnel` shows a `registered` / `connected` line.
+- [ ] `https://study.behavior-graphs.com` loads in a browser (Cloudflare issues the cert
+      automatically — no cert bootstrap step needed).
+- [ ] `https://demo.behavior-graphs.com` loads.
 
-- [ ] Open `https://study.<domain>` in an incognito window, complete all
+### 9. End-to-end validation
+
+- [ ] Open `https://study.behavior-graphs.com` in an incognito window, complete all
       5 survey steps, submit.
-- [ ] Confirm the response JSON appears in GCS:
-      `gsutil ls gs://<bucket>/survey_responses/`
-- [ ] Open `https://demo.<domain>` → **Survey Analytics** page and
-      verify the response shows up.
+- [ ] Confirm the response JSON was written to the volume:
+      ```bash
+      docker compose exec survey ls /app/survey_responses/
+      ```
 - [ ] Repeat in a second incognito session to confirm Group A/B
-      randomization (compare `study_group` field in the GCS JSONs).
+      randomization (compare `study_group` field in the two JSON files).
 - [ ] Time at least one full pass through the 10-min rollout timer
       (Group A) to confirm auto-advance fires server-side.
 
-### 8. Pre-launch hardening
+### 10. Pre-launch hardening
 
 - [ ] Decide whether to leave both apps password-gated and ship the
       credentials to participants out-of-band, or open the survey app
       (`SURVEY_PASSWORD_SHA256=` blank) and keep only the demo gated.
 - [ ] Set a GCP budget alert (~$30/mo for `e2-small` + minimal egress is
       typical; alerts at 50/90/100% are a reasonable guardrail).
-- [ ] Note the renewal date on the calendar — Let's Encrypt certs last
-      90 days. The sidecar auto-renews, but it's worth having a manual
-      verification 2 weeks before any high-traffic event.
 
 ---
 
 ## What's deliberately NOT in scope
 
-- **Cloud Run** — the legacy `deploy_gcp.sh` script targets it, but
-  domain-restricted access needs `roles/run.admin`, which the current
-  deployer doesn't have. The VM + Cloudflare path was abandoned in
-  favor of nginx + Let's Encrypt on the VM. Keep the script for
-  reference but don't use it for this study.
-- **Multi-VM / HA** — single `e2-small` is enough for the participant
-  load anticipated for this study. If you need horizontal scaling, the
-  proxy + apps already speak through Docker Compose service names, so
-  swapping in a managed load balancer is mostly a DNS change.
-- **Custom CDN / WAF in front** — nginx + Let's Encrypt is plenty for
-  this study's threat model. If you later want Cloudflare in front,
-  point the DNS at Cloudflare instead of the static IP and leave the
-  origin on HTTP behind the proxy with `proxy_set_header`s already in
-  place.
+- **Cloud Run** — `deploy_gcp.sh` targets it, but domain-restricted access
+  needs `roles/run.admin` which the current deployer doesn't have. The VM +
+  Cloudflare Tunnel path is the chosen approach.
+- **Multi-VM / HA** — single `e2-small` is enough for the participant load
+  anticipated for this study. If you need horizontal scaling, the proxy +
+  apps already speak through Docker Compose service names, so swapping in a
+  managed load balancer is mostly a DNS change.

@@ -8,3 +8,12 @@ data/
 # Plaintext shared password persisted by deploy_gcp_vm.sh — kept locally so
 # re-runs don't churn the password, but never committed.
 .app_password
+
+# Local survey responses (bind mount target for local testing).
+survey_responses/
+
+# Cloudflare Tunnel credentials — sensitive, never commit.
+# config.yml is safe to commit once filled in (no secrets), but the .json
+# credentials file issued by `cloudflared tunnel create` must stay local.
+cloudflared/*.json
+cloudflared/config.yml
