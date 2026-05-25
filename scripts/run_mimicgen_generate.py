@@ -201,18 +201,54 @@ def main(argv: list[str] | None = None) -> None:
     print("[run_mimicgen_generate] prepare_src_dataset done.")
 
     # --- Optional: constrain object initial poses relative to seed ---
-    if args.seed_object_poses:
+    # Read seed_object_poses from the just-prepared seed.hdf5 (its datagen_info
+    # now contains the rollout's initial object poses). Fall back to the JSON
+    # passed via --seed_object_poses if the pipeline step pre-computed them.
+    if args.object_pose_ranges or args.seed_object_poses:
         import json as _json
         import h5py as _h5py
+        import numpy as _np
         import robosuite.environments as _renv
 
-        # World-frame seed poses: {object_name: {x, y, z_rot}}
-        seed_poses: dict[str, dict[str, float]] = _json.loads(args.seed_object_poses)
+        # Always prefer reading from the prepared seed.hdf5 — the --seed_object_poses
+        # CLI fallback was historically computed from the source dataset, which gives
+        # wrong (non-rollout) object names/poses for any seed selected from rollouts.
+        seed_poses: dict[str, dict[str, float]] = {}
+        try:
+            with _h5py.File(str(seed_hdf5), "r") as _f:
+                _d = sorted(k for k in _f["data"].keys() if k.startswith("demo_"))[0]
+                _grp = _f[f"data/{_d}/datagen_info/object_poses"]
+                for _obj in _grp.keys():
+                    _T = _np.asarray(_grp[_obj])  # (T, 4, 4)
+                    _R = _T[0, :3, :3]
+                    _z_rot = float(_np.arctan2(_R[1, 0], _R[0, 0]))
+                    seed_poses[_obj] = {
+                        "x": float(_T[0, 0, 3]),
+                        "y": float(_T[0, 1, 3]),
+                        "z_rot": _z_rot,
+                    }
+            print(f"[run_mimicgen_generate] read seed_object_poses from prepared seed.hdf5: "
+                  f"{list(seed_poses.keys())}")
+        except (KeyError, IndexError) as _e:
+            # Fall back to CLI arg (legacy) if seed doesn't have datagen_info
+            if args.seed_object_poses:
+                seed_poses = _json.loads(args.seed_object_poses)
+                print(f"[run_mimicgen_generate] WARNING: read seed_object_poses from "
+                      f"--seed_object_poses CLI fallback ({list(seed_poses.keys())}); "
+                      f"prepared seed.hdf5 datagen_info missing ({_e})")
+            else:
+                raise RuntimeError(
+                    f"Cannot read seed_object_poses: prepared seed.hdf5 lacks "
+                    f"datagen_info/object_poses and --seed_object_poses not provided"
+                ) from _e
+
         # Per-axis offset ranges: {object_name: {x: [lo,hi]|null, y: [lo,hi]|null, z_rot: [lo,hi]|null}}
         # None overall = pin exactly (all [0,0])
         pose_ranges: dict[str, dict[str, list | None]] = (
             _json.loads(args.object_pose_ranges) if args.object_pose_ranges else {}
         )
+        # Normalize: whole-object null in YAML → {} dict here (pins all axes at [0,0])
+        pose_ranges = {k: ({} if v is None else v) for k, v in pose_ranges.items()}
 
         # Resolve env class from seed HDF5 env_meta (task-agnostic)
         with _h5py.File(str(seed_hdf5), "r") as _f:
