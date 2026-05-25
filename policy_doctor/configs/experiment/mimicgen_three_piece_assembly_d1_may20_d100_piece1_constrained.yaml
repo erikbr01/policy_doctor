@@ -53,6 +53,7 @@ clustering_run_dir: data/pipeline_runs/mimicgen_three_piece_assembly_d1_may20_se
 
 mimicgen_datagen:
   task_name: three_piece_assembly
+  source_dataset_path: data/source/mimicgen/core_datasets/three_piece_assembly_d1/demo.hdf5
   env_interface_name: MG_ThreePieceAssembly
   num_seeds: 10
   output_dir: data/outputs/mimicgen_datagen
