@@ -287,6 +287,113 @@ python -m policy_doctor.scripts.compare_policies \
 
 ---
 
+## Data Flow Audit — `generate_mimicgen_demos.py` (post round-3)
+
+Walking the pipeline end-to-end to verify objects, subtasks, constraints, and timing are all correct now.
+
+### 1. Object names match across env ↔ yaml ↔ seed.hdf5
+
+Verified `_get_initial_placement_bounds()` returns object names that match our yaml `object_pose_ranges` keys, which match the names in the prepared seed.hdf5's `datagen_info/object_poses` group:
+
+| Task | Env objects | Yaml keys | seed.hdf5 keys |
+|---|---|---|---|
+| Kitchen | bread, pot, stove, button, serving_region | bread, pot, stove, button, serving_region | bread, button, pot, serving_region, stove |
+| Threading | needle, tripod | needle, tripod | needle, tripod |
+| TPA | piece_1, piece_2, base | piece_1, piece_2, base | piece_1, piece_2, base |
+
+All matches confirmed. The `_constrained_bounds` fuzzy-match (exact-or-substring) on `bounds_key ↔ seed_poses key` succeeds.
+
+### 2. Subtask specs come from `config_factory(task_name)` template
+
+| Task | # Subtasks | Subtask chain (object_ref / term_signal) |
+|---|---|---|
+| Kitchen | **7** | button/stove_on → pot/grasp_pot → stove/place_pot_on_stove → bread/grasp_bread → pot/place_bread_in_pot → serving_region/serve → button/(end) |
+| Threading | **2** | needle/grasp → tripod/(end) |
+| TPA | **4** | piece_1/grasp_1 → base/insert_1 → piece_2/grasp_2 → piece_1/(end) |
+
+All subtasks use `selection_strategy='random'` for these 3 tasks (none use `nearest_neighbor_object`, so `--nn_k` is a no-op).
+
+`run_mimicgen_generate.py` correctly:
+- Square branch (when `task_name == 'square'`): hardcodes `square_nut`/`square_peg` subtask_1/2
+- Else branch: keeps `config_factory` template intact, applies CLI variance knobs (`action_noise`, `num_interpolation_steps`, `num_fixed_steps`) to every subtask in the template
+
+Live log from the current kitchen run confirms:
+```
+[run_mimicgen_generate] using template subtask spec for task_name='kitchen' (7 subtasks);
+  signals=['stove_on', 'grasp_pot', 'place_pot_on_stove', 'grasp_bread',
+           'place_bread_in_pot', 'serve', None]
+```
+
+### 3. Constraint application — actually applied now (round-3 fix)
+
+Previously broken: pipeline step pre-computed `seed_object_poses` from the SOURCE dataset (default hardcoded to square) → kitchen runs got `{square_nut, square_peg}` poses → no match against `{bread, pot, ...}` env objects → no constraint applied → bread sampled from full D1 range → ~0% MimicGen success.
+
+Now (post commits `6012904` + `092b524`): `run_mimicgen_generate.py` reads `seed_object_poses` directly from the prepared seed.hdf5's `datagen_info/object_poses` *after* `prepare_src_dataset` runs.
+
+Live log confirms correct constraint application:
+```
+[run_mimicgen_generate] read seed_object_poses from prepared seed.hdf5:
+  ['bread', 'button', 'pot', 'serving_region', 'stove']
+[run_mimicgen_generate] constrained object poses on Kitchen_D1:
+  bread(x=[-0.304,-0.224], y=[-0.244,-0.164], z_rot=0.012(pinned));
+  button(x=-0.169(pinned), y=0.110(pinned), z_rot=3.142(pinned));
+  pot(x=-0.051(pinned), y=-0.071(pinned), z_rot=0.218(pinned));
+  serving_region(x=0.145(pinned), y=-0.178(pinned), z_rot=0.000(pinned));
+  stove(x=-0.018(pinned), y=0.186(pinned), z_rot=0.000(pinned))
+```
+
+Reading:
+- bread x range is `[seed_x − 0.04, seed_x + 0.04]` (±4cm around the rollout's bread x), same for y
+- bread z_rot pinned at 0.012 rad (seed value)
+- All other objects pinned exactly at seed poses
+
+### 4. Constraint timing — applied at the right moment
+
+Kitchen's `_get_placement_initializer()` is called once at env `__init__` and bakes bounds into `placement_initializer` (concrete x_range / y_range / rotation values). The monkey-patch order in `run_mimicgen_generate.py`:
+
+1. Line ~280: `env_cls._get_initial_placement_bounds = _constrained_bounds`
+2. Line ~351: `generate_dataset(cfg, ...)` internally calls `robosuite.make()` → `env_cls.__init__()`
+3. `__init__` → `_get_placement_initializer()` → `self._get_initial_placement_bounds()` resolves to the patched method
+4. `placement_initializer` is built with our constrained ranges
+5. Every subsequent `env.reset()` samples from those baked ranges
+
+Patch must run BEFORE env creation — and it does. Verified.
+
+### 5. Per-seed adaptive retry — correct
+
+`generate_mimicgen_demos.py` flow when `success_budget` is set and seed.hdf5 has multiple demos:
+
+1. Extract each demo into `seed_<i>/seed.hdf5` (single-demo file)
+2. Adaptive loop: while `total_successes < success_budget` and `total_trials < success_budget * 20`:
+   - Estimate `trials_per_seed = ceil(remaining_needed / n_seeds / observed_rate * 1.2)` (with 5% effective-rate floor to prevent explosion)
+   - For each seed: launch subprocess with `seed_<i>/seed.hdf5` and `trials_per_seed`
+   - Subprocess writes pass-stats.json; loop reads it and updates totals
+3. Merge all pass outputs; if merged > success_budget, subsample to exactly `success_budget` demos
+4. Final stats.json reports per-seed and aggregate counts
+
+This guarantees: equal data quantity per arm (`success_budget` demos), variable compute (bad seeds spend more passes), hard 20× cap on compute waste.
+
+### 6. Does the design fundamentally make sense? Yes, with one open empirical question.
+
+**Yes — the pipeline is now coherent end-to-end:**
+
+- `select_mimicgen_seed` picks rollouts via heuristic and materializes them as a multi-demo `seed.hdf5`
+- `generate_mimicgen_demos` extracts each seed individually, then for each: `prepare_src_dataset` annotates with `datagen_info` (subtask signals, object poses by replaying in the env), then `generate_dataset` adapts the seed trajectory to new initial conditions sampled within our constraint
+- Constraint correctly limits object initial poses around the seed's own pose
+- Adaptive loop guarantees `success_budget` demos per arm or 20× compute cap
+- Aggregated demos feed into `train_on_combined_data` (baseline 100 + generated success_budget)
+
+**Open empirical question — kitchen specifically.** Even with the constraint now correctly applied, kitchen's 7-subtask chain involves bread being grasped at sub_4 then placed-in-pot at sub_5. A perturbed bread x/y at grasp time changes the in-gripper bread pose; sub_5's place trajectory (recorded with the seed's grasp) may drop the bread off-pot. We previously observed `place_bread_in_pot` failing 47% in a (mis-)configured run; with the real constraint now applied, the actual rate is TBD.
+
+Threading (2 subtasks) and TPA (4 subtasks) have shorter chains and should be more robust. The methodology should validate cleanly on at least one of those even if kitchen needs further per-task tuning.
+
+### 7. Latent design issues not blocking the current run
+
+- `_DEFAULT_SOURCE_DATASET = "data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5"` is still hardcoded in `generate_mimicgen_demos.py:85`. Only reachable when `SelectMimicgenSeedStep` hasn't run (a path none of our experiments take). Worth cleaning eventually.
+- `--seed_object_poses` CLI arg in `run_mimicgen_generate.py` is now a legacy fallback (with WARNING). Could be removed entirely once no callers depend on it.
+
+---
+
 ## Session-2026-05-24 Re-run — Lessons Learned
 
 This is a redo of an earlier failed sweep. Documenting the failure modes so future runs avoid them.
