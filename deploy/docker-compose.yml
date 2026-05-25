@@ -1,0 +1,89 @@
+# Two Streamlit apps + an nginx reverse proxy that routes by subdomain.
+#
+#     Browser  ──►  proxy:80  ──►  survey:8501   (study.<domain>)
+#                              \─►  demo:8501    (demo.<domain>)
+#
+# The survey/demo containers are NOT exposed on the host directly — they're
+# only reachable through the proxy. This keeps the public surface to a
+# single nginx vhost and lets us add HTTPS / Let's Encrypt via the TLS
+# override (docker-compose.tls.yml).
+#
+# Usage:
+#   cd deploy/
+#   docker compose build              # build the streamlit image
+#   docker compose up -d              # start all three services
+#
+#   # With TLS (after init_letsencrypt.sh):
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# Local testing without DNS:
+#   Default STUDY_DOMAIN/DEMO_DOMAIN are study.localhost / demo.localhost.
+#   On most Linux + macOS systems these already resolve to 127.0.0.1.
+#   If not, add to /etc/hosts:
+#     127.0.0.1  study.localhost demo.localhost
+#   Or use the public wildcard service:
+#     STUDY_DOMAIN=study.lvh.me  DEMO_DOMAIN=demo.lvh.me
+
+services:
+  survey:
+    image: policy-doctor-demo
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8501"
+    environment:
+      APP_PASSWORD_SHA256: "${SURVEY_PASSWORD_SHA256:-}"
+      SURVEY_GCS_BUCKET: "${SURVEY_GCS_BUCKET:-}"
+    volumes:
+      - "${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/gcp-key.json:ro"
+      - survey_responses:/app/survey_responses
+    command: >
+      streamlit run /app/policy_doctor/streamlit_app/survey_app/Home.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+
+  demo:
+    image: policy-doctor-demo
+    # Reuses the image built by the survey service — no separate build step.
+    restart: unless-stopped
+    expose:
+      - "8501"
+    environment:
+      APP_PASSWORD_SHA256: "${APP_PASSWORD_SHA256:-}"
+      SURVEY_GCS_BUCKET: "${SURVEY_GCS_BUCKET:-}"
+    volumes:
+      - "${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/gcp-key.json:ro"
+      - survey_responses:/app/survey_responses
+    command: >
+      streamlit run /app/policy_doctor/streamlit_app/demo_app/Home.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+    depends_on:
+      - survey
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    environment:
+      STUDY_DOMAIN: "${STUDY_DOMAIN:-study.localhost}"
+      DEMO_DOMAIN: "${DEMO_DOMAIN:-demo.localhost}"
+      # Limit envsubst to our two vars — leaves nginx's own $vars intact.
+      NGINX_ENVSUBST_FILTER: "^(STUDY|DEMO)_DOMAIN$$"
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - survey
+      - demo
+
+volumes:
+  survey_responses:
+  certbot_certs:
+  certbot_www:

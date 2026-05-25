@@ -269,6 +269,7 @@ def render_path_explorer(
         with st.expander(f"Episode {ep_idx} — {status}"):
             video_path = mp4_dir / ep_entry["path"]
             total_frames = ep_entry.get("frame_count")
+            ep_fps = int(round(ep_entry.get("fps") or 10))
             if intermediate_nodes:
                 first_node = intermediate_nodes[0]
                 last_node = intermediate_nodes[-1]
@@ -284,5 +285,6 @@ def render_path_explorer(
                 slice_start=slice_start,
                 slice_end=slice_end,
                 total_frames=total_frames,
+                fps=ep_fps,
                 key=f"{key_prefix}_vid_{selected_path_idx}_{ep_idx}",
             )

@@ -1,0 +1,13 @@
+label: "Kendama (May 22)"
+
+mp4_dir: /tmp/study_mp4s/kendama_may22
+study_config: policy_doctor/configs/user_study/kendama_may22.yaml
+clustering_dir: data/demo_sweep/kendama_may22/run_clustering/clustering/aggregate_first/state_full_history_w20_s10_seed42_kmeans_k15
+
+# Example demo videos for each strategy in the allocator.
+# MP4 files placed here are referenced by strategy.example_demos.video_paths.
+# Default (when omitted): <mp4_dir>/demo_videos/
+# demo_videos_dir: /tmp/study_mp4s/kendama_may22/demo_videos
+
+# Time allowed on the Rollout Info page (seconds). Default: 600 (10 min).
+rollout_time_limit_seconds: 600

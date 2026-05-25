@@ -461,7 +461,8 @@ def _render_native_svg(
         _id_to_prefix[nid] = " → ".join(chain)
     st.session_state[f"{key_prefix}_id_to_prefix"] = _id_to_prefix
     _highlighted_path = st.session_state.get(f"{key_prefix}_highlighted_path")
-    _fps = int((mp4_index or {}).get("fps", 10))
+    _eps = (mp4_index or {}).get("episodes", [])
+    _fps = int(round(_eps[0].get("fps") or 10)) if _eps else 10
 
     col_g, col_v = st.columns([2, 1])
     with col_g:
@@ -757,6 +758,18 @@ def _render_right_video_panel(
         ep_slices = _episodes_for_node(int(selected_node), labels, metadata)
         ep_slices_by_idx: Dict[int, Tuple[int, int]] = {e[0]: (e[1], e[2]) for e in ep_slices}
         all_eps = sorted(ep_slices_by_idx.keys())
+        # Restrict to episodes on visible (non-pruned) paths. An episode is on
+        # a visible path if it reaches a terminal through the synth_graph; those
+        # terminal nodes' episode_indices already contain only visible episodes.
+        if graph is not None and all_eps:
+            _visible_eps: set = set()
+            for _gn in graph.nodes.values():
+                if _gn.name in {"SUCCESS", "FAILURE", "END"}:
+                    _visible_eps.update(_gn.episode_indices)
+            if _visible_eps:
+                all_eps = [ep for ep in all_eps if ep in _visible_eps]
+                ep_slices_by_idx = {ep: ep_slices_by_idx[ep]
+                                    for ep in all_eps if ep in ep_slices_by_idx}
         # Terminal nodes (SUCCESS/FAILURE) are never assigned synth_labels so
         # ep_slices will be empty — fall back to the graph node's episode list.
         ep_segs_by_idx_node: Optional[Dict[int, List]] = None

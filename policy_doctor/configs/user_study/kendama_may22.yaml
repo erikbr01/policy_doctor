@@ -1,0 +1,62 @@
+task: kendama_may22
+title: "Kendama Task: Data Collection Strategy Study"
+
+budget:
+  total_demos: 500
+  min_per_strategy: 0
+  allocation_step: 25
+
+# Strategies available to participants.
+# Each strategy is a (behavior mode, initial condition) combination.
+#
+# example_demos:
+#   behavior_label:           Human-readable behavior mode name shown as a tag
+#   initial_condition_label:  Human-readable initial condition shown as a secondary tag
+#   video_paths:              Up to 3 paths relative to the session's demo_videos_dir.
+#                             Leave empty (or omit) — placeholder tiles are shown until
+#                             the real videos are filmed and added.
+
+strategies:
+  - id: "s_placeholder_1"
+    name: "Strategy 1"
+    short: "S1"
+    description: |
+      (Fill in: describe the behavior mode and initial condition this strategy targets.)
+    color: "#4878d0"
+    example_demos:
+      behavior_label: "Behavior mode A"
+      initial_condition_label: "Initial condition X"
+      video_paths: []   # add up to 3 MP4 filenames once demos are filmed
+
+  - id: "s_placeholder_2"
+    name: "Strategy 2"
+    short: "S2"
+    description: |
+      (Fill in.)
+    color: "#ee854a"
+    example_demos:
+      behavior_label: "Behavior mode B"
+      initial_condition_label: "Initial condition X"
+      video_paths: []
+
+  - id: "s_placeholder_3"
+    name: "Strategy 3"
+    short: "S3"
+    description: |
+      (Fill in.)
+    color: "#6acc65"
+    example_demos:
+      behavior_label: "Behavior mode C"
+      initial_condition_label: "Initial condition Y"
+      video_paths: []
+
+  - id: "s_placeholder_4"
+    name: "Strategy 4"
+    short: "S4"
+    description: |
+      (Fill in.)
+    color: "#d65f5f"
+    example_demos:
+      behavior_label: "Behavior mode A"
+      initial_condition_label: "Initial condition Y"
+      video_paths: []

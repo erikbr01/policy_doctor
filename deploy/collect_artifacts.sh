@@ -141,6 +141,7 @@ DEMO_SWEEP_TASKS=(
     pi05_libero_spatial
     pi05_libero_object
     pi05_libero_goal
+    kendama_may22
 )
 mkdir -p deploy/data/demo_sweep
 for task in "${DEMO_SWEEP_TASKS[@]}"; do
@@ -159,7 +160,35 @@ for task in "${DEMO_SWEEP_TASKS[@]}"; do
     fi
 done
 
-# 5. Sanity check.
+# 6. Kendama rollout MP4s.
+#    Source: /mnt/ssdB/erik/rollouts/rollouts_kendama_latest_may19/*/exterior.mp4
+#    The cluster_kendama_rollouts.py script already created symlinks in
+#    /tmp/study_mp4s/kendama_may22/ — here we copy the actual MP4 bytes into
+#    deploy/data/study_mp4s/kendama_may22/ so they're self-contained in the image.
+KENDAMA_ROLLOUTS_SRC="/mnt/ssdB/erik/rollouts/rollouts_kendama_latest_may19"
+KENDAMA_MP4_SRC="/tmp/study_mp4s/kendama_may22"   # populated by cluster_kendama_rollouts.py
+KENDAMA_MP4_DST="$ROOT/deploy/data/study_mp4s/kendama_may22"
+
+if [ ! -d "$KENDAMA_MP4_SRC" ] || [ ! -f "$KENDAMA_MP4_SRC/index.json" ]; then
+    echo "→ Kendama MP4s not found in $KENDAMA_MP4_SRC — running cluster_kendama_rollouts.py"
+    conda run -n policy_doctor python "$ROOT/scripts/cluster_kendama_rollouts.py" \
+        --rollouts "$KENDAMA_ROLLOUTS_SRC" \
+        --out_dir  "data/demo_sweep/kendama_may22/run_clustering/clustering/state_w20_s10_k8" \
+        --mp4_out  "$KENDAMA_MP4_SRC"
+fi
+
+if [ -f "$KENDAMA_MP4_SRC/index.json" ]; then
+    mkdir -p "$KENDAMA_MP4_DST"
+    # rsync -L dereferences symlinks so actual video bytes land in deploy/
+    rsync -aL --delete \
+        --include='*.mp4' --include='index.json' --exclude='*' \
+        "$KENDAMA_MP4_SRC/" "$KENDAMA_MP4_DST/"
+    echo "  kendama_may22: $(ls "$KENDAMA_MP4_DST"/*.mp4 2>/dev/null | wc -l) MP4s bundled"
+else
+    echo "WARNING: kendama_may22 MP4s not found — study page will be video-less."
+fi
+
+# 7. Sanity check.
 echo "== Bundle contents =="
 du -sh deploy/policy_doctor deploy/third_party deploy/data 2>&1
 

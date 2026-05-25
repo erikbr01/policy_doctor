@@ -74,7 +74,7 @@ def _ordering_from_manifest(manifest: Dict) -> str:
     return "umap_first"
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _list_tasks() -> List[str]:
     tasks: set = set()
     if _DEMO_SWEEP.is_dir():
@@ -334,7 +334,7 @@ _tasks = _list_tasks()
 if not _tasks:
     st.error("No clusterings found.")
     st.stop()
-default_task_idx = _tasks.index("transport_mh_jan28") if "transport_mh_jan28" in _tasks else 0
+default_task_idx = _tasks.index("kendama_may22") if "kendama_may22" in _tasks else 0
 task = st.sidebar.selectbox("Task", _tasks, index=default_task_idx)
 
 # When the task changes, clear stale per-component state (selected node,

@@ -1,0 +1,98 @@
+# TLS reverse-proxy config.
+#
+# Loaded only when docker-compose.tls.yml swaps the templates volume.
+# Requires Let's Encrypt certs at /etc/letsencrypt/live/<domain>/ — bootstrap
+# them once with deploy/init_letsencrypt.sh.
+#
+# HTTP server still handles ACME challenges + redirects everything else to HTTPS.
+#
+# See templates/streamlit.conf.template for why we use `set $upstream` + the
+# Docker resolver instead of a plain `proxy_pass`.
+
+resolver 127.0.0.11 ipv6=off valid=10s;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# ── HTTP : ACME + redirect ─────────────────────────────────────────────────
+server {
+    listen 80;
+    server_name ${STUDY_DOMAIN} ${DEMO_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ── HTTPS : survey ─────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${STUDY_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${STUDY_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${STUDY_DOMAIN}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        set $upstream "survey:8501";
+        proxy_pass http://$upstream;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+# ── HTTPS : demo ───────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DEMO_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DEMO_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DEMO_DOMAIN}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        set $upstream "demo:8501";
+        proxy_pass http://$upstream;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+# Default server — drop unknown Host headers.
+server {
+    listen 80 default_server;
+    listen 443 ssl default_server;
+    http2 on;
+    server_name _;
+    ssl_certificate     /etc/letsencrypt/live/${STUDY_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${STUDY_DOMAIN}/privkey.pem;
+    return 444;
+}

@@ -42,6 +42,50 @@ def _find_mp4_episode(ep_idx: int, mp4_index: dict) -> Optional[dict]:
     return None
 
 
+# Tableau-style palette matching graph_plot.py's node colors. Indexed by
+# (cluster_id % len) on the player side, so 20 colors covers K up to 15.
+_CLUSTER_COLORS = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+    "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
+    "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5",
+]
+
+
+def _per_frame_labels(
+    ep_idx: int,
+    labels: np.ndarray,
+    metadata: list[dict],
+    total_frames: int,
+) -> np.ndarray:
+    """Reconstruct a per-frame cluster label array (-1 = unlabeled).
+
+    Each cluster window covers [window_start, window_end). Overlapping
+    windows are resolved by last-write-wins on sorted window_start.
+
+    The orange "slice" bar in mp4_player used to draw [min_ws, max_ws],
+    which spans across non-active stretches when a cluster recurs.
+    Passing this per-frame mask lets the player draw the true segments.
+    """
+    if total_frames <= 0:
+        return np.array([], dtype=np.int64)
+    ep_key = "rollout_idx" if any("rollout_idx" in m for m in metadata) else "demo_idx"
+    out = np.full(total_frames, -1, dtype=np.int64)
+    slices: list[tuple[int, int, int]] = []
+    for i, m in enumerate(metadata):
+        if m.get(ep_key) != ep_idx:
+            continue
+        lbl = int(labels[i])
+        if lbl < 0:
+            continue
+        ws = int(m.get("window_start", m.get("timestep", 0)))
+        we = int(m.get("window_end", ws + 1))
+        slices.append((ws, we, lbl))
+    for ws, we, lbl in sorted(slices, key=lambda x: x[0]):
+        out[max(0, ws):min(total_frames, we)] = lbl
+    return out
+
+
 def _episodes_for_edge(
     src_id: int,
     tgt_id: int,
@@ -217,10 +261,13 @@ def _render_edge_panel(
                 effective_tgt_end = None
             with col:
                 st.caption(f"Ep {ep_idx} {status}")
+                ep_fps = int(round(ep_entry.get("fps") or 10))
+                pfl = _per_frame_labels(ep_idx, labels, metadata, total_frames or 0)
                 mp4_player(
                     mp4_dir / ep_entry["path"],
                     key=f"{key_prefix}_edge_vid_{src_id}_{tgt_id}_{ep_idx}",
                     max_height_px=220,
+                    fps=ep_fps,
                     slice_start=ts_src,
                     slice_end=effective_tgt,
                     total_frames=total_frames,
@@ -228,6 +275,8 @@ def _render_edge_panel(
                     slice2_end=effective_tgt_end,
                     bar1_label=src_name,
                     bar2_label=tgt_name if effective_tgt_end is not None else "",
+                    per_frame_labels=pfl if len(pfl) else None,
+                    cluster_colors=_CLUSTER_COLORS,
                 )
 
 
@@ -399,15 +448,26 @@ def _render_node_panel(
                     ts_range = ep_slices_by_idx.get(ep_idx)
                     total_frames = ep_entry.get("frame_count")
                     effective_end = ts_range[1] if ts_range else None
+                    ep_fps = int(round(ep_entry.get("fps") or 10))
+                    # The (min_ws, max_ws) range was painting a single bar
+                    # across non-active stretches for clusters that recur
+                    # within an episode (kendama-class problem — robomimic
+                    # episodes are short enough that recurrence is rare).
+                    # Pass per-frame labels so the player draws the true
+                    # multi-segment colored strip for THIS node's behavior.
+                    pfl = _per_frame_labels(ep_idx, labels, metadata, total_frames or 0)
                     with col:
                         st.caption(f"Episode {ep_idx} — {status}")
                         mp4_player(
                             mp4_dir / ep_entry["path"],
                             key=f"{key_prefix}_panel_vid_{node_id}_{ep_idx}",
                             max_height_px=220,
+                            fps=ep_fps,
                             slice_start=ts_range[0] if ts_range else None,
                             slice_end=effective_end,
                             total_frames=total_frames,
+                            per_frame_labels=pfl if len(pfl) else None,
+                            cluster_colors=_CLUSTER_COLORS,
                         )
                 if available == 0:
                     st.info("No videos found in index for this node.")

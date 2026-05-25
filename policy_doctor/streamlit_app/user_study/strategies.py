@@ -17,12 +17,106 @@ def load_strategies(config_path: Union[str, Path]) -> list[dict]:
     return load_study_config(config_path)["strategies"]
 
 
+def _render_example_demos(
+    strategy: dict,
+    demo_videos_dir: Path | None,
+    key_prefix: str,
+) -> None:
+    """Render the example-demos expander for one strategy row.
+
+    Each strategy may carry an ``example_demos`` block::
+
+        example_demos:
+          behavior_label: "Overhead grasp"
+          initial_condition_label: "Object at center"
+          video_paths:            # up to 3, relative to demo_videos_dir
+            - ep001.mp4
+            - ep042.mp4
+            - ep087.mp4
+
+    If ``video_paths`` is empty or the files don't exist yet, a styled
+    placeholder is shown instead so the layout is visible before the
+    kendama demos are filmed.
+    """
+    ex = strategy.get("example_demos")
+    if not ex:
+        return
+
+    behavior_label = ex.get("behavior_label", "")
+    ic_label = ex.get("initial_condition_label", "")
+    video_paths: list[str] = ex.get("video_paths") or []
+    sid = strategy["id"]
+    color = strategy.get("color", "#888")
+
+    tag_html = (
+        f'<span style="background:{color}22;border:1px solid {color};'
+        f'color:{color};border-radius:4px;padding:1px 8px;font-size:0.8em;'
+        f'margin-right:6px;">{behavior_label}</span>'
+        if behavior_label else ""
+    )
+    ic_html = (
+        f'<span style="background:#1e293b;border:1px solid #334155;'
+        f'color:#94a3b8;border-radius:4px;padding:1px 8px;font-size:0.8em;">'
+        f'{ic_label}</span>'
+        if ic_label else ""
+    )
+
+    label_line = (tag_html + ic_html) or "Example demos"
+    with st.expander(f"▶ See example demos", expanded=False):
+        if label_line:
+            st.markdown(label_line, unsafe_allow_html=True)
+
+        # Resolve paths and check existence
+        resolved: list[Path | None] = []
+        for vp in video_paths[:3]:
+            if demo_videos_dir is not None:
+                p = demo_videos_dir / vp
+                resolved.append(p if p.exists() else None)
+            else:
+                resolved.append(None)
+
+        # Pad to 3 slots so the layout is always 3-wide
+        while len(resolved) < 3:
+            resolved.append(None)
+
+        from policy_doctor.streamlit_app.components.mp4_player import mp4_player
+
+        cols = st.columns(3)
+        for i, (col, path) in enumerate(zip(cols, resolved)):
+            with col:
+                if path is not None:
+                    mp4_player(
+                        path,
+                        key=f"{key_prefix}_{sid}_demo_{i}",
+                        max_height_px=160,
+                    )
+                else:
+                    # Placeholder shown until real videos are added
+                    st.markdown(
+                        '<div style="height:120px;border:2px dashed #334155;'
+                        'border-radius:6px;display:flex;align-items:center;'
+                        'justify-content:center;color:#475569;font-size:0.8em;">'
+                        'video coming soon</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(f"Demo {i + 1}")
+
+
 def render_strategy_allocator(
     strategies: list[dict],
     total_budget: int,
     allocation_step: int = 25,
     key_prefix: str = "alloc",
+    demo_videos_dir: Path | None = None,
 ) -> dict[str, int]:
+    """Render the strategy allocation widget.
+
+    Args:
+        demo_videos_dir: Base directory for example demo MP4s.  When set and
+            a strategy has an ``example_demos.video_paths`` list, an expander
+            shows up to 3 example clips below the strategy description.
+            Pass ``None`` (default) to suppress the expander entirely.
+    """
     allocations: dict[str, int] = {}
 
     # Show current remaining budget from last render (reads session state before widgets render)
@@ -61,6 +155,7 @@ def render_strategy_allocator(
                 key=f"{key_prefix}_{sid}",
                 label_visibility="collapsed",
             )
+            _render_example_demos(strategy, demo_videos_dir, key_prefix)
         allocations[sid] = int(val)
 
     total_allocated = sum(allocations.values())

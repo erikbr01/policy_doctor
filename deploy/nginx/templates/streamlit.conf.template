@@ -1,0 +1,85 @@
+# Reverse-proxy config: route by Host header to the survey or demo container.
+#
+# Filled in at container start by the official nginx image's envsubst step
+# (NGINX_ENVSUBST_FILTER limits substitution to STUDY_DOMAIN / DEMO_DOMAIN
+# so nginx's own $vars are left alone).
+#
+# Why a `set $upstream …; proxy_pass http://$upstream` indirection:
+#   Plain `proxy_pass http://survey:8501` makes nginx resolve `survey` once
+#   at startup. If either upstream container is down at that moment, nginx
+#   refuses to boot. Putting the host in a $variable + a `resolver` makes
+#   the lookup happen per-request via Docker's embedded DNS (127.0.0.11),
+#   so the proxy stays up across app restarts.
+
+resolver 127.0.0.11 ipv6=off valid=10s;
+
+# WebSocket connection-upgrade map — Streamlit needs the Upgrade/Connection
+# headers preserved through the proxy.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# ── Survey app (participant-facing) ────────────────────────────────────────
+server {
+    listen 80;
+    server_name ${STUDY_DOMAIN};
+
+    # ACME HTTP-01 challenge (used by certbot for cert issuance/renewal).
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        set $upstream "survey:8501";
+        proxy_pass http://$upstream;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket support (Streamlit session state).
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+# ── Demo / analytics app (researcher-facing) ───────────────────────────────
+server {
+    listen 80;
+    server_name ${DEMO_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        set $upstream "demo:8501";
+        proxy_pass http://$upstream;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+# ── Catch-all default ─────────────────────────────────────────────────────
+# Any request whose Host header doesn't match either subdomain is dropped.
+# 444 = nginx-specific "close connection without response" — keeps the
+# server from accidentally serving content to unintended Host headers.
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}

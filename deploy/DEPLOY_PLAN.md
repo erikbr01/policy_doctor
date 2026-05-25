@@ -1,265 +1,166 @@
-# Deploying policy-doctor-demo on GCP
+# Real-Deployment TODO
 
-Two supported targets:
+This is a checklist of what still has to happen before participants can
+hit a real `https://study.<domain>` URL. The **how-to** for each step
+lives in [`README.md`](README.md) — this file is the project-management
+view of remaining work, ordered by dependency.
 
-- **GCE VM (`deploy_gcp_vm.sh`) — default.** Runs the docker image on a
-  single `e2-small` VM in `us-west1-a`. Access is gated by a SHA-256-hashed
-  shared password handled inside the Streamlit app. Works with
-  `roles/editor`, costs ~$13/month.
-- **Cloud Run (`deploy_gcp.sh`) — alternative.** Cheaper at idle but
-  domain-restricted access (`stanford.edu`, `tri.global`, etc.) requires
-  `run.services.setIamPolicy`, which `roles/editor` *does not include*. If
-  the deployer doesn't have `roles/run.admin` / `roles/owner` /
-  `roles/iam.securityAdmin`, this path can't grant access to anyone and
-  the service returns 403 for everything. The VM path is the safe
-  default for that reason.
+For local / over-SSH testing, jump to
+[Local Docker deploy](README.md#local-docker-deploy--proxy--both-apps) in
+the README — no items below are needed for that.
 
-Both scripts default to project `gcp-driven-data`, region `us-west1`
-(Oregon — Tier 1 pricing, close to Bay Area participants). Override any
-default with an env var (`PROJECT=...`, `REGION=...`, `ZONE=...`).
+Last updated: 2026-05-24.
 
 ---
 
-## One-time setup
+## Status snapshot
 
-### In the GCP Console
-
-1. **Pick a project.** Console → project picker. Note the **Project ID**
-   — `gcp-driven-data` for the current deploy.
-2. **Enable billing.** Console → Billing → Link a billing account.
-3. **(Recommended) Set a budget alert.** $50/month with alerts at
-   50/90/100% is a reasonable first-deploy guardrail.
-
-### In your terminal (gcloud)
-
-```bash
-gcloud auth login
-gcloud config set project gcp-driven-data
-
-# Enable the APIs we use. compute.googleapis.com is for the VM path;
-# run.googleapis.com is only needed if you ever use the Cloud Run script.
-gcloud services enable \
-    compute.googleapis.com \
-    artifactregistry.googleapis.com \
-    run.googleapis.com
-
-# Create the Artifact Registry repo (once per region).
-gcloud artifacts repositories create policy-doctor \
-    --repository-format=docker \
-    --location=us-west1 \
-    --description="policy-doctor demo images"
-
-# Configure docker to authenticate against this region's AR.
-gcloud auth configure-docker us-west1-docker.pkg.dev
-```
+| Area | State |
+|------|-------|
+| Architecture (nginx proxy + survey + demo + GCS responses) | ✅ Built and locally tested |
+| Survey app code (5-step flow, randomized A/B, timer, analytics page) | ✅ Done |
+| Local Docker stack (`./deploy/deploy_study_stack.sh`) | ✅ Working — verified end-to-end |
+| TLS scaffold (`docker-compose.tls.yml`, `init_letsencrypt.sh`, certbot sidecar) | ✅ Written, not yet exercised |
+| Kendama task content (videos, clustering, session YAML) | ⚠️ Clustering + videos ready; strategy definitions are still placeholders |
+| GCS response bucket | ❌ Not created |
+| Public DNS + static IP + cert issuance | ❌ Not done |
 
 ---
 
-## Per-release (VM path — the working default)
+## Outstanding work, in order
 
-Single command:
+### 1. Finalize kendama study content
 
+- [ ] Fill in real strategy definitions in
+      `policy_doctor/configs/user_study/kendama_may22.yaml`:
+      replace the 4 placeholder entries with real
+      `(behavior mode × initial condition)` pairs.
+- [ ] Film 3 representative training demos per strategy and place them
+      at `data/study_mp4s/kendama_may22/demo_videos/<ep_xxx.mp4>`.
+      File names go under each strategy's `example_demos.video_paths`.
+- [ ] Re-run `./deploy/collect_artifacts.sh` so the new MP4s land in the
+      image.
+
+Blocker for: nothing technical — but the survey is misleading without
+real strategies, so this gates "send link to participants."
+
+### 2. Provision GCS response storage
+
+- [ ] `gsutil mb -l us-west1 gs://<bucket-name>` (region close to the VM).
+- [ ] Grant the VM's service account `roles/storage.objectCreator` and
+      `roles/storage.objectViewer` on the bucket.
+- [ ] Drop `SURVEY_GCS_BUCKET=<bucket-name>` into `deploy/.env`.
+
+Without this, responses fall back to a local Docker volume on the VM —
+fine for a smoke test, but you lose them on `docker compose down -v` and
+the analytics page can't read across machines.
+
+### 3. Reserve a static IP + open the firewall
+
+- [ ] GCP Console → VPC → External IPs → promote the VM's ephemeral IP
+      to static (name it e.g. `user-study-static-ip`).
+- [ ] Open ports 80 + 443 in the firewall with the
+      `policy-doctor-http` network tag:
+      ```bash
+      gcloud compute firewall-rules create policy-doctor-allow-https \
+          --project=gcp-driven-data --network=default \
+          --direction=INGRESS --action=ALLOW \
+          --rules=tcp:80,tcp:443 --source-ranges=0.0.0.0/0 \
+          --target-tags=policy-doctor-http --quiet
+      ```
+
+### 4. Point real DNS records at the static IP
+
+At your domain registrar (or in GCP Cloud DNS), create:
+
+| Type | Host | Value |
+|------|------|-------|
+| A | `study` | `<STATIC_IP>` |
+| A | `demo`  | `<STATIC_IP>` |
+
+- [ ] Records created.
+- [ ] DNS resolves: `dig study.<domain> +short` returns the static IP
+      from a machine **outside** the VM. Wait if it doesn't — Let's
+      Encrypt will fail otherwise.
+
+### 5. Fill in the production `.env` on the VM
+
+On the VM, in `~/deploy/.env`:
+
+- [ ] `STUDY_DOMAIN=study.<domain>`
+- [ ] `DEMO_DOMAIN=demo.<domain>`
+- [ ] `LETSENCRYPT_EMAIL=<your-email>` (used for expiry notices)
+- [ ] `SURVEY_GCS_BUCKET=<bucket-name>`
+- [ ] `SURVEY_PASSWORD_SHA256=<hash>` (optional — gate the survey app)
+- [ ] `APP_PASSWORD_SHA256=<hash>` (optional — gate the demo app)
+
+Generate a hash with:
 ```bash
-./deploy/deploy_gcp_vm.sh
+python3 -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
 ```
 
-What it does, in order:
+### 6. Issue Let's Encrypt certs
 
-1. **Re-bundles** the worktree (`policy_doctor/`, clustering tree, MP4s)
-   into `deploy/` via `collect_artifacts.sh`.
-2. **Builds** the docker image as `linux/amd64` (forced — Apple Silicon
-   builds get rejected by GCE/Cloud Run otherwise).
-3. **Tags + pushes** the image as `:latest` and `:<git-sha>` to AR.
-4. **Generates a password** (16 hex chars from `openssl rand -hex 8`) on
-   first run, persists the plaintext in `deploy/.app_password` (gitignored,
-   `chmod 600`). Subsequent runs reuse it so participants don't get locked
-   out across redeploys. Pre-set `APP_PASSWORD=...` to pin a chosen value.
-5. **Creates the firewall rule** `policy-doctor-allow-8501` allowing
-   `tcp:8501` from `0.0.0.0/0` to instances tagged `policy-doctor-http`.
-   Idempotent — skipped if it already exists.
-6. **Creates or updates the VM** `policy-doctor-demo`
-   (e2-small, `us-west1-a`, Container-Optimized OS):
-   - First run: creates the VM with a startup script that pulls the image
-     and runs the container with `APP_PASSWORD_SHA256` from instance
-     metadata.
-   - Subsequent runs: SSHs in, `docker pull`s the new image SHA, and
-     `docker run`s a fresh container (the running container is replaced
-     without rebooting the VM).
-7. **Prints** the external IP, the URL (`http://<ip>:8501`), and the
-   plaintext password (read from `deploy/.app_password`).
+- [ ] **Dry run against staging** to catch DNS / firewall issues without
+      hitting the production rate limit (5 certs / week / domain):
+      ```bash
+      STAGING=1 ./deploy/init_letsencrypt.sh
+      ```
+      `curl -kI https://study.<domain>` should return a cert from
+      `Fake LE Intermediate X1` (untrusted but confirms the flow works).
+- [ ] **Production issuance** once staging works:
+      ```bash
+      ./deploy/init_letsencrypt.sh
+      ```
+- [ ] Bring up the full stack with TLS:
+      ```bash
+      ./deploy/deploy_study_stack.sh --tls
+      ```
+- [ ] Verify `https://study.<domain>` and `https://demo.<domain>` both
+      load and show a valid cert.
 
-### Where the password lives
+After bootstrap, the `certbot` sidecar in `docker-compose.tls.yml` renews
+every 12h and signals nginx to reload — no host cron needed.
 
-| Location | What's there |
-|---|---|
-| `deploy/.app_password` on the deployer's laptop | plaintext (chmod 600, gitignored) |
-| GCE instance metadata `app-password-sha256` | SHA-256 hex digest |
-| Container env `APP_PASSWORD_SHA256` | same SHA-256 hex digest |
+### 7. End-to-end validation
 
-The plaintext never leaves the deployer's machine. The Streamlit app
-hashes the user-submitted password with SHA-256 and compares to the env
-digest using `hmac.compare_digest` (constant-time). See
-`policy_doctor/streamlit_app/demo_app/Home.py` (`_gate_on_password`).
+- [ ] Open `https://study.<domain>` in an incognito window, complete all
+      5 survey steps, submit.
+- [ ] Confirm the response JSON appears in GCS:
+      `gsutil ls gs://<bucket>/survey_responses/`
+- [ ] Open `https://demo.<domain>` → **Survey Analytics** page and
+      verify the response shows up.
+- [ ] Repeat in a second incognito session to confirm Group A/B
+      randomization (compare `study_group` field in the GCS JSONs).
+- [ ] Time at least one full pass through the 10-min rollout timer
+      (Group A) to confirm auto-advance fires server-side.
 
-### Changing the password
+### 8. Pre-launch hardening
 
-```bash
-# Pin a specific one
-APP_PASSWORD="new-shared-password" ./deploy/deploy_gcp_vm.sh
-
-# Or rotate to a fresh random one
-rm deploy/.app_password
-./deploy/deploy_gcp_vm.sh
-```
-
-The script's idempotent update path updates both the instance metadata
-and the running container's env, so the change is live as soon as the
-script finishes.
+- [ ] Decide whether to leave both apps password-gated and ship the
+      credentials to participants out-of-band, or open the survey app
+      (`SURVEY_PASSWORD_SHA256=` blank) and keep only the demo gated.
+- [ ] Set a GCP budget alert (~$30/mo for `e2-small` + minimal egress is
+      typical; alerts at 50/90/100% are a reasonable guardrail).
+- [ ] Note the renewal date on the calendar — Let's Encrypt certs last
+      90 days. The sidecar auto-renews, but it's worth having a manual
+      verification 2 weeks before any high-traffic event.
 
 ---
 
-## Operations
+## What's deliberately NOT in scope
 
-### URL / IP
-
-```bash
-gcloud compute instances describe policy-doctor-demo \
-    --zone us-west1-a --project gcp-driven-data \
-    --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
-```
-
-### Logs
-
-Startup-script log (image pull + first `docker run`):
-
-```bash
-gcloud compute ssh policy-doctor-demo --zone us-west1-a --project gcp-driven-data \
-    --command='sudo tail -100 /var/log/policy-doctor-startup.log'
-```
-
-Container logs (Streamlit stdout/stderr):
-
-```bash
-gcloud compute ssh policy-doctor-demo --zone us-west1-a --project gcp-driven-data \
-    --command='docker logs --tail=200 policy-doctor'
-```
-
-### Restart the container without redeploying
-
-```bash
-gcloud compute ssh policy-doctor-demo --zone us-west1-a --project gcp-driven-data \
-    --command='docker restart policy-doctor'
-```
-
-### Tear it all down
-
-```bash
-gcloud compute instances delete policy-doctor-demo --zone us-west1-a --project gcp-driven-data --quiet
-gcloud compute firewall-rules delete policy-doctor-allow-8501 --project gcp-driven-data --quiet
-# (Optional) drop the AR images:
-gcloud artifacts docker images list us-west1-docker.pkg.dev/gcp-driven-data/policy-doctor/demo \
-    --project gcp-driven-data
-```
-
-### Custom domain / TLS
-
-The VM publishes `http://<external-ip>:8501` — no TLS, no DNS. For a
-study handout that's fine, but if you want `https://demo.example.com`:
-
-- **Easiest, no extra infra:** put Cloudflare in front. Add an A record
-  pointing your subdomain at the VM's external IP, turn Cloudflare proxy
-  (orange cloud) on, and Cloudflare provides TLS to the browser and
-  forwards to `http://<ip>:8501`. Bonus: Cloudflare Access (free tier)
-  can also restrict by email/domain in front of the password gate.
-- **In-VM TLS:** swap the startup script for one that runs Caddy as a
-  sidecar and points it at the container; Caddy handles Let's Encrypt
-  automatically once you have a DNS record. Not currently scripted.
-
----
-
-## Per-release (Cloud Run path — when the deployer has run.admin)
-
-Single command, identical defaults to the VM script:
-
-```bash
-./deploy/deploy_gcp.sh
-```
-
-Defaults: `PROJECT=gcp-driven-data`, `REGION=us-west1`, `AUTH_MODE=private`
-(domains: `stanford.edu,tri.global`). Override any of them via env var.
-
-Steps it runs:
-
-1. Re-bundles via `collect_artifacts.sh`.
-2. Builds the image as `linux/amd64`.
-3. Tags + pushes `:latest` and `:<git-sha>` to AR.
-4. `gcloud run deploy` with: `--memory=1Gi --cpu=1`,
-   `--min-instances=1 --max-instances=3`, `--session-affinity` (Streamlit
-   websockets must hit the same instance), `--no-cpu-throttling`,
-   `--cpu-boost`, `--port=8501`.
-5. If `AUTH_MODE=private`: grants Cloud Run Invoker to every domain in
-   `$ALLOWED_DOMAINS`. **This step needs `run.services.setIamPolicy` —
-   not in `roles/editor`. If the deployer hits PERMISSION_DENIED here,
-   either ask a project owner to grant `roles/run.admin`, or switch to
-   the VM path.**
-
-### Open it up to the public instead
-
-```bash
-AUTH_MODE=public ./deploy/deploy_gcp.sh
-```
-
-(Still needs `setIamPolicy` to actually flip the binding.)
-
-### Grant individual users
-
-```bash
-gcloud run services add-iam-policy-binding policy-doctor-demo \
-    --region us-west1 \
-    --member="user:participant1@example.com" \
-    --role="roles/run.invoker"
-```
-
-### Roll back, logs, custom domain (Cloud Run)
-
-```bash
-# Rollback
-gcloud run services update-traffic policy-doctor-demo \
-    --region us-west1 \
-    --to-revisions=policy-doctor-demo-<rev-id>=100
-
-# List revisions (image SHAs come from the :<git-sha> tag)
-gcloud run revisions list --service policy-doctor-demo --region us-west1
-
-# Tail logs
-gcloud run services logs tail policy-doctor-demo --region us-west1
-
-# Map a custom domain (one-time)
-gcloud run domain-mappings create \
-    --service policy-doctor-demo \
-    --domain demo.example.com \
-    --region us-west1
-```
-
----
-
-## Troubleshooting
-
-**`PERMISSION_DENIED ... run.services.setIamPolicy`** during Cloud Run
-deploy → expected with `roles/editor`. Switch to the VM path or get
-`roles/run.admin`.
-
-**`Container manifest type 'application/vnd.oci.image.index.v1+json'
-must support amd64/linux`** → you built on Apple Silicon and the daemon
-emitted an arm64-only image. The scripts now force `--platform
-linux/amd64`; if you build by hand, do the same.
-
-**VM startup log shows `denied: Unauthenticated request` from
-`*.pkg.dev`** → COS's docker only auto-authenticates against `gcr.io`,
-not Artifact Registry. The startup script now runs
-`docker-credential-gcr configure-docker --registries=us-west1-docker.pkg.dev`
-before pulling; if you bring up a VM by hand, do that first.
-
-**Connection to `<ip>:8501` times out** → the `policy-doctor-allow-8501`
-firewall rule is missing, or the VM lost the `policy-doctor-http` tag.
-Re-run `./deploy/deploy_gcp_vm.sh` — both are idempotent.
+- **Cloud Run** — the legacy `deploy_gcp.sh` script targets it, but
+  domain-restricted access needs `roles/run.admin`, which the current
+  deployer doesn't have. The VM + Cloudflare path was abandoned in
+  favor of nginx + Let's Encrypt on the VM. Keep the script for
+  reference but don't use it for this study.
+- **Multi-VM / HA** — single `e2-small` is enough for the participant
+  load anticipated for this study. If you need horizontal scaling, the
+  proxy + apps already speak through Docker Compose service names, so
+  swapping in a managed load balancer is mostly a DNS change.
+- **Custom CDN / WAF in front** — nginx + Let's Encrypt is plenty for
+  this study's threat model. If you later want Cloudflare in front,
+  point the DNS at Cloudflare instead of the static IP and leave the
+  origin on HTTP behind the proxy with `proxy_set_header`s already in
+  place.
