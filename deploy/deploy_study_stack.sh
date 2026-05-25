@@ -6,7 +6,7 @@
 #
 # Usage:
 #   ./deploy/deploy_study_stack.sh               # collect + build + start
-#   ./deploy/deploy_study_stack.sh --no-collect  # skip artifact bundling
+#   ./deploy/deploy_study_stack.sh --no-collect  # sync_repo + build + start
 #   ./deploy/deploy_study_stack.sh --no-build    # reuse existing image
 #   ./deploy/deploy_study_stack.sh --no-cache    # docker build --no-cache
 #   ./deploy/deploy_study_stack.sh --tunnel      # add Cloudflare Tunnel sidecar
@@ -58,9 +58,14 @@ if $TUNNEL; then
     fi
 fi
 
+# shellcheck source=sync_repo.sh
+source "$SCRIPT_DIR/sync_repo.sh"
+
 if $COLLECT; then
     echo "→ Collecting artifacts"
     "$SCRIPT_DIR/collect_artifacts.sh"
+else
+    sync_repo
 fi
 
 if $BUILD; then

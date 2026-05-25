@@ -1,0 +1,11 @@
+# @package clustering_sweep
+defaults:
+  - defaults
+  - _self_
+
+# Kendama clusterings are built offline via scripts/cluster_kendama_*.py.
+# This config exists so `compute_clustering_metrics` can refresh metrics.json
+# for the graph demo / silhouette model-selection defaults.
+tasks:
+  - task: kendama_may22
+    run_dir: data/demo_sweep/kendama_may22

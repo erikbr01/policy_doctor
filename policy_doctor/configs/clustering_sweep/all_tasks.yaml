@@ -60,3 +60,6 @@ tasks:
         representation: state_action
         obs_strategy: full_history
         action_strategy: full_plan
+  # Kendama: clusterings from scripts/cluster_kendama_*.py (no Hydra sweep).
+  - task: kendama_may22
+    run_dir: data/demo_sweep/kendama_may22

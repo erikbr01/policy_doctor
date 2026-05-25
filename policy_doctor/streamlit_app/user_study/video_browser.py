@@ -46,18 +46,24 @@ def render_video_browser(
     st.session_state[page_key] = current_page
 
     def _nav_row(suffix: str) -> None:
-        col_prev, col_label, col_next = st.columns([1, 3, 1])
+        col_prev, col_label, col_next = st.columns([1, 6, 1])
         with col_prev:
             if st.button("← Prev", key=f"{key_prefix}_prev_{suffix}", disabled=current_page == 0):
                 st.session_state[page_key] = current_page - 1
                 st.rerun()
         with col_label:
             st.markdown(
-                f"<div style='text-align:center;padding-top:6px;'>Page {current_page + 1} / {total_pages}</div>",
+                f"<div style='text-align:center;padding-top:0.4rem;'>"
+                f"Page {current_page + 1} / {total_pages}</div>",
                 unsafe_allow_html=True,
             )
         with col_next:
-            if st.button("Next →", key=f"{key_prefix}_next_{suffix}", disabled=current_page >= total_pages - 1):
+            if st.button(
+                "Next →",
+                key=f"{key_prefix}_next_{suffix}",
+                disabled=current_page >= total_pages - 1,
+                use_container_width=True,
+            ):
                 st.session_state[page_key] = current_page + 1
                 st.rerun()
 

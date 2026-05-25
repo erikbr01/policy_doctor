@@ -23,3 +23,9 @@
 
 # Local-only worktree state.
 **/.claude
+
+# Secrets and local runtime config (live in deploy/ alongside the Dockerfile).
+.env
+.app_password
+cloudflared/*.json
+survey_responses/

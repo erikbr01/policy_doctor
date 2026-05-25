@@ -10,8 +10,11 @@ Provides:
 from __future__ import annotations
 
 import time
+
 import streamlit as st
 import streamlit.components.v1 as components
+
+from policy_doctor.streamlit_app.appearance import get_theme
 
 STEP_LABELS = ["Consent", "Introduction", "Rollout Info", "Data Collection", "Survey"]
 N_STEPS = len(STEP_LABELS)
@@ -19,33 +22,66 @@ N_STEPS = len(STEP_LABELS)
 
 # ── Progress bar ──────────────────────────────────────────────────────────────
 
-def render_progress_bar(current_step: int, labels: list[str] = STEP_LABELS) -> None:
+def _progress_styles(theme: str) -> dict[str, str]:
+    if theme == "light":
+        return {
+            "bar_bg": "#f4f4f5",
+            "bar_border": "1px solid #d4d4d8",
+            "done": "#2ca02c",
+            "current": "#0875c4",
+            "current_border": "#0875c4",
+            "pending": "#6b6b6b",
+            "sep": "#b4b4b8",
+            "timer_bg": "#f4f4f5",
+            "timer_muted": "#6b6b6b",
+        }
+    return {
+        "bar_bg": "#111827",
+        "bar_border": "none",
+        "done": "#2ca02c",
+        "current": "#4db8ff",
+        "current_border": "#4db8ff",
+        "pending": "#666",
+        "sep": "#444",
+        "timer_bg": "#111827",
+        "timer_muted": "#888",
+    }
+
+
+def render_progress_bar(
+    current_step: int,
+    labels: list[str] = STEP_LABELS,
+    theme: str | None = None,
+) -> None:
+    theme = theme or get_theme()
+    styles = _progress_styles(theme)
     items = []
     for i, label in enumerate(labels):
         num = f"{i + 1}"
         if i < current_step:
             items.append(
-                f'<span style="color:#2ca02c;font-weight:600;">'
+                f'<span style="color:{styles["done"]};font-weight:600;">'
                 f'<span style="font-size:0.8em;opacity:0.8;">{num}.</span> ✓ {label}'
                 f'</span>'
             )
         elif i == current_step:
             items.append(
-                f'<span style="color:#4db8ff;font-weight:700;'
-                f'border-bottom:2px solid #4db8ff;padding-bottom:2px;">'
+                f'<span style="color:{styles["current"]};font-weight:700;'
+                f'border-bottom:2px solid {styles["current_border"]};padding-bottom:2px;">'
                 f'<span style="font-size:0.8em;opacity:0.8;">{num}.</span> {label}'
                 f'</span>'
             )
         else:
             items.append(
-                f'<span style="color:#666;font-weight:400;">'
+                f'<span style="color:{styles["pending"]};font-weight:400;">'
                 f'<span style="font-size:0.8em;">{num}.</span> {label}'
                 f'</span>'
             )
 
-    sep = '<span style="color:#444;margin:0 10px;font-size:1.1em;">›</span>'
+    sep = f'<span style="color:{styles["sep"]};margin:0 10px;font-size:1.1em;">›</span>'
     bar = (
-        '<div style="background:#111827;border-radius:8px;padding:12px 20px;'
+        f'<div style="background:{styles["bar_bg"]};border:{styles["bar_border"]};'
+        'border-radius:8px;padding:12px 20px;'
         'margin-bottom:20px;font-size:0.94em;letter-spacing:0.02em;">'
         + sep.join(items) +
         '</div>'
@@ -98,6 +134,7 @@ def render_rollout_timer(
     start_time: float,
     allowed_seconds: int,
     key: str = "rollout_timer",
+    theme: str | None = None,
 ) -> tuple[float, bool]:
     """Render a countdown timer and return ``(remaining_seconds, is_expired)``.
 
@@ -105,6 +142,8 @@ def render_rollout_timer(
     check here is authoritative).  In the last 10 seconds the function forces
     a 1 s sleep + rerun to guarantee auto-advance even without user interaction.
     """
+    theme = theme or get_theme()
+    styles = _progress_styles(theme)
     elapsed = time.time() - start_time
     remaining = max(0.0, allowed_seconds - elapsed)
     expired = remaining <= 0
@@ -120,14 +159,14 @@ def render_rollout_timer(
             f"""
             <div style="
                 display:inline-flex;align-items:center;gap:10px;
-                background:#111827;
+                background:{styles["timer_bg"]};
                 border:2px solid {border_col};
                 border-radius:8px;
                 padding:8px 20px;
             ">
               <span style="font-size:1.3em;">⏱</span>
               <div>
-                <div style="font-size:0.72em;color:#888;letter-spacing:0.05em;">
+                <div style="font-size:0.72em;color:{styles["timer_muted"]};letter-spacing:0.05em;">
                   TIME REMAINING
                 </div>
                 <div id="cd_{key}" style="

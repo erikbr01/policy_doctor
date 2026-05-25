@@ -203,6 +203,16 @@ def main() -> None:
     (out_dir / "manifest.yaml").write_text(yaml.dump(manifest))
     print(f"Clustering saved to {out_dir}")
 
+    from policy_doctor.curation_pipeline.steps.compute_clustering_metrics import (
+        _compute_for_dir,
+    )
+
+    metrics = _compute_for_dir(out_dir)
+    if metrics is not None:
+        sil = metrics.get("silhouette_mean")
+        sil_s = f"{sil:.4f}" if sil is not None else "n/a"
+        print(f"  metrics.json written (silhouette_mean={sil_s})")
+
     # ── 6. Build study MP4 index (skipped under --no_mp4_index) ──────────────
     if args.no_mp4_index:
         print("Skipping MP4 index/symlink step (--no_mp4_index set).")
@@ -229,8 +239,8 @@ def main() -> None:
         (mp4_out / "index.json").write_text(json.dumps(index, indent=2))
         print(f"  {len(index_eps)} episodes indexed")
 
-    # ── 7. Print session YAML snippet ─────────────────────────────────────────
-    print("\n=== Add to sessions/kendama_may22.yaml ===")
+    # ── 7. Print task YAML snippet ────────────────────────────────────────────
+    print("\n=== Add to tasks/kendama_may22.yaml ===")
     print(f"mp4_dir: {mp4_out}")
     print(f"clustering_dir: {out_dir}")
     print("==========================================")

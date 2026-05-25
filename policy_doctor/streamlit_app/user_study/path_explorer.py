@@ -15,6 +15,7 @@ from policy_doctor.behaviors.behavior_graph import (
     START_NODE_ID,
     SUCCESS_NODE_ID,
 )
+from policy_doctor.streamlit_app.appearance import get_theme, plotly_layout_overrides
 from policy_doctor.streamlit_app.components.mp4_player import mp4_player
 from policy_doctor.streamlit_app.user_study.graph_plot import render_graph_component
 
@@ -129,7 +130,11 @@ def render_path_explorer(
     mp4_dir: Path,
     mp4_index: dict,
     key_prefix: str = "pex",
+    theme: str | None = None,
 ) -> None:
+    theme = theme or get_theme()
+    start_bg = "#64748b" if theme == "light" else "#444"
+    arrow_color = "#64748b" if theme == "light" else "#aaa"
     st.subheader("Top Paths Through Behavior Graph")
 
     max_paths = st.slider(
@@ -179,8 +184,7 @@ def render_path_explorer(
         margin=dict(l=0, r=80, t=20, b=20),
         xaxis=dict(title="Episodes following this path", range=[0, max_ep * 1.45]),
         yaxis=dict(title=None, autorange="reversed"),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
+        **plotly_layout_overrides(theme),
     )
     st.plotly_chart(fig_paths, use_container_width=True, key=f"{key_prefix}_paths_chart")
 
@@ -224,7 +228,7 @@ def render_path_explorer(
     flow_parts = []
     for nid in selected_path:
         if nid == START_NODE_ID:
-            part = "<span style='background:#444;color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold;'>START</span>"
+            part = f"<span style='background:{start_bg};color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold;'>START</span>"
         elif nid == SUCCESS_NODE_ID:
             part = f"<span style='background:{outcome_color};color:white;padding:4px 10px;border-radius:4px;font-weight:bold;'>✓ SUCCESS</span>"
         elif nid == FAILURE_NODE_ID:
@@ -237,7 +241,7 @@ def render_path_explorer(
             part = f"<span style='background:#1f77b4;color:white;padding:4px 10px;border-radius:4px;'>{name}</span>"
         flow_parts.append(part)
 
-    arrow = " <span style='color:#aaa;font-size:1.2em;'>→</span> "
+    arrow = f" <span style='color:{arrow_color};font-size:1.2em;'>→</span> "
     st.markdown(arrow.join(flow_parts), unsafe_allow_html=True)
     st.caption(f"Path probability: {selected_prob:.4f} | Outcome: {outcome_str}")
 
@@ -246,6 +250,7 @@ def render_path_explorer(
         height=520,
         key=f"{key_prefix}_compact_graph",
         highlighted_path=selected_path,
+        theme=theme,
     )
 
     matching_episodes = _get_episodes_for_path(selected_path, labels, metadata)

@@ -26,6 +26,7 @@ from policy_doctor.behaviors.behavior_graph import (
     SUCCESS_NODE_ID,
 )
 from policy_doctor.behaviors import graph_simplification as gs
+from policy_doctor.behaviors.select_K import select_clustering_by_silhouette
 from policy_doctor.behaviors.clustering_temporal import (
     build_episode_cluster_map,
     build_cluster_timeline,
@@ -148,6 +149,15 @@ def _pretty_label(p: Path) -> str:
 
 # Index every clustering by (task, ordering, representation, K, W, S, agg) so
 # the user can pick along each axis instead of choosing a whole directory.
+@st.cache_data(show_spinner=False)
+def _read_metrics(path_str: str) -> Dict:
+    try:
+        with open(Path(path_str) / "metrics.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def _index_entry(p: Path) -> Dict:
     m = _short_manifest(str(p))
     rep = m.get("influence_source") or m.get("slice_representation") or "?"
@@ -162,6 +172,7 @@ def _index_entry(p: Path) -> Dict:
         "w": int(m.get("window_width", 5) or 5),
         "s": int(m.get("stride", 2) or 2),
         "agg": str(m.get("aggregation", "sum") or "sum"),
+        "metrics": _read_metrics(str(p)),
     }
 
 
@@ -185,8 +196,13 @@ def _filter_index(task=None, ordering=None, rep=None, k=None, w=None, s=None, ag
 # combo).
 st.sidebar.markdown("**Pick a clustering:**")
 
-# Default selection — prefer the cleanest known policy_emb for jan28.
-_DEFAULT_PREF = {"rep": "policy_emb/bottleneck_plan_t0", "k": 5}
+_FALLBACK_PREF = {
+    "rep": "policy_emb/bottleneck_plan_t0",
+    "k": 5,
+    "ordering": "umap_first",
+    "w": 5,
+    "s": 2,
+}
 
 
 def _pick(label: str, options: List, key: str, default_value=None, format_func=None):
@@ -209,33 +225,35 @@ def _pick(label: str, options: List, key: str, default_value=None, format_func=N
 tasks = sorted({e["task"] for e in _index})
 task_pick = _pick("Task", tasks, "pick_task")
 filtered = _filter_index(task=task_pick)
+_task_defaults = select_clustering_by_silhouette(filtered, fallback=_FALLBACK_PREF)
 
 # 2. UMAP ordering
 orderings = sorted({e["ordering"] for e in filtered})
 ordering_pick = _pick(
     "UMAP ordering", orderings, "pick_ordering",
+    default_value=_task_defaults.get("ordering"),
     format_func=lambda v: {"umap_first": "UMAP-first", "aggregate_first": "Aggregate-first"}.get(v, v),
 )
 filtered = _filter_index(task=task_pick, ordering=ordering_pick)
 
 # 3. Representation
 reps = sorted({e["rep"] for e in filtered})
-rep_pick = _pick("Embedding", reps, "pick_rep", default_value=_DEFAULT_PREF["rep"])
+rep_pick = _pick("Embedding", reps, "pick_rep", default_value=_task_defaults.get("rep"))
 filtered = _filter_index(task=task_pick, ordering=ordering_pick, rep=rep_pick)
 
 # 4. K
 ks = sorted({e["k"] for e in filtered})
-k_pick = _pick("K (clusters)", ks, "pick_k", default_value=_DEFAULT_PREF["k"])
+k_pick = _pick("K (clusters)", ks, "pick_k", default_value=_task_defaults.get("k"))
 filtered = _filter_index(task=task_pick, ordering=ordering_pick, rep=rep_pick, k=k_pick)
 
 # 5. Window width
 ws = sorted({e["w"] for e in filtered})
-w_pick = _pick("W (window width)", ws, "pick_w")
+w_pick = _pick("W (window width)", ws, "pick_w", default_value=_task_defaults.get("w"))
 filtered = _filter_index(task=task_pick, ordering=ordering_pick, rep=rep_pick, k=k_pick, w=w_pick)
 
 # 6. Stride
 ss_ = sorted({e["s"] for e in filtered})
-s_pick = _pick("S (stride)", ss_, "pick_s")
+s_pick = _pick("S (stride)", ss_, "pick_s", default_value=_task_defaults.get("s"))
 filtered = _filter_index(task=task_pick, ordering=ordering_pick, rep=rep_pick, k=k_pick, w=w_pick, s=s_pick)
 
 # 7. Aggregation

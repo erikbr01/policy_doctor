@@ -802,10 +802,16 @@ gcloud compute ssh NEW_VM_NAME --zone=us-west1-a \
 
 ---
 
-## Session configuration
+## Task configuration
 
-Each study session is a YAML file at
-`policy_doctor/configs/user_study/sessions/<name>.yaml`:
+The active task is set in `policy_doctor/configs/user_study/study.yaml`:
+
+```yaml
+task: transport_mh_jan28
+```
+
+Each task is a YAML file at
+`policy_doctor/configs/user_study/tasks/<name>.yaml`:
 
 ```yaml
 label: "Transport MH (Jan 28)"
@@ -822,12 +828,13 @@ no code changes.
 
 ## Adding a new study task
 
-1. Add a session YAML: `policy_doctor/configs/user_study/sessions/<task>.yaml`
+1. Add a task YAML: `policy_doctor/configs/user_study/tasks/<task>.yaml`
 2. Add a study config: `policy_doctor/configs/user_study/<task>.yaml`
-3. Place MP4s + `index.json` under `data/study_mp4s/<task>/`
-4. For Group B: place clustering data under `third_party/influence_visualizer/configs/<task>/clustering/`
-5. Add `<task>` to `TASKS` in `collect_artifacts.sh`
-6. Re-collect + rebuild: `./deploy/push_deploy.sh`
+3. Set `task: <task>` in `policy_doctor/configs/user_study/study.yaml`
+4. Place MP4s + `index.json` under `data/study_mp4s/<task>/`
+5. For Group B: place clustering data under `third_party/influence_visualizer/configs/<task>/clustering/`
+6. Add `<task>` to `TASKS` in `collect_artifacts.sh`
+7. Re-collect + rebuild: `./deploy/push_deploy.sh`
 
 ---
 

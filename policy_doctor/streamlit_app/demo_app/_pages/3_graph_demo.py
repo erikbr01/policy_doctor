@@ -36,6 +36,7 @@ from policy_doctor.behaviors.behavior_graph import (
     SUCCESS_NODE_ID,
 )
 from policy_doctor.behaviors import graph_simplification as gs
+from policy_doctor.behaviors.select_K import select_clustering_by_silhouette
 from policy_doctor.streamlit_app.components.trajectory_tree_view import (
     render_trajectory_tree,
 )
@@ -402,7 +403,14 @@ def _filter(rep=None, k=None, w=None, s=None, agg=None, ordering=None):
     return out
 
 
-_DEFAULT = {"rep": "policy_emb_bottleneck_plan_t0", "k": 8, "ordering": "umap_first"}
+_FALLBACK_DEFAULT = {
+    "rep": "policy_emb_bottleneck_plan_t0",
+    "k": 8,
+    "ordering": "umap_first",
+    "w": 5,
+    "s": 2,
+}
+_DEFAULT = select_clustering_by_silhouette(_INDEX, fallback=_FALLBACK_DEFAULT)
 
 def _pick(label, options, key, default=None):
     if not options:
@@ -462,10 +470,10 @@ ks = sorted({e["k"] for e in filt})
 k_pick = _pick("K (clusters)", ks, "demo_k", default=_DEFAULT["k"])
 filt = _filter(rep=rep_pick, k=k_pick, ordering=ordering_pick)
 ws = sorted({e["w"] for e in filt})
-w_pick = _pick("W (window width)", ws, "demo_w")
+w_pick = _pick("W (window width)", ws, "demo_w", default=_DEFAULT.get("w"))
 filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, ordering=ordering_pick)
 ss_ = sorted({e["s"] for e in filt})
-s_pick = _pick("S (stride)", ss_, "demo_s")
+s_pick = _pick("S (stride)", ss_, "demo_s", default=_DEFAULT.get("s"))
 filt = _filter(rep=rep_pick, k=k_pick, w=w_pick, s=s_pick, ordering=ordering_pick)
 aggs = sorted({e["agg"] for e in filt})
 agg_pick = aggs[0] if aggs else None

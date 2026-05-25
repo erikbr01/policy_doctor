@@ -1,0 +1,18 @@
+# Active task for the user study. Participants cannot change this.
+# Must match policy_doctor/configs/user_study/tasks/<task>.yaml
+task: kendama_may22
+
+# Time on the Rollout Info page (seconds).
+rollout_time_limit_seconds: 900
+
+# Behavior-graph visualization (Group B). Hidden from participants — edit here.
+graph:
+  visualization: tree_native_svg
+  color_by: outcome
+  min_transition_count: 2
+  clustering:
+    sweep_root: data/demo_sweep/kendama_may22/run_clustering/clustering/aggregate_first
+    rep: policy_emb_bottleneck_plan_t0
+    ordering: aggregate_first
+    k_options: [4, 5, 6, 7, 10, 11, 12, 14, 15]
+    default_k: 10

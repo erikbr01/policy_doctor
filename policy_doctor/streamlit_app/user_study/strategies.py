@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import yaml
 
+from policy_doctor.streamlit_app.appearance import get_theme, plotly_layout_overrides
+
 
 def load_study_config(config_path: Union[str, Path]) -> dict:
     with open(config_path) as f:
@@ -47,6 +49,13 @@ def _render_example_demos(
     video_paths: list[str] = ex.get("video_paths") or []
     sid = strategy["id"]
     color = strategy.get("color", "#888")
+    theme = get_theme()
+    if theme == "light":
+        ic_bg, ic_border, ic_text = "#f4f4f5", "#d4d4d8", "#475569"
+        placeholder_border, placeholder_text = "#d4d4d8", "#6b6b6b"
+    else:
+        ic_bg, ic_border, ic_text = "#1e293b", "#334155", "#94a3b8"
+        placeholder_border, placeholder_text = "#334155", "#475569"
 
     tag_html = (
         f'<span style="background:{color}22;border:1px solid {color};'
@@ -55,8 +64,8 @@ def _render_example_demos(
         if behavior_label else ""
     )
     ic_html = (
-        f'<span style="background:#1e293b;border:1px solid #334155;'
-        f'color:#94a3b8;border-radius:4px;padding:1px 8px;font-size:0.8em;">'
+        f'<span style="background:{ic_bg};border:1px solid {ic_border};'
+        f'color:{ic_text};border-radius:4px;padding:1px 8px;font-size:0.8em;">'
         f'{ic_label}</span>'
         if ic_label else ""
     )
@@ -93,9 +102,9 @@ def _render_example_demos(
                 else:
                     # Placeholder shown until real videos are added
                     st.markdown(
-                        '<div style="height:120px;border:2px dashed #334155;'
+                        f'<div style="height:120px;border:2px dashed {placeholder_border};'
                         'border-radius:6px;display:flex;align-items:center;'
-                        'justify-content:center;color:#475569;font-size:0.8em;">'
+                        f'justify-content:center;color:{placeholder_text};font-size:0.8em;">'
                         'video coming soon</div>',
                         unsafe_allow_html=True,
                     )
@@ -195,5 +204,6 @@ def render_strategy_summary(
         xaxis=dict(range=[0, total_budget]),
         margin=dict(l=0, r=20, t=40, b=20),
         height=40 * len(strategies) + 80,
+        **plotly_layout_overrides(),
     )
     st.plotly_chart(fig, use_container_width=True)

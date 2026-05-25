@@ -5,16 +5,16 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import yaml
 
+from policy_doctor.streamlit_app.appearance import get_theme, render_appearance_sidebar
 from policy_doctor.streamlit_app.user_study.likert_survey import (
     render_block2_strategy,
     render_block3_final,
 )
 from policy_doctor.streamlit_app.user_study.nasa_tlx import render_nasa_tlx
 from policy_doctor.streamlit_app.user_study.response_store import get_store
+from policy_doctor.streamlit_app.user_study.task_setup import load_task
 from policy_doctor.streamlit_app.user_study.strategies import (
-    load_study_config,
     render_strategy_allocator,
     render_strategy_summary,
 )
@@ -31,82 +31,22 @@ from policy_doctor.streamlit_app.user_study.video_browser import render_video_br
 
 st.set_page_config(page_title="User Study — Group A", layout="wide")
 
-# ── Sidebar: config + session loading ────────────────────────────────────────
+# ── Sidebar: appearance + task loading ──────────────────────────────────────
 
-st.sidebar.header("Study configuration")
-
-_REPO_ROOT = Path(__file__).parents[3]
-_SESSIONS_DIR = _REPO_ROOT / "policy_doctor" / "configs" / "user_study" / "sessions"
-_session_files = sorted(_SESSIONS_DIR.glob("*.yaml")) if _SESSIONS_DIR.is_dir() else []
-_session_labels = {f.stem: yaml.safe_load(f.read_text()).get("label", f.stem) for f in _session_files}
-
-participant_id = st.sidebar.text_input("Participant ID", value="anonymous")
-
-if not _session_files:
-    st.sidebar.warning("No session configs found in configs/user_study/sessions/")
-    st.stop()
-
-session_choice = st.sidebar.selectbox(
-    "Session",
-    options=[f.stem for f in _session_files],
-    format_func=lambda k: _session_labels.get(k, k),
-)
+render_appearance_sidebar(show_colorblind=True)
 
 PFX = "ga"
 STEP_KEY = f"{PFX}_step"
 
-
-def _resolve(p: str) -> Path:
-    path = Path(p)
-    return path if path.is_absolute() else _REPO_ROOT / path
-
-
-if st.session_state.get(f"{PFX}_loaded_session") != session_choice:
-    sess_path = _SESSIONS_DIR / f"{session_choice}.yaml"
-    sess = yaml.safe_load(sess_path.read_text())
-    mp4_dir = _resolve(sess["mp4_dir"])
-    config_path = _resolve(sess["study_config"])
-
-    errors = []
-    index_path = mp4_dir / "index.json"
-    if not mp4_dir.is_dir():
-        errors.append(f"MP4 directory not found: {mp4_dir}")
-    elif not index_path.exists():
-        errors.append("index.json not found in MP4 directory")
-    if not config_path.exists():
-        errors.append(f"Study config not found: {config_path}")
-
-    if errors:
-        for e in errors:
-            st.sidebar.error(e)
-    else:
-        with open(index_path) as f:
-            st.session_state[f"{PFX}_index"] = json.load(f)
-        cfg = load_study_config(config_path)
-        st.session_state[f"{PFX}_strategies"] = cfg["strategies"]
-        st.session_state[f"{PFX}_budget"] = cfg.get("budget", {}).get("total_demos", 500)
-        st.session_state[f"{PFX}_alloc_step"] = cfg.get("budget", {}).get("allocation_step", 25)
-        st.session_state[f"{PFX}_mp4_dir"] = str(mp4_dir)
-        st.session_state[f"{PFX}_rollout_limit"] = sess.get("rollout_time_limit_seconds", 600)
-        # demo_videos_dir: explicit override or default to <mp4_dir>/demo_videos
-        _dvd = sess.get("demo_videos_dir")
-        st.session_state[f"{PFX}_demo_videos_dir"] = (
-            str(_resolve(_dvd)) if _dvd else str(mp4_dir / "demo_videos")
-        )
-        st.session_state[f"{PFX}_loaded_session"] = session_choice
-
-if f"{PFX}_index" in st.session_state:
-    st.sidebar.caption(f"{len(st.session_state[f'{PFX}_index']['episodes'])} episodes loaded")
-
-index = st.session_state.get(f"{PFX}_index")
-strategies = st.session_state.get(f"{PFX}_strategies")
-mp4_dir_str = st.session_state.get(f"{PFX}_mp4_dir")
-
-if index is None or strategies is None:
-    st.error("Failed to load session — check the sidebar for errors.")
+participant_id, task_name, _load_errors = load_task(PFX, needs_graph=False)
+if _load_errors:
+    for _err in _load_errors:
+        st.error(_err)
     st.stop()
 
-mp4_dir = Path(mp4_dir_str)
+index = st.session_state[f"{PFX}_index"]
+strategies = st.session_state[f"{PFX}_strategies"]
+mp4_dir = Path(st.session_state[f"{PFX}_mp4_dir"])
 total_budget = st.session_state.get(f"{PFX}_budget", 500)
 alloc_step = st.session_state.get(f"{PFX}_alloc_step", 25)
 rollout_limit = st.session_state.get(f"{PFX}_rollout_limit", 600)
@@ -116,8 +56,9 @@ demo_videos_dir = Path(_dvd_str) if _dvd_str else None
 # ── Step routing ──────────────────────────────────────────────────────────────
 
 step = st.session_state.get(STEP_KEY, 0)
+_theme = get_theme()
 
-render_progress_bar(step, STEP_LABELS)
+render_progress_bar(step, STEP_LABELS, theme=_theme)
 record_step_entry(step, STEP_KEY)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,7 +85,7 @@ You will not receive compensation for participation.
 **Group assignment.** Participants are randomly assigned to one of two conditions.
 Regardless of your condition, please proceed as instructed.
 
-**Data privacy.** Your responses are recorded anonymously with your chosen participant ID.
+**Data privacy.** Your responses are recorded anonymously.
 """)
 
     agreed = st.checkbox(
@@ -217,6 +158,7 @@ elif step == 2:
         st.session_state[start_key],
         rollout_limit,
         key=f"{PFX}_rtimer",
+        theme=_theme,
     )
 
     st.markdown(
@@ -296,7 +238,7 @@ elif step == 4:
         result = {
             "participant_id": participant_id,
             "group": "A",
-            "session": session_choice,
+            "task": task_name,
             "allocations": st.session_state.get(f"{PFX}_allocations", allocations),
             "nasa_tlx": tlx_responses,
             "likert_strategy": likert_strategy,

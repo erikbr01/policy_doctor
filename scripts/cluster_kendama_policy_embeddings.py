@@ -332,6 +332,17 @@ def _run_one(
         pipeline_steps=["embed", "window", "umap", "kmeans"],
     )
     (out_dir / "manifest.yaml").write_text(yaml.dump(manifest, sort_keys=False))
+
+    from policy_doctor.curation_pipeline.steps.compute_clustering_metrics import (
+        _compute_for_dir,
+    )
+
+    metrics = _compute_for_dir(out_dir)
+    if metrics is not None:
+        sil_m = metrics.get("silhouette_mean")
+        sil_m_s = f"{sil_m:.4f}" if sil_m is not None else "n/a"
+        print(f"  metrics.json written (silhouette_mean={sil_m_s})")
+
     summary.append(dict(w=W, s=S, k=chosen_k, silhouette=sil, sizes=sizes, path=out_dir))
     print(f"  → {out_dir.name}")
 

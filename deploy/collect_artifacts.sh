@@ -12,10 +12,9 @@ echo "== Bundling deploy/ from $ROOT =="
 mkdir -p deploy/policy_doctor deploy/third_party deploy/data/study_mp4s
 
 # 1. The policy_doctor source package (only the parts the demo uses).
-rsync -a --delete \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    policy_doctor/ deploy/policy_doctor/
+# shellcheck source=sync_repo.sh
+source "$ROOT/deploy/sync_repo.sh"
+sync_repo
 
 # 2. Clusterings + MP4s for each task we want in the bundle.
 TASKS=(
@@ -148,6 +147,20 @@ for task in "${DEMO_SWEEP_TASKS[@]}"; do
     task_dir="$ROOT/data/demo_sweep/$task"
     clu_dir="$task_dir/run_clustering/clustering"
     if [ -d "$clu_dir" ] && [ -n "$(find "$clu_dir" -name "cluster_labels.npy" -print -quit 2>/dev/null)" ]; then
+        if [ "$task" = "kendama_may22" ]; then
+            missing_metrics="$(find "$clu_dir" -name "cluster_labels.npy" -print0 2>/dev/null \
+                | while IFS= read -r -d '' labels; do
+                    d="$(dirname "$labels")"
+                    [ -f "$d/metrics.json" ] || echo "$d"
+                  done | head -1)"
+            if [ -n "$missing_metrics" ]; then
+                echo "→ Computing clustering metrics for $task …"
+                conda run -n policy_doctor python "$ROOT/scripts/compute_clustering_metrics.py" \
+                    --task "$task" || {
+                    echo "WARNING: metrics computation failed for $task — silhouette defaults may be unavailable." >&2
+                }
+            fi
+        fi
         rsync -aL --delete \
             --exclude='clustering_models.pkl' \
             --exclude='embedding_models.pkl' \

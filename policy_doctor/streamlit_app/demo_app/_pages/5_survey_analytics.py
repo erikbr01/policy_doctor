@@ -255,7 +255,7 @@ with st.expander("Raw responses (JSON table)"):
         flat.append({
             "participant_id": r.get("participant_id", ""),
             "group": r.get("group", ""),
-            "session": r.get("session", ""),
+            "task": r.get("task") or r.get("session", ""),
             "timestamp": r.get("timestamp", ""),
             "notes": (r.get("notes", "") or "")[:80],
         })

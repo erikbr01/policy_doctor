@@ -155,10 +155,11 @@ def render_trajectory_tree(
         n_pruned += len(nodes_f) - len(new_f)
         nodes_f = new_f
 
-    if n_pruned > 0:
+    if n_pruned > 0 and show_stats:
         st.caption(f"{n_pruned} nodes pruned.")
     if not nodes_f:
-        st.warning("No nodes match the filter; lower 'min branch'.")
+        if show_stats:
+            st.warning("No nodes match the filter; lower 'min branch'.")
         return
 
     if view_mode == "native_svg":

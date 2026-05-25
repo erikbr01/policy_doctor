@@ -14,6 +14,7 @@ from policy_doctor.behaviors.behavior_graph import (
     START_NODE_ID,
     SUCCESS_NODE_ID,
 )
+from policy_doctor.streamlit_app.appearance import muted_text_color, plotly_layout_overrides
 from policy_doctor.streamlit_app.components.mp4_player import mp4_player
 from policy_doctor.streamlit_app.user_study.graph_plot import render_graph_component
 
@@ -229,7 +230,7 @@ def _render_edge_panel(
                     st.session_state[_vp_key] = max(0, _vp - 1)
                     st.rerun()
             _vc2.markdown(
-                f"<div style='text-align:center;padding-top:6px;color:#888;font-size:0.82em;'>"
+                f"<div style='text-align:center;padding-top:6px;color:{muted_text_color()};font-size:0.82em;'>"
                 f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
                 f"</div>", unsafe_allow_html=True)
             with _vc3:
@@ -424,7 +425,7 @@ def _render_node_panel(
                             st.session_state[_vp_key] = max(0, _vp - 1)
                             st.rerun()
                     _vc2.markdown(
-                        f"<div style='text-align:center;padding-top:6px;color:#888;font-size:0.82em;'>"
+                        f"<div style='text-align:center;padding-top:6px;color:{muted_text_color()};font-size:0.82em;'>"
                         f"Episodes {_vp * _VIDS_PER_PAGE + 1}–{min((_vp + 1) * _VIDS_PER_PAGE, n_eps)} of {n_eps}"
                         f"</div>", unsafe_allow_html=True)
                     with _vc3:
@@ -505,6 +506,6 @@ def _render_node_panel(
                     height=max(100, 32 * len(tgt_labels) + 50),
                     margin=dict(l=0, r=0, t=36, b=0),
                     xaxis=dict(range=[0, 1], title="Probability"),
-                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    **plotly_layout_overrides(),
                 )
                 st.plotly_chart(fig_trans, use_container_width=True, key=f"{key_prefix}_panel_trans")

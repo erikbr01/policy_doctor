@@ -15,6 +15,8 @@ from typing import Dict, List, Tuple
 
 import streamlit as st
 
+from policy_doctor.streamlit_app.appearance import get_theme, muted_text_color
+
 
 # (key, prompt, low_label, high_label)
 _NASA_TLX_ITEMS: List[Tuple[str, str, str, str]] = [
@@ -66,8 +68,10 @@ _ITEM_DESCRIPTIONS: Dict[str, str] = {
 }
 
 
-def render_nasa_tlx(key_prefix: str) -> Dict[str, int]:
+def render_nasa_tlx(key_prefix: str, theme: str | None = None) -> Dict[str, int]:
     """Render the NASA-TLX block and return ``{item_key: rating(0..100)}``."""
+    theme = theme or get_theme()
+    muted = muted_text_color(theme)
     st.markdown(
         "Please rate the task load you experienced on each of the six "
         "dimensions below. Each rating is on a 0–100 scale anchored by the "
@@ -78,7 +82,7 @@ def render_nasa_tlx(key_prefix: str) -> Dict[str, int]:
         st.markdown(f"**{label}**")
         st.caption(_ITEM_DESCRIPTIONS[item_key])
         cl, cs, ch = st.columns([1, 8, 1])
-        cl.markdown(f"<div style='text-align:right;color:#888;'>{low}</div>",
+        cl.markdown(f"<div style='text-align:right;color:{muted};'>{low}</div>",
                     unsafe_allow_html=True)
         with cs:
             responses[item_key] = st.slider(
@@ -87,6 +91,6 @@ def render_nasa_tlx(key_prefix: str) -> Dict[str, int]:
                 key=f"{key_prefix}_{item_key}",
                 label_visibility="collapsed",
             )
-        ch.markdown(f"<div style='color:#888;'>{high}</div>",
+        ch.markdown(f"<div style='color:{muted};'>{high}</div>",
                     unsafe_allow_html=True)
     return responses
