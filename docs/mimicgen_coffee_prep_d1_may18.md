@@ -1,7 +1,139 @@
 # MimicGen Coffee Preparation D1 — May 18 2026
 
-**Status:** Re-launch in progress (May 24) after invalidation of the May 20 run.
+**Status:** Paused at end of May 24 session — all jobs killed; per-arm
+state cleaned; pipeline ready to launch (`v15` config in repo). No valid
+sweep results yet. See "Session Summary" below for what was discovered.
 **Goal:** Replicate the apr26 square tight-constraint sweep for coffee preparation D1 with mug pose constrained.
+
+---
+
+## Session Summary (May 24 2026, end of day)
+
+This session uncovered four bugs that had been silently corrupting every
+prior coffee_prep run on this branch, and one experimental-design defect.
+Each was fixed and verified; the pipeline is now correct on paper but had
+not produced a single valid sweep result by end of session.
+
+### Why no previous coffee_prep generation data is usable
+
+Every coffee_prep generation run before today fell into at least one of
+these silent failure modes:
+
+1. **Shared per-arm output path** (`e6f3f18`): every sweep arm wrote
+   generated demos to the same `data/outputs/mimicgen_datagen/demo_0/demo.hdf5`,
+   so the first arm's data became the de-facto dataset for every other arm
+   regardless of heuristic / budget / seed. This invalidated the May 20
+   sweep (all 18 arms returned ~58–69% — pure training-time RNG variance
+   on essentially identical inputs).
+2. **`seed_object_poses` read from SQUARE source HDF5** (`9568637`/`b8a0210`):
+   the constraint matcher looked up `mug` in keys `{square_nut, square_peg}`,
+   found no match, and silently fell through to "no constraint" — so the
+   mug was sampled at the env's full D1 range (±0.175 m x, ±0.10 m y,
+   ±π z_rot), not the ±40 mm / ±30° spec. This applied to every
+   coffee_prep run with `source_dataset_path` unset (everything before v11).
+3. **`success_budget` was a dead config key** (`3a80152` → restored
+   `EEF`'s adaptive loop in `f2e42c9`): arms hardcoded 50 generation trials
+   per seed regardless of the requested budget, so at coffee_prep's ~30%
+   gen rate each arm produced ~15 demos. "budget=100" was really
+   "budget=~15" in delivered data.
+4. **Non-square `task_spec` hardcoded to SQUARE** (`7ea2bb9`): the inner
+   `DataGenerator._load_dataset` crashed with `KeyError: 'grasp'` because
+   coffee's signals are `{mug_grasp, mug_place, drawer_open, pod_grasp}`,
+   not square's `grasp`. Most v10–v13 launches died here before any
+   data was produced.
+
+### Experimental design defect (independent of those bugs)
+
+`train_on_combined_data` was loading the *full* original source HDF5
+(1000 demos for coffee_prep) plus N generated demos, while the baseline
+trained on only `max_train_episodes=100`. So "budget=100 random vs BG
+augmentation" was actually comparing a 1100-demo arm against a 100-demo
+baseline — a 10× dataset-size confound rather than a few-shot
+augmentation comparison.
+
+Fix in `3e6f2f0`: `combine_hdf5_datasets` now takes `max_original_demos`
+and the pipeline step passes `baseline.max_train_episodes`. The combined
+dataset is now `100 baseline + N generated = 100+N`.
+
+EEF didn't hit this because square's source HDF5 is already ~60 demos
+(= baseline size). Any task with a larger source pool would have
+hit this silently.
+
+### v14 / v15 caveat
+
+`v14` was launched after committing the subset fix, but it still
+produced 1100/1029-demo combined.hdf5 files. Root cause: stale
+`__pycache__/*.pyc` from a prior pipeline launch shadowed the new source
+in the running process. Caches were nuked before `v15`, which then
+produced correct 200-demo combined files. **If you relaunch after a
+substantial code change, always:**
+
+```bash
+find policy_doctor -name "*.pyc" -delete
+find policy_doctor -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+```
+
+### State at end of session
+
+- Pipeline killed, all subprocesses dead.
+- Per-arm `mimicgen_budget_rep_sweep/mimicgen_*` dirs deleted across
+  both `data/pipeline_runs/.../` and the SSD mirror.
+- Baseline-related `done` sentinels intact (`train_baseline`,
+  `eval_baseline`, `compute_policy_embeddings`, `run_clustering`) — those
+  results are correct and don't need to re-run.
+- Combined-arm training output dirs under
+  `third_party/cupid/data/outputs/train/...-mimicgen_combined-*`
+  deleted. Only the baseline training dir remains.
+- `__pycache__` for the pipeline modules nuked.
+- Generation rate at end of v15 partial run: random-arm pass-1 was
+  hitting ~30–35% on coffee_prep D1 with mug constrained — slightly
+  higher than the unconstrained ~28–30%, as expected.
+- Big stale artifact still on disk: `third_party/cupid/data/source/mimicgen/core_datasets/coffee_preparation_d1_prepared/demo.hdf5`
+  (6.5 GB, pre-prepared D1 dataset with `datagen_info`). Now mostly
+  redundant since `seed_object_poses` are read from the per-seed prepared
+  HDF5 directly, but kept as the configured `source_dataset_path` fallback.
+  Delete with `rm -rf third_party/cupid/data/source/mimicgen/core_datasets/coffee_preparation_d1_prepared/`
+  if you want the disk back; the pipeline will still work.
+
+### To resume
+
+```bash
+# Optional: nuke pyc to be safe
+find policy_doctor -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+
+# Launch (config already correct in repo — budget=[100], 6×cuda:0, random+BG)
+nohup conda run -n policy_doctor --no-capture-output python -m policy_doctor.scripts.run_pipeline \
+  data_source=mimicgen_coffee_preparation \
+  experiment=mimicgen_coffee_prep_d1_may18_d100_mug_constrained \
+  >> logs/coffee_prep_d1_may18_pipeline_v2.log 2>&1 &
+disown
+```
+
+After launch, the **invariant to verify** before trusting any results:
+
+```bash
+# Should show: max_original_demos=100  total_demos=200 (or 100+N for partial)
+grep "combined dataset written" logs/coffee_prep_d1_may18_pipeline_v2.log | tail
+# Should show per-seed mug constraint windows (~80 mm wide)
+grep "constrained object poses on" logs/coffee_prep_d1_may18_pipeline_v2.log | tail
+```
+
+### Open questions for next session
+
+1. **Gen rate per-arm variance:** rep2 of the random-arm sweep was
+   running ~16% earlier vs rep1/rep3 at ~30%. Could be small-sample
+   noise (10 seeds × 30 trials) or an actually-harder seed set. Watch
+   whether it persists.
+2. **Per-demo vs first-demo seed pose:** the (now-fixed) `seed_poses`
+   read uses the first demo in the prepared per-seed HDF5. In per-seed
+   mode each seed HDF5 contains exactly one demo, so this matches.
+   Sanity check: per-seed constraint windows in the log should be
+   *different* across seeds (they were in v15's partial output).
+3. **Diversity heuristic** is still dropped. If random vs BG separates
+   at budget=100, worth retrying diversity now that policy_emb
+   clustering produces matchable paths.
+4. **Larger budgets (300, 500)** intentionally deferred. Add back via
+   the experiment yaml's `budgets:` list once 100-arm results land.
 
 ---
 
