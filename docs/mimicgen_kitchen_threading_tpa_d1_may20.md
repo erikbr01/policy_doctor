@@ -475,12 +475,34 @@ Aside: the killed `prepare_src_dataset` left `kitchen_d1/demo.hdf5` in a corrupt
 
 ---
 
-## Current State (2026-05-24, 21:40 UTC)
+## Current State (2026-05-25, 01:45 UTC — STOPPED)
 
-- Kitchen budget=100: 9 arms in MimicGen generate, all worker pythons at ~94% CPU
+Sweep stopped by user (machine cost). Mid-pass-1 numbers when killed:
+
+| Arm | succ / trials (pass 1, partial — ~12 of 30 per seed) |
+|---|---|
+| behavior_graph_rep1 | 6 / 12 (~50%) |
+| behavior_graph_rep2 | 0 / 11 |
+| behavior_graph_rep3 | 0 / 12 |
+| diversity_rep1 | 0 / 12 |
+| diversity_rep2 | 0 / 12 |
+| diversity_rep3 | 0 / 11 |
+| random_rep1 | 0 / 11 |
+| random_rep2 | 0 / 12 |
+| random_rep3 | 0 / 12 |
+
+**Finding:** 8/9 kitchen arms at 0% replay success with bread x/y ±4cm and all other objects pinned. Constraint is still too tight (or the per-seed variability is huge — only one arm out of 9 picked a "compatible" seed). The single 50% arm proves the pipeline mechanics work end-to-end (object pose patching, env spawn, replay) but does not validate the constraint as a generally-usable setting for kitchen.
+
 - compute_policy_embeddings ✓ done (50000 timesteps × 128-dim at `bottleneck_plan_t0.npz`)
 - run_clustering ✓ done (output at `third_party/influence_visualizer/configs/kitchen_d1_may20/clustering/...kmeans_k15`)
-- No results yet — first stats.json from any arm expected within ~20-30 min
+- All MimicGen generate workers killed; pipeline coordinator PID 3521359 killed.
+
+### Next session recommendations
+
+1. **Diagnose the seed-sensitivity.** Run `scripts/sweep_zrot_constraint.sh`-style probe but varying which *seed rollout* is used (fix range to ±4cm, sweep over the 10 selected seed indices). If 1/10 succeeds and 9/10 fail, the issue is seed selection not the range — seeds with bread near the edge of D1 placement have no replay partner within ±4cm.
+2. **Or loosen the range.** Try ±6cm or ±8cm bread x/y. The whole point of the IC constraint is to make targeted failures, but the constraint can only get as tight as MimicGen replay tolerates. Find that ceiling empirically before re-launching the sweep.
+3. **Or reconsider the task.** If kitchen replay is inherently brittle to bread x/y offsets at this scale, switch the constrained object — try `pot` constraint instead, or revert to D1's full range and rely on action_noise alone for the failure-targeting signal.
+4. **Threading and TPA were never launched** in this session. Don't launch them until kitchen's replay-success ceiling is known — they likely face the same diagnostic question with their own objects.
 
 ### Planned waves after kitchen budget=100 completes
 

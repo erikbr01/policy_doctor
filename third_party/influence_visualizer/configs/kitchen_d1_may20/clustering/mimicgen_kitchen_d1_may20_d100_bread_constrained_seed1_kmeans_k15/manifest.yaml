@@ -1,0 +1,9 @@
+algorithm: kmeans
+scaling: none
+influence_source: policy_emb
+representation: sliding_window
+level: rollout
+n_clusters: 15
+n_samples: 24000
+created: '2026-05-24T20:11:42.144599'
+task_config: kitchen_d1_may20
