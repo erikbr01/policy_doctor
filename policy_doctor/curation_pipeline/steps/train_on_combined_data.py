@@ -126,16 +126,23 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
         )
 
         # --- Combine datasets ---
+        # Subset the original to the same first-N demos the baseline saw, so
+        # the combined arm is a {baseline subset + generated} few-shot setup
+        # rather than {full source + generated} (the latter confounds the
+        # comparison with a 10× larger training set).
+        max_original = OmegaConf.select(baseline, "max_train_episodes")
+        max_original = int(max_original) if max_original is not None else None
         self.step_dir.mkdir(parents=True, exist_ok=True)
         combined_hdf5_path = self.step_dir / "combined.hdf5"
         num_combined = combine_hdf5_datasets(
             original_path=original_hdf5_path,
             generated_path=generated_hdf5_path,
             output_path=combined_hdf5_path,
+            max_original_demos=max_original,
         )
         print(
             f"  [train_on_combined_data] combined dataset written: {combined_hdf5_path}  "
-            f"total_demos={num_combined}"
+            f"max_original_demos={max_original}  total_demos={num_combined}"
         )
 
         # --- Training config ---
