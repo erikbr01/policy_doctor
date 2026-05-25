@@ -10,6 +10,7 @@ Provides:
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -118,6 +119,28 @@ def advance_step(current: int, step_key: str) -> None:
     st.rerun()
 
 
+def rollout_time_remaining(start_time: float, allowed_seconds: int) -> tuple[float, bool]:
+    elapsed = time.time() - start_time
+    remaining = max(0.0, allowed_seconds - elapsed)
+    return remaining, remaining <= 0
+
+
+@st.fragment(run_every=timedelta(seconds=1))
+def watch_rollout_expiry(
+    start_key: str,
+    allowed_seconds: int,
+    step_key: str,
+    step_index: int,
+) -> None:
+    """Poll once per second; advance when the rollout window ends."""
+    start_time = st.session_state.get(start_key)
+    if start_time is None:
+        return
+    _, expired = rollout_time_remaining(start_time, allowed_seconds)
+    if expired:
+        advance_step(step_index, step_key)
+
+
 def get_step_durations(step_key: str) -> dict[int, float]:
     """Return elapsed seconds per completed step."""
     tk = _times_key(step_key)
@@ -135,73 +158,72 @@ def render_rollout_timer(
     allowed_seconds: int,
     key: str = "rollout_timer",
     theme: str | None = None,
+    *,
+    auto_advance: bool = True,
 ) -> tuple[float, bool]:
     """Render a countdown timer and return ``(remaining_seconds, is_expired)``.
 
-    The JS component shows a live countdown (purely cosmetic — the server-side
-    check here is authoritative).  In the last 10 seconds the function forces
-    a 1 s sleep + rerun to guarantee auto-advance even without user interaction.
+    The JS component shows a live countdown (cosmetic). Server-side expiry is
+    enforced by ``watch_rollout_expiry`` (auto-advance) and/or the caller.
     """
     theme = theme or get_theme()
     styles = _progress_styles(theme)
-    elapsed = time.time() - start_time
-    remaining = max(0.0, allowed_seconds - elapsed)
-    expired = remaining <= 0
+    remaining, expired = rollout_time_remaining(start_time, allowed_seconds)
 
-    if not expired:
-        mins = int(remaining) // 60
-        secs = int(remaining) % 60
-        remaining_ms = int(remaining * 1000)
-        border_col = "#d62728" if remaining < 60 else ("#f5a623" if remaining < 180 else "#2ca02c")
-        text_col = border_col
+    if expired:
+        if auto_advance:
+            st.info("Time is up — advancing to the next section…")
+        else:
+            st.error(
+                "Time is up! Your viewing window has ended. "
+                "Click **Proceed** below to continue."
+            )
+        return remaining, expired
 
-        components.html(
-            f"""
-            <div style="
-                display:inline-flex;align-items:center;gap:10px;
-                background:{styles["timer_bg"]};
-                border:2px solid {border_col};
-                border-radius:8px;
-                padding:8px 20px;
-            ">
-              <span style="font-size:1.3em;">⏱</span>
-              <div>
-                <div style="font-size:0.72em;color:{styles["timer_muted"]};letter-spacing:0.05em;">
-                  TIME REMAINING
-                </div>
-                <div id="cd_{key}" style="
-                    font-size:1.6em;font-weight:700;
-                    color:{text_col};font-family:monospace;letter-spacing:0.08em;
-                ">{mins:02d}:{secs:02d}</div>
-              </div>
+    mins = int(remaining) // 60
+    secs = int(remaining) % 60
+    remaining_ms = int(remaining * 1000)
+    border_col = "#d62728" if remaining < 60 else ("#f5a623" if remaining < 180 else "#2ca02c")
+    text_col = border_col
+
+    components.html(
+        f"""
+        <div style="
+            display:inline-flex;align-items:center;gap:10px;
+            background:{styles["timer_bg"]};
+            border:2px solid {border_col};
+            border-radius:8px;
+            padding:8px 20px;
+        ">
+          <span style="font-size:1.3em;">⏱</span>
+          <div>
+            <div style="font-size:0.72em;color:{styles["timer_muted"]};letter-spacing:0.05em;">
+              TIME REMAINING
             </div>
-            <script>
-            (function(){{
-              var endTime = Date.now() + {remaining_ms};
-              var el = document.getElementById('cd_{key}');
-              if (!el) return;
-              function tick() {{
-                var left = Math.max(0, endTime - Date.now());
-                var m = Math.floor(left / 60000);
-                var s = Math.floor((left % 60000) / 1000);
-                el.textContent = (m<10?'0':'')+m+':'+(s<10?'0':'')+s;
-                if (left > 0) setTimeout(tick, 500);
-                else {{ el.textContent = '00:00'; el.style.color = '#d62728'; }}
-              }}
-              tick();
-            }})();
-            </script>
-            """,
-            height=72,
-        )
-
-        if remaining <= 10:
-            time.sleep(1)
-            st.rerun()
-    else:
-        st.error(
-            "Time is up! Your viewing window has ended. "
-            "Click **Proceed to Data Collection** below to continue."
-        )
+            <div id="cd_{key}" style="
+                font-size:1.6em;font-weight:700;
+                color:{text_col};font-family:monospace;letter-spacing:0.08em;
+            ">{mins:02d}:{secs:02d}</div>
+          </div>
+        </div>
+        <script>
+        (function(){{
+          var endTime = Date.now() + {remaining_ms};
+          var el = document.getElementById('cd_{key}');
+          if (!el) return;
+          function tick() {{
+            var left = Math.max(0, endTime - Date.now());
+            var m = Math.floor(left / 60000);
+            var s = Math.floor((left % 60000) / 1000);
+            el.textContent = (m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+            if (left > 0) setTimeout(tick, 500);
+            else {{ el.textContent = '00:00'; el.style.color = '#d62728'; }}
+          }}
+          tick();
+        }})();
+        </script>
+        """,
+        height=72,
+    )
 
     return remaining, expired

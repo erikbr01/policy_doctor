@@ -243,10 +243,16 @@ def _build_graph_json(
     min_edge_count: int = 0,
     symbol_override: Optional[dict[int, str]] = None,
     color_override: Optional[dict[int, str]] = None,
+    label_override: Optional[dict[int, str]] = None,
 ) -> str:
     """Serialize graph data for the SVG component."""
     symbol_override = symbol_override or {}
     color_override = color_override or {}
+    label_override = label_override or {}
+    start_eps = (
+        graph.nodes[START_NODE_ID].num_episodes
+        if START_NODE_ID in graph.nodes else graph.num_episodes
+    ) or 1
     nodes = []
     for nid, node in graph.nodes.items():
         if nid not in pos:
@@ -255,7 +261,7 @@ def _build_graph_json(
             symbol = symbol_override[nid]
             color = color_override.get(nid, CLUSTER_COLORS[nid % len(CLUSTER_COLORS)])
             tooltip = node.name
-            label = node.name
+            label = label_override.get(nid, node.name)
             is_special = True
         elif nid in _SPECIAL_IDS:
             color = color_override.get(nid, _NODE_COLOR.get(nid, "#888"))
@@ -266,12 +272,12 @@ def _build_graph_json(
                 "square"
             )
             tooltip = node.name
-            label = node.name
+            label = label_override.get(nid, node.name)
             is_special = True
         else:
             color = color_override.get(nid, CLUSTER_COLORS[nid % len(CLUSTER_COLORS)])
             symbol = "circle"
-            label = node.name
+            label = label_override.get(nid, node.name)
             outgoing = graph.transition_probs.get(nid, {})
             top_out = sorted(outgoing.items(), key=lambda kv: -kv[1])[:3]
             out_lines = "\n".join(
@@ -285,6 +291,12 @@ def _build_graph_json(
                 f"Top transitions:\n{out_lines}"
             )
             is_special = False
+        if nid in label_override and label == "" and is_special:
+            reach = node.num_episodes / start_eps
+            tooltip = (
+                f"{node.name}\n"
+                f"P(reach): {reach:.0%}  •  Episodes: {node.num_episodes}"
+            )
         node_dict: dict = {
             "id": nid,
             "label": label,
@@ -330,6 +342,8 @@ def render_graph_component(
     pos: Optional[dict[int, tuple[float, float]]] = None,
     symbol_override: Optional[dict[int, str]] = None,
     color_override: Optional[dict[int, str]] = None,
+    label_override: Optional[dict[int, str]] = None,
+    layout_token: Optional[int] = None,
     theme: str = "dark",
     edge_style: str = "lines",
     edge_width_slope: float = 5.0,
@@ -362,6 +376,7 @@ def render_graph_component(
         graph, pos, thumbnails=thumbnails, min_edge_prob=min_edge_prob,
         min_edge_count=min_edge_count,
         symbol_override=symbol_override, color_override=color_override,
+        label_override=label_override,
     )
     selected = st.session_state.get(f"{key}_selected")
     selected_edge = st.session_state.get(f"{key}_selected_edge")
@@ -381,6 +396,7 @@ def render_graph_component(
         selected_edge=list(selected_edge) if selected_edge else None,
         highlighted_path=highlighted_path,
         render_token=render_token,
+        layout_token=layout_token if layout_token is not None else 0,
         theme=theme,
         edge_style=edge_style,
         edge_width_slope=float(edge_width_slope),

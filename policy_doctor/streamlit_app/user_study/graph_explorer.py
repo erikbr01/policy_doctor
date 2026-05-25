@@ -295,24 +295,27 @@ def render_graph_full_width(
     pos: dict[int, tuple[float, float]] | None = None,
     symbol_override: dict[int, str] | None = None,
     color_override: dict[int, str] | None = None,
+    label_override: dict[int, str] | None = None,
+    layout_token: int | None = None,
     theme: str = "dark",
     edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
     suppress_video_panel: bool = False,
+    show_caption: bool = True,
 ) -> None:
     """Full-width clickable behavior graph. Clicking a node opens a details panel."""
 
-    encoding = (
-        "Line width + grey level = transition probability"
-        if edge_style == "lines"
-        else "Arrow thickness = transition probability"
-    )
-    st.caption(
-        f"**Click any node or edge** to explore it — larger circles = more episodes. "
-        f"{encoding}. ★ = success, ✕ = failure; the percentage next to each "
-        "terminal label is P(reach this terminal)."
-    )
+    if show_caption:
+        encoding = (
+            "Line width + grey level = transition probability"
+            if edge_style == "lines"
+            else "Arrow thickness = transition probability"
+        )
+        st.caption(
+            f"**Click any node or edge** to explore it — larger circles = more episodes. "
+            f"{encoding}. ★ = success, ✕ = failure; hover for reach probability."
+        )
 
     clicked_node_id = render_graph_component(
         graph, height=650,
@@ -325,6 +328,8 @@ def render_graph_full_width(
         pos=pos,
         symbol_override=symbol_override,
         color_override=color_override,
+        label_override=label_override,
+        layout_token=layout_token,
         theme=theme,
         edge_style=edge_style,
         edge_width_slope=edge_width_slope,

@@ -1,4 +1,4 @@
-"""Study config (study.yaml) and anonymous participant IDs for the user study."""
+"""Active task pointer (study.yaml), per-task study configs, and participant IDs."""
 
 from __future__ import annotations
 
@@ -24,9 +24,19 @@ def repo_root() -> Path:
     return Path(__file__).parents[3]
 
 
-def study_config_path(root: Path | None = None) -> Path:
+def active_task_path(root: Path | None = None) -> Path:
+    """Pointer file: which task is live (``study.yaml``)."""
     root = root or repo_root()
     return root / "policy_doctor" / "configs" / "user_study" / "study.yaml"
+
+
+def study_configs_dir(root: Path | None = None) -> Path:
+    root = root or repo_root()
+    return root / "policy_doctor" / "configs" / "user_study" / "study"
+
+
+def task_study_path(task_name: str, root: Path | None = None) -> Path:
+    return study_configs_dir(root) / f"{task_name}.yaml"
 
 
 def tasks_dir(root: Path | None = None) -> Path:
@@ -41,10 +51,10 @@ def _resolve(p: str, root: Path) -> Path:
 
 def get_study_task_name(root: Path | None = None) -> str:
     root = root or repo_root()
-    cfg_path = study_config_path(root)
+    cfg_path = active_task_path(root)
     if not cfg_path.is_file():
         raise FileNotFoundError(
-            f"Study config not found: {cfg_path}. "
+            f"Active task config not found: {cfg_path}. "
             "Create policy_doctor/configs/user_study/study.yaml with a `task` key."
         )
     cfg = yaml.safe_load(cfg_path.read_text()) or {}
@@ -57,11 +67,16 @@ def get_study_task_name(root: Path | None = None) -> str:
     return task
 
 
-def load_study_yaml(root: Path | None = None) -> dict:
+def load_study_yaml(task_name: str | None = None, root: Path | None = None) -> dict:
+    """Load per-task admin settings from ``study/<task>.yaml``."""
     root = root or repo_root()
-    cfg_path = study_config_path(root)
+    task_name = task_name or get_study_task_name(root)
+    cfg_path = task_study_path(task_name, root)
     if not cfg_path.is_file():
-        return {}
+        raise FileNotFoundError(
+            f"Study settings not found: {cfg_path}. "
+            f"Create policy_doctor/configs/user_study/study/{task_name}.yaml"
+        )
     return yaml.safe_load(cfg_path.read_text()) or {}
 
 
@@ -97,11 +112,15 @@ def load_task(
     if not task_path.is_file():
         return participant_id, task_name, [
             f"Task config not found: {task_path}. "
-            f"Check `task` in {study_config_path(root)}."
+            f"Check `task` in {active_task_path(root)}."
         ]
 
+    try:
+        study_cfg = load_study_yaml(task_name, root)
+    except FileNotFoundError as exc:
+        return participant_id, task_name, [str(exc)]
+
     task_cfg = yaml.safe_load(task_path.read_text()) or {}
-    study_cfg = load_study_yaml(root)
     mp4_dir = _resolve(task_cfg["mp4_dir"], root)
     config_path = _resolve(task_cfg["study_config"], root)
 
@@ -114,7 +133,7 @@ def load_task(
     if not config_path.exists():
         errors.append(f"Study config not found: {config_path}")
 
-    graph_cfg = study_cfg.get("graph") or {}
+    graph_cfg = dict(study_cfg.get("graph") or {})
     clust_cfg = graph_cfg.get("clustering") if needs_graph else None
     clust_dir = None
     if needs_graph:

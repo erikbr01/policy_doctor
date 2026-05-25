@@ -134,6 +134,7 @@ let initialPixPos = {};     // snapshot from the most recent layout (for reset)
 let userOverrides = {};     // nodes the user has manually moved; cleared on reset
 let dragging = null;        // {nodeId, startMouse, startNode, moved}
 let lastRenderArgs = null;  // svgW, svgH for re-render on reset
+let lastLayoutToken = null; // when this changes, discard manual drags
 
 // ── Viz options (settable from Python) ─────────────────────────────────────
 let theme = "dark";              // "dark" | "light"
@@ -517,27 +518,24 @@ function render(data, svgW, svgH) {
     if (_innerGlyph) g.appendChild(_innerGlyph);
     g.appendChild(hit);
 
-    // Label. Terminal nodes (★ SUCCESS, ✕ FAILURE, ■ END) get the
-    // reach-probability appended — `P(reach this terminal)` is one of the
-    // most useful numbers in the whole figure, and the symbol size alone
-    // doesn't make small differences readable.
-    const label = svgEl("text", {
-      class: "node-label",
-      x: 0,
-      y: r + 13,
-    });
+    // Label (optional — compact mode uses symbols/tooltips only).
     let labelText = node.label;
     const isTerminal = node.symbol === "star" || node.symbol === "x" || node.symbol === "square";
-    if (isTerminal && totalEpisodes > 0) {
+    if (labelText && isTerminal && totalEpisodes > 0) {
       const frac = node.num_episodes / totalEpisodes;
-      // Sub-1% terminals get an extra significant digit so they don't all
-      // collapse to "0%". Anything >= 1% rounds to integer for legibility.
       const pct = frac >= 0.01 ? Math.round(frac * 100) + "%"
                                 : (frac * 100).toFixed(1) + "%";
       labelText = `${node.label} ${pct}`;
     }
-    label.textContent = labelText;
-    g.appendChild(label);
+    if (labelText) {
+      const label = svgEl("text", {
+        class: "node-label",
+        x: 0,
+        y: r + 13,
+      });
+      label.textContent = labelText;
+      g.appendChild(label);
+    }
 
     // Click + tooltip
     const tooltip = document.getElementById("tooltip");
@@ -803,6 +801,13 @@ window.addEventListener("message", (event) => {
     edgeWidthSlope = typeof args.edge_width_slope === "number" ? args.edge_width_slope : 5.0;
     nodeSizeSlope = typeof args.node_size_slope === "number" ? args.node_size_slope : 24.0;
     document.body.classList.toggle("theme-light", theme === "light");
+
+    const layoutToken = args.layout_token ?? 0;
+    if (lastLayoutToken !== null && layoutToken !== lastLayoutToken) {
+      userOverrides = {};
+      document.getElementById("reset-btn").style.display = "none";
+    }
+    lastLayoutToken = layoutToken;
 
     document.body.style.height = height + "px";
     document.getElementById("graph").style.height = height + "px";

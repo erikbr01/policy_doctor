@@ -1,7 +1,7 @@
 # Minimal runtime deps for the policy-doctor demo app.
 # Pinned conservatively; tighten further before deployment if needed.
 
-streamlit>=1.32
+streamlit>=1.33
 numpy>=1.24,<3
 plotly>=5.18
 pyyaml>=6

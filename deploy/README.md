@@ -807,10 +807,26 @@ gcloud compute ssh NEW_VM_NAME --zone=us-west1-a \
 The active task is set in `policy_doctor/configs/user_study/study.yaml`:
 
 ```yaml
-task: transport_mh_jan28
+task: kendama_may22
 ```
 
-Each task is a YAML file at
+Per-task **admin settings** (rollout timer, graph complexity, etc.) live in
+`policy_doctor/configs/user_study/study/<task>.yaml`:
+
+```yaml
+rollout_time_limit_seconds: 900
+graph:
+  visualization: tree_native_svg
+  color_by: outcome
+  min_transition_count: 2
+  clustering:   # optional K-sweep for Group B
+    sweep_root: data/demo_sweep/kendama_may22/run_clustering/clustering/aggregate_first
+    rep: policy_emb_bottleneck_plan_t0
+    k_options: [4, 5, 6, 7, 10, 11, 12, 14, 15]
+    default_k: 4
+```
+
+**Runtime paths** (MP4s, clustering dir, strategy presets) are in
 `policy_doctor/configs/user_study/tasks/<name>.yaml`:
 
 ```yaml
@@ -818,10 +834,9 @@ label: "Transport MH (Jan 28)"
 mp4_dir: /tmp/study_mp4s/transport_mh_jan28
 study_config: policy_doctor/configs/user_study/transport_mh_jan28.yaml
 clustering_dir: third_party/influence_visualizer/configs/transport_mh_jan28/clustering/...
-rollout_time_limit_seconds: 600
 ```
 
-Changing `rollout_time_limit_seconds` requires re-collecting and rebuilding the image;
+Changing study settings requires re-collecting and rebuilding the image;
 no code changes.
 
 ---
@@ -829,12 +844,13 @@ no code changes.
 ## Adding a new study task
 
 1. Add a task YAML: `policy_doctor/configs/user_study/tasks/<task>.yaml`
-2. Add a study config: `policy_doctor/configs/user_study/<task>.yaml`
-3. Set `task: <task>` in `policy_doctor/configs/user_study/study.yaml`
-4. Place MP4s + `index.json` under `data/study_mp4s/<task>/`
-5. For Group B: place clustering data under `third_party/influence_visualizer/configs/<task>/clustering/`
-6. Add `<task>` to `TASKS` in `collect_artifacts.sh`
-7. Re-collect + rebuild: `./deploy/push_deploy.sh`
+2. Add strategy presets: `policy_doctor/configs/user_study/<task>.yaml`
+3. Add study admin settings: `policy_doctor/configs/user_study/study/<task>.yaml`
+4. Set `task: <task>` in `policy_doctor/configs/user_study/study.yaml`
+5. Place MP4s + `index.json` under `data/study_mp4s/<task>/`
+6. For Group B: place clustering data under `third_party/influence_visualizer/configs/<task>/clustering/`
+7. Add `<task>` to `TASKS` in `collect_artifacts.sh`
+8. Re-collect + rebuild: `./deploy/push_deploy.sh`
 
 ---
 

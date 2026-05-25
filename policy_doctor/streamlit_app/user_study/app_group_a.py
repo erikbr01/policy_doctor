@@ -26,6 +26,8 @@ from policy_doctor.streamlit_app.user_study.survey_steps import (
     record_step_entry,
     render_progress_bar,
     render_rollout_timer,
+    rollout_time_remaining,
+    watch_rollout_expiry,
 )
 from policy_doctor.streamlit_app.user_study.video_browser import render_video_browser
 
@@ -154,7 +156,13 @@ elif step == 2:
             import time as _time
             st.session_state[start_key] = _time.time()
 
-    remaining, expired = render_rollout_timer(
+    _, expired = rollout_time_remaining(st.session_state[start_key], rollout_limit)
+    if expired:
+        advance_step(2, STEP_KEY)
+
+    watch_rollout_expiry(start_key, rollout_limit, STEP_KEY, 2)
+
+    render_rollout_timer(
         st.session_state[start_key],
         rollout_limit,
         key=f"{PFX}_rtimer",
@@ -177,7 +185,7 @@ elif step == 2:
     render_video_browser(mp4_dir, index, page_size=9, key_prefix=f"{PFX}_vbrow")
 
     st.divider()
-    if expired or st.button("Proceed to Data Collection →", type="primary"):
+    if st.button("Proceed to Data Collection →", type="primary"):
         advance_step(2, STEP_KEY)
 
 # ─────────────────────────────────────────────────────────────────────────────

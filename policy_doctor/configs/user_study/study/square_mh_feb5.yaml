@@ -1,0 +1,6 @@
+rollout_time_limit_seconds: 600
+
+graph:
+  visualization: tree_native_svg
+  color_by: outcome
+  min_transition_count: 2

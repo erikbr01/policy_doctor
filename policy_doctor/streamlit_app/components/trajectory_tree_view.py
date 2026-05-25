@@ -79,6 +79,8 @@ def render_trajectory_tree(
     level: str = "rollout",
     key_prefix: str = "tree",
     show_stats: bool = True,
+    compact_labels: bool = False,
+    layout_token: Optional[int] = None,
     theme: str = "dark",
     edge_style: str = "lines",
     edge_width_slope: float = 5.0,
@@ -179,6 +181,8 @@ def render_trajectory_tree(
             theme=theme, edge_style=edge_style,
             edge_width_slope=edge_width_slope,
             node_size_slope=node_size_slope,
+            compact_labels=compact_labels,
+            layout_token=layout_token,
         )
     else:
         _render_plotly(
@@ -212,6 +216,8 @@ def _render_native_svg(
     edge_style: str = "lines",
     edge_width_slope: float = 5.0,
     node_size_slope: float = 24.0,
+    compact_labels: bool = False,
+    layout_token: Optional[int] = None,
 ) -> None:
     node_values = node_values or {}
     from policy_doctor.streamlit_app.user_study.graph_explorer import render_graph_full_width
@@ -374,8 +380,8 @@ def _render_native_svg(
         level=level,
     )
 
-    # Tree layout: split [0,1] x-range among children weighted by subtree
-    # size; y = -depth (root at top).
+    # Tree layout: split horizontal space among children by subtree leaf count
+    # so branches stay evenly spaced even when episode counts differ a lot.
     children_of: Dict[Tuple, List[Tuple]] = defaultdict(list)
     for nd in nodes_f:
         if nd["parent_path"] is not None and tuple(nd["parent_path"]) in by_path_all:
@@ -383,13 +389,19 @@ def _render_native_svg(
     for k in children_of:
         children_of[k].sort(key=lambda pp: by_path_all[pp]["cluster_id"])
 
+    def _leaf_count(path: Tuple) -> int:
+        ch = children_of.get(path, [])
+        if not ch:
+            return 1
+        return sum(_leaf_count(c) for c in ch)
+
     pos_paths: Dict[Tuple, Tuple[float, float]] = {}
     def _assign(path: Tuple, x_lo: float, x_hi: float, depth: int) -> None:
         pos_paths[path] = ((x_lo + x_hi) / 2, -depth)
         ch = children_of.get(path, [])
         if not ch:
             return
-        weights = [by_path_all[c]["n_episodes"] for c in ch]
+        weights = [_leaf_count(c) for c in ch]
         total = sum(weights) or 1
         cur = x_lo
         for c, w in zip(ch, weights):
@@ -408,6 +420,19 @@ def _render_native_svg(
     pos_final: Dict[int, Tuple[float, float]] = {}
     for nid, (x, y) in pos_synth.items():
         pos_final[nid] = (-2.5 + 5.0 * x, -2.5 + 5.0 * ((-y) / max_d))
+
+    label_override: Dict[int, str] = {}
+    if compact_labels:
+        for nd in nodes_f:
+            p = tuple(nd["path"])
+            nid = path_to_id.get(p)
+            if nid is None:
+                continue
+            cid = nd["cluster_id"]
+            if cid >= 0:
+                label_override[nid] = str(cid)
+            elif cid in (SUCCESS_NODE_ID, FAILURE_NODE_ID, END_NODE_ID, START_NODE_ID):
+                label_override[nid] = ""
 
     # Synthetic per-window labels: each window's assignment is the synth id
     # of the tree node at the corresponding depth of its episode's
@@ -478,12 +503,15 @@ def _render_native_svg(
             pos=pos_final,
             symbol_override=symbol_override,
             color_override=color_override,
+            label_override=label_override or None,
+            layout_token=layout_token,
             highlighted_path=_highlighted_path,
             theme=theme,
             edge_style=edge_style,
             edge_width_slope=edge_width_slope,
             node_size_slope=node_size_slope,
             suppress_video_panel=True,
+            show_caption=not compact_labels,
         )
     with col_v:
         _render_right_video_panel(
