@@ -461,7 +461,8 @@ def _render_native_svg(
         _id_to_prefix[nid] = " → ".join(chain)
     st.session_state[f"{key_prefix}_id_to_prefix"] = _id_to_prefix
     _highlighted_path = st.session_state.get(f"{key_prefix}_highlighted_path")
-    _fps = int((mp4_index or {}).get("fps", 10))
+    _eps = (mp4_index or {}).get("episodes", [])
+    _fps = int(round(_eps[0].get("fps") or 10)) if _eps else 10
 
     col_g, col_v = st.columns([2, 1])
     with col_g:
