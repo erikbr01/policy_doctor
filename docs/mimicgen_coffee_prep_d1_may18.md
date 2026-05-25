@@ -1,8 +1,12 @@
 # MimicGen Coffee Preparation D1 — May 18 2026
 
-**Status:** Paused at end of May 24 session — all jobs killed; per-arm
-state cleaned; pipeline ready to launch (`v15` config in repo). No valid
-sweep results yet. See "Session Summary" below for what was discovered.
+**Status:** Paused at end of May 24 session — all jobs killed. Pipeline
+config is correct in the repo BUT a worktree-shadowing import bug means
+the running pipeline silently loads `combine_hdf5_datasets` from the
+base worktree (without the subset fix), producing 1000+N-demo combined
+datasets instead of the 100+N few-shot composition. **Don't relaunch
+until the import-shadowing fix is applied** — see "v14 / v15 caveat"
+below. No valid sweep results yet.
 **Goal:** Replicate the apr26 square tight-constraint sweep for coffee preparation D1 with mug pose constrained.
 
 ---
@@ -59,19 +63,77 @@ EEF didn't hit this because square's source HDF5 is already ~60 demos
 (= baseline size). Any task with a larger source pool would have
 hit this silently.
 
-### v14 / v15 caveat
+### v14 / v15 caveat — UNRESOLVED: subset fix is not being applied in the pipeline
 
-`v14` was launched after committing the subset fix, but it still
-produced 1100/1029-demo combined.hdf5 files. Root cause: stale
-`__pycache__/*.pyc` from a prior pipeline launch shadowed the new source
-in the running process. Caches were nuked before `v15`, which then
-produced correct 200-demo combined files. **If you relaunch after a
-substantial code change, always:**
+After committing the subset fix and nuking `__pycache__`, both `v14` and
+`v15` STILL produced 1000-baseline-plus-N-generated combined.hdf5 files
+(observed: 1100, 1029, 1036), not the 100+N the fix intends. The
+pre-launch verification
+
+```bash
+conda run -n policy_doctor python -c "import policy_doctor.mimicgen.combine_datasets as m; import inspect; print(inspect.signature(m.combine_hdf5_datasets))"
+```
+
+run from this worktree returns the new signature
+(`(original_path, generated_path, output_path, max_original_demos=None)`),
+and the print format in the source includes `max_original_demos=...`.
+But the pipeline log post-`v15` shows the OLD format
+(`combined dataset written: ...  total_demos=1036`) — never
+`max_original_demos=...`. So `import policy_doctor` from inside the
+running pipeline subprocess is resolving to a different copy of the
+module than the one we edit here.
+
+**Most likely root cause** (not confirmed yet):
+`pip show policy_doctor` says
+
+```
+Editable project location: /home/erbauer/refactor_cupid/policy_doctor
+```
+
+i.e. the **base worktree** (`refactor_cupid/policy_doctor/`), not this
+worktree (`refactor_cupid/policy_doctor/.claude/worktrees/feat+mimicgen-traj-pipeline/`).
+When the pipeline runs `python -m policy_doctor.scripts.run_pipeline` the
+editable install seems to take precedence over the local `./policy_doctor/`
+directory in `sys.path`, so subsequent `import policy_doctor.mimicgen.combine_datasets`
+loads the BASE worktree's file. The base worktree does not have the
+subset fix:
+
+```bash
+diff /home/erbauer/refactor_cupid/policy_doctor/policy_doctor/mimicgen/combine_datasets.py \
+     policy_doctor/mimicgen/combine_datasets.py
+# 29a30: <       max_original_demos: int | None = None,
+# ...
+```
+
+**Next session must verify and fix this before any other work**, because
+no per-arm training result coming out of this branch can be trusted
+otherwise.
+
+Candidate fixes (pick one, verify with a fresh `inspect.getsource` check
+on `train_on_combined_data.compute`):
+
+1. Re-install the editable package from this worktree:
+   `cd /home/erbauer/refactor_cupid/policy_doctor/.claude/worktrees/feat+mimicgen-traj-pipeline && conda run -n policy_doctor pip install -e .`
+2. Prepend this worktree to `PYTHONPATH` when launching the pipeline:
+   `PYTHONPATH=/home/erbauer/refactor_cupid/policy_doctor/.claude/worktrees/feat+mimicgen-traj-pipeline conda run -n policy_doctor python -m policy_doctor.scripts.run_pipeline ...`
+3. Or merge the relevant fixes (`max_original_demos`, etc.) into the base
+   worktree itself so the editable install loads them.
+
+This matches the persistent memory entry **"pip editable install of
+policy_doctor shadows worktrees"** — `import policy_doctor` may resolve to
+a sibling worktree. The standard mitigation (prepending `_REPO_ROOT` to
+`sys.path` in scripts) was not applied to the pipeline entry point.
+
+### General lesson: always purge pycache before relaunching after a code change
 
 ```bash
 find policy_doctor -name "*.pyc" -delete
 find policy_doctor -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
 ```
+
+Pycache shadowing was ONE source of stale-code execution in this session
+(it caused `v14`); the worktree-shadowing bug above is a separate,
+deeper one that also needs handling on relaunch.
 
 ### State at end of session
 
