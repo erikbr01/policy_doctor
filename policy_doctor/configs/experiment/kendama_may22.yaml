@@ -19,10 +19,10 @@
 # Usage:
 #   python -m policy_doctor.scripts.run_pipeline \
 #     data_source=droid_hdf5 \
-#     +experiment=kendama_may20 \
+#     +experiment=kendama_may22 \
 #     steps=[train_baseline]
 
-experiment_name: kendama_may20
+experiment_name: kendama_may22
 seeds: [0]
 
 baseline:

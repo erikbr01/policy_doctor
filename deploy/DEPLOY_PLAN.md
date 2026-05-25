@@ -32,11 +32,11 @@ Last updated: 2026-05-24.
 ### 1. Finalize kendama study content
 
 - [ ] Fill in real strategy definitions in
-      `policy_doctor/configs/user_study/kendama_may20.yaml`:
+      `policy_doctor/configs/user_study/kendama_may22.yaml`:
       replace the 4 placeholder entries with real
       `(behavior mode × initial condition)` pairs.
 - [ ] Film 3 representative training demos per strategy and place them
-      at `data/study_mp4s/kendama_may20/demo_videos/<ep_xxx.mp4>`.
+      at `data/study_mp4s/kendama_may22/demo_videos/<ep_xxx.mp4>`.
       File names go under each strategy's `example_demos.video_paths`.
 - [ ] Re-run `./deploy/collect_artifacts.sh` so the new MP4s land in the
       image.
