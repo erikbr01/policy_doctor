@@ -9,12 +9,11 @@
 #   ./deploy/deploy_study_stack.sh --no-collect  # skip artifact bundling
 #   ./deploy/deploy_study_stack.sh --no-build    # reuse existing image
 #   ./deploy/deploy_study_stack.sh --no-cache    # docker build --no-cache
-#   ./deploy/deploy_study_stack.sh --tls         # include TLS override
-#                                                # (needs init_letsencrypt.sh
-#                                                #  to have run first)
+#   ./deploy/deploy_study_stack.sh --tunnel      # add Cloudflare Tunnel sidecar
+#                                                # (needs cloudflared/config.yml)
 #
-# Reads .env (next to this script) for STUDY_DOMAIN / DEMO_DOMAIN / passwords /
-# SURVEY_GCS_BUCKET. See .env.example.
+# Reads .env (next to this script) for STUDY_DOMAIN / DEMO_DOMAIN / passwords.
+# See .env.example.
 
 set -euo pipefail
 
@@ -23,7 +22,7 @@ IMAGE_NAME="policy-doctor-demo"
 
 COLLECT=true
 BUILD=true
-TLS=false
+TUNNEL=false
 NO_CACHE=""
 
 for arg in "$@"; do
@@ -31,7 +30,7 @@ for arg in "$@"; do
         --no-collect) COLLECT=false ;;
         --no-build)   BUILD=false ;;
         --no-cache)   NO_CACHE="--no-cache" ;;
-        --tls)        TLS=true ;;
+        --tunnel)     TUNNEL=true ;;
         *) echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -47,11 +46,16 @@ fi
 STUDY_DOMAIN="${STUDY_DOMAIN:-study.localhost}"
 DEMO_DOMAIN="${DEMO_DOMAIN:-demo.localhost}"
 HTTP_PORT="${HTTP_PORT:-80}"
-HTTPS_PORT="${HTTPS_PORT:-443}"
 
 COMPOSE_FILES=(-f "$SCRIPT_DIR/docker-compose.yml")
-if $TLS; then
-    COMPOSE_FILES+=(-f "$SCRIPT_DIR/docker-compose.tls.yml")
+if $TUNNEL; then
+    COMPOSE_FILES+=(-f "$SCRIPT_DIR/docker-compose.tunnel.yml")
+    if [ ! -f "$SCRIPT_DIR/cloudflared/config.yml" ]; then
+        echo "ERROR: deploy/cloudflared/config.yml not found."
+        echo "  Copy deploy/cloudflared/config.yml.example → config.yml and fill in"
+        echo "  your tunnel ID, hostnames, and credentials JSON."
+        exit 1
+    fi
 fi
 
 if $COLLECT; then
@@ -64,14 +68,18 @@ if $BUILD; then
     docker build $NO_CACHE -t "$IMAGE_NAME" "$SCRIPT_DIR"
 fi
 
-echo "→ Starting stack (proxy + survey + demo)"
+if $TUNNEL; then
+    echo "→ Starting stack (proxy + survey + demo + cloudflared tunnel)"
+else
+    echo "→ Starting stack (proxy + survey + demo)"
+fi
 docker compose "${COMPOSE_FILES[@]}" up -d
 
-# URL scheme depends on whether we're running with the TLS override.
-if $TLS; then
+# With the tunnel Cloudflare handles TLS — URLs are plain https, no port.
+# Without the tunnel the proxy binds HTTP_PORT on the host.
+if $TUNNEL; then
     SCHEME=https
     PORT_SUFFIX=""
-    [ "$HTTPS_PORT" = "443" ] || PORT_SUFFIX=":$HTTPS_PORT"
 else
     SCHEME=http
     PORT_SUFFIX=""
@@ -83,7 +91,7 @@ echo "================================================================"
 echo "  Survey app (participants):  $SCHEME://$STUDY_DOMAIN$PORT_SUFFIX"
 echo "  Demo app   (researchers):   $SCHEME://$DEMO_DOMAIN$PORT_SUFFIX"
 echo
-if ! $TLS; then
+if ! $TUNNEL; then
     case "$STUDY_DOMAIN" in
         *.localhost|localhost)
             echo "  Local-only DNS: most systems resolve *.localhost to 127.0.0.1"

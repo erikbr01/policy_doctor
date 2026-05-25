@@ -14,20 +14,26 @@ For the ordered checklist of remaining work to ship to participants, see
 
 Both apps run as internal-only Docker services (no host port mapping). All
 traffic enters through an **nginx reverse proxy** which routes by subdomain
-to the right container. The same setup transparently scales from local
-testing (HTTP, `*.localhost`) to a public VM with real DNS + Let's Encrypt
-certs — only the env vars change.
+to the right container.
 
-Both apps read from (and write to) the same GCS response bucket when
-`SURVEY_GCS_BUCKET` is set.
+For production, ingress goes through a **Cloudflare Tunnel**
+(`docker-compose.tunnel.yml`): a `cloudflared` sidecar container opens an
+outbound-only connection to Cloudflare's edge, so no static IP, open firewall
+ports, or TLS certificate management is required.
+
+Survey responses are written to a Docker volume on the VM and can be
+retrieved at any time with `docker cp` (see [Response storage](#response-storage)).
 
 ```
 [ Browser ]
-      │  (DNS: study.* / demo.* → host IP)
+      │  HTTPS (Cloudflare edge terminates TLS)
       ▼
-[ nginx proxy :80/:443 ]
-   ├─ study.<domain> ─►  survey  container :8501  (internal-only)
-   └─  demo.<domain> ─►  demo    container :8501  (internal-only)
+[ cloudflared sidecar ]  ← outbound tunnel, no open ports on host
+      │  HTTP
+      ▼
+[ nginx proxy :80 ]
+   ├─ study.behavior-graphs.com ─►  survey  container :8501  (internal-only)
+   └─  demo.behavior-graphs.com ─►  demo    container :8501  (internal-only)
 ```
 
 ---
@@ -36,20 +42,22 @@ Both apps read from (and write to) the same GCS response bucket when
 
 ```
 deploy/
-├── Dockerfile                  # Shared container image (survey + demo)
-├── docker-compose.yml          # Base stack: proxy + survey + demo (HTTP only)
-├── docker-compose.tls.yml      # Override: enables HTTPS + Let's Encrypt sidecar
+├── Dockerfile                    # Shared container image (survey + demo)
+├── docker-compose.yml            # Base stack: proxy + survey + demo (HTTP only)
+├── docker-compose.tunnel.yml     # Overlay: Cloudflare Tunnel sidecar (production)
+├── cloudflared/
+│   └── config.yml.example        # Tunnel config template — copy to config.yml
 ├── nginx/
-│   ├── templates/              # nginx config (HTTP) — envsubst'd at start
-│   └── templates-tls/          # nginx config (HTTPS) — used by TLS override
-├── requirements.txt            # Python deps (includes google-cloud-storage)
-├── .env.example                # Template for deployment environment variables
-├── collect_artifacts.sh        # Bundle code + clusterings + MP4s into deploy/
-├── deploy_study_stack.sh       # Build + launch all services locally via compose
-├── init_letsencrypt.sh         # One-shot cert bootstrap for the TLS override
-├── deploy_local.sh             # Legacy single-app container (graph demo only)
-├── deploy_gcp_vm.sh            # Push to GCE VM (see "GCP VM deploy" below)
-├── deploy_gcp.sh               # Cloud Run alternative
+│   └── templates/                # nginx config — envsubst'd at container start
+├── requirements.txt              # Python deps (includes google-cloud-storage)
+├── .env.example                  # Template for deployment environment variables
+├── collect_artifacts.sh          # Bundle code + clusterings + MP4s into deploy/
+├── deploy_study_stack.sh         # Build + launch all services via compose (on VM)
+├── create_vm.sh                  # One-time: create Debian VM with Docker CE + AR auth
+├── setup_data_disk.sh            # One-time: create + mount persistent data disk on VM
+├── push_deploy.sh                # Build + push image + sync deploy/ + restart stack
+├── deploy_gcp_vm.sh              # Legacy: single-container COS deploy (policy-doctor-demo)
+├── deploy_gcp.sh                 # Cloud Run alternative
 └── sync_from_dev_and_deploy.sh
 ```
 
@@ -141,7 +149,7 @@ Then either:
 Browsing `http://localhost:8080` directly returns nothing — the proxy
 drops unknown Host headers (`return 444;`). You must hit one of the two
 subdomains. Tunneling is only for the developer testing themselves; real
-study URLs need DNS + the [Production deploy](#production-deploy--public-domain--https) flow below.
+study URLs go through Cloudflare (see [Production deploy](#production-deploy--cloudflare-tunnel)).
 
 To stop: `docker compose -f deploy/docker-compose.yml down`
 
@@ -152,7 +160,7 @@ Flags for `deploy_study_stack.sh`:
 | `--no-collect` | Skip `collect_artifacts.sh` (faster rebuild after code-only changes) |
 | `--no-build` | Reuse existing image |
 | `--no-cache` | Force full Docker rebuild |
-| `--tls` | Layer in `docker-compose.tls.yml` (requires `init_letsencrypt.sh` to have run) |
+| `--tunnel` | Layer in `docker-compose.tunnel.yml` (requires `cloudflared/config.yml` — see [Production deploy](#production-deploy--cloudflare-tunnel)) |
 
 ---
 
@@ -165,13 +173,9 @@ Docker Compose picks up `.env` automatically.
 |----------|----------|-------------|
 | `APP_PASSWORD_SHA256` | No | SHA-256 hash of the graph-demo password (omit = open) |
 | `SURVEY_PASSWORD_SHA256` | No | SHA-256 hash of the survey app password (omit = open) |
-| `SURVEY_GCS_BUCKET` | No | GCS bucket name for response storage (omit = local JSON files) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | No | Path to GCP service-account key JSON (GCP VMs use ADC instead) |
 | `STUDY_DOMAIN` | No | Hostname routed to the survey container (default `study.localhost`) |
 | `DEMO_DOMAIN` | No | Hostname routed to the demo container (default `demo.localhost`) |
-| `HTTP_PORT` | No | Host port the proxy binds for HTTP (default `80`) |
-| `HTTPS_PORT` | No | Host port the proxy binds for HTTPS (default `443`, TLS override only) |
-| `LETSENCRYPT_EMAIL` | TLS only | Email passed to `certbot` for issuance + expiry notifications |
+| `HTTP_PORT` | No | Host port the proxy binds for local HTTP testing (default `80`) |
 
 Generate a password hash:
 ```bash
@@ -180,138 +184,172 @@ python3 -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
 
 ---
 
-## GCS response storage
+## Response storage
 
-When `SURVEY_GCS_BUCKET` is set, every survey submission writes a JSON blob to
-`gs://<bucket>/survey_responses/group_{a|b}_{timestamp}_{participant_id}.json`.
-The **Survey Analytics** page in the graph demo reads from the same bucket.
+Survey responses are written as JSON files to a bind-mounted host path
+(`SURVEY_RESPONSES_DIR`). The default for local testing is `./survey_responses`
+(relative to the `deploy/` folder, gitignored).
 
-### One-time bucket setup
+In production, `SURVEY_RESPONSES_DIR` points at a **separate persistent disk**
+(`/mnt/data/survey_responses`) that is never auto-deleted when the VM is
+stopped, deleted, or recreated — see [Persistent disk setup](#persistent-disk-setup).
 
-```bash
-# Create the bucket (choose a region close to your VM)
-gsutil mb -l us-west1 gs://your-bucket-name
-
-# Grant write access to the VM's service account (or your ADC identity)
-gsutil iam ch serviceAccount:YOUR_SA@YOUR_PROJECT.iam.gserviceaccount.com:objectCreator \
-    gs://your-bucket-name
-
-# Grant read access (for the analytics page on the demo app)
-gsutil iam ch serviceAccount:YOUR_SA@YOUR_PROJECT.iam.gserviceaccount.com:objectViewer \
-    gs://your-bucket-name
-```
-
-For local dev with Application Default Credentials:
-```bash
-gcloud auth application-default login
-export SURVEY_GCS_BUCKET=your-bucket-name
-```
-
-### Viewing responses
+Retrieve responses at any time:
 
 ```bash
-# List all submissions
-gsutil ls gs://your-bucket-name/survey_responses/
+# On the VM:
+ls /mnt/data/survey_responses/
 
-# Download all responses
-gsutil -m cp 'gs://your-bucket-name/survey_responses/*.json' ./responses/
+# From your laptop:
+gcloud compute scp --recurse \
+    policy-doctor-demo:/mnt/data/survey_responses ./responses \
+    --zone us-west1-a --project gcp-driven-data
 ```
 
-Or open the **Survey Analytics** page in the graph demo — it reads live from the bucket with a 60-second cache and a Refresh button.
+Each file is named `group_{a|b}_{timestamp}_{participant_id}.json`.
+
+> The **Survey Analytics** page in the demo app requires GCS and will show
+> no data with local-volume storage.
 
 ---
 
-## Production deploy — public domain + HTTPS
+## Persistent disk setup
 
-The production setup is the local setup plus three things:
-1. Real DNS A records for both subdomains pointing at the host.
-2. A reserved external IP on the VM so the records don't break on restart.
-3. Let's Encrypt certs issued via the TLS compose override.
-
-### One-time host prep (GCP VM example)
+Run once from your local machine **before the first deployment**:
 
 ```bash
-# 1. Promote the VM's ephemeral IP to static (GCP Console → VPC → IP addresses).
-# 2. Open ports 80 + 443 in the firewall:
-gcloud compute firewall-rules create policy-doctor-allow-https \
-    --project=gcp-driven-data --network=default \
-    --direction=INGRESS --action=ALLOW \
-    --rules=tcp:80,tcp:443 --source-ranges=0.0.0.0/0 \
-    --target-tags=policy-doctor-http --quiet
-
-# 3. Point DNS at the static IP — at your registrar, create two A records:
-#      study.<yourdomain>  →  <STATIC_IP>
-#      demo.<yourdomain>   →  <STATIC_IP>
+./deploy/setup_data_disk.sh
 ```
 
-### Deploying to the VM
+This creates a `policy-doctor-data` persistent disk (10 GB, pd-standard),
+attaches it to the VM with `--no-auto-delete`, formats it as ext4, mounts
+it at `/mnt/data`, and adds an fstab entry so it remounts automatically on
+reboot.
+
+Then add to `~/deploy/.env` on the VM:
+```
+SURVEY_RESPONSES_DIR=/mnt/data/survey_responses
+```
+
+**Key properties of the disk:**
+- `--no-auto-delete` means the disk is **never deleted** when the VM is
+  deleted — you can reattach it to a replacement VM with:
+  ```bash
+  gcloud compute instances attach-disk NEW_VM_NAME \
+      --disk=policy-doctor-data --zone=us-west1-a --no-auto-delete
+  ```
+- The disk is independent of the boot disk, so OS re-imaging or VM recreation
+  doesn't touch your data.
+- To verify `auto-delete` is off at any time:
+  ```bash
+  gcloud compute instances describe policy-doctor-demo \
+      --zone=us-west1-a --format="value(disks[].autoDelete)"
+  ```
+
+---
+
+## Production deploy — Cloudflare Tunnel
+
+The recommended production setup uses a Cloudflare Tunnel instead of
+Let's Encrypt. Advantages:
+
+- **No static external IP required** — the tunnel uses outbound-only connections
+- **No open firewall ports** — you can remove (or never add) tcp:80/443 GCP rules
+- **No cert management** — TLS is terminated at Cloudflare's edge automatically
+- **Free DDoS protection and Cloudflare Access** (optional participant gating)
+
+### One-time tunnel setup (run from any machine with `cloudflared`)
+
+Install `cloudflared` if needed:
+```bash
+# macOS
+brew install cloudflared
+
+# Linux (Debian/Ubuntu)
+curl -L https://pkg.cloudflare.com/cloudflare-main.gpg \
+  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] \
+  https://pkg.cloudflare.com/cloudflared any main' \
+  | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update && sudo apt install cloudflared
+```
+
+Create the tunnel and DNS records:
+```bash
+cloudflared tunnel login
+cloudflared tunnel create policy-doctor
+cloudflared tunnel route dns policy-doctor study.behavior-graphs.com
+cloudflared tunnel route dns policy-doctor  demo.behavior-graphs.com
+```
+
+`tunnel create` prints a **tunnel UUID** and writes a credentials JSON to
+`~/.cloudflared/<TUNNEL_ID>.json`. Copy both to the GCE host (see below).
+
+### Fresh VM — end-to-end checklist
+
+Run these once, in order, for a brand-new VM:
 
 ```bash
-# Build + push the image (Artifact Registry).
-./deploy/deploy_gcp_vm.sh
+# 1. Create the VM (Debian 12, Docker CE, Artifact Registry auth pre-configured):
+VM_NAME=user-study-test ./deploy/create_vm.sh
+# Wait ~2 min for the startup script to finish, then confirm:
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "docker --version && docker compose version"
 
-# SSH in and run the proxy + apps with TLS.
-gcloud compute ssh policy-doctor-demo --zone us-west1-a --project gcp-driven-data
-# On the VM, place the deploy/ folder + .env, then:
-cd deploy
-# .env must include:
-#   STUDY_DOMAIN=study.yourdomain.com
-#   DEMO_DOMAIN=demo.yourdomain.com
-#   LETSENCRYPT_EMAIL=you@example.com
-./init_letsencrypt.sh           # one-shot: dummy cert → ACME → real cert
-./deploy_study_stack.sh --tls   # bring up proxy + apps with HTTPS
+# 2. Create and mount the persistent data disk (survives VM deletion):
+VM_NAME=user-study-test ./deploy/setup_data_disk.sh
+
+# 3. Copy the tunnel credentials JSON to the VM:
+gcloud compute scp ~/.cloudflared/<TUNNEL_ID>.json \
+    user-study-test:~/deploy/cloudflared/ \
+    --zone us-west1-a --project gcp-driven-data
+# Also fill in deploy/cloudflared/config.yml from config.yml.example and push it.
+
+# 4. Create .env on the VM:
+gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data \
+    --command "printf 'STUDY_DOMAIN=study.behavior-graphs.com\nDEMO_DOMAIN=demo.behavior-graphs.com\nSURVEY_RESPONSES_DIR=/mnt/data/survey_responses\n' > ~/deploy/.env"
+
+# 5. Set the demo password:
+VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=bgproject26
+
+# 6. First full deploy (collect + build + push + start stack):
+VM_NAME=user-study-test ./deploy/push_deploy.sh
 ```
 
-`init_letsencrypt.sh` will:
-1. Drop dummy self-signed certs (so nginx can start with the TLS template).
-2. Start the proxy + apps.
-3. Delete the dummies and request real Let's Encrypt certs over HTTP-01.
-4. Reload nginx so the real certs take effect.
+### Every deploy
 
-Test against Let's Encrypt's staging server first to avoid rate limits:
 ```bash
-STAGING=1 ./init_letsencrypt.sh
+VM_NAME=user-study-test ./deploy/push_deploy.sh
 ```
-Once you see the staging cert served, re-run without `STAGING=1` for the real one.
 
-After bootstrap, the **certbot sidecar** in `docker-compose.tls.yml` renews certs every 12h
-and signals nginx to reload — no cron needed on the host.
-
-### GCS credentials on the VM
-
-GCE VMs use the default service account automatically (Application Default Credentials).
-Ensure the VM's service account has `storage.objectCreator` + `storage.objectViewer` on
-the bucket (see [GCS setup](#gcs-response-storage) above).
-No credential files needed on the VM.
+This collects artifacts, builds a `linux/amd64` image, pushes it to Artifact
+Registry, syncs the `deploy/` folder (excluding `.env` and credentials) to the
+VM, pulls the new image, and restarts the Compose stack with the tunnel sidecar.
 
 ### Updating the running deployment
 
 ```bash
-./deploy/deploy_gcp_vm.sh                           # build + push new :latest
-gcloud compute ssh policy-doctor-demo --zone us-west1-a \
-    --project gcp-driven-data --command="
-        cd ~/deploy &&
-        docker compose -f docker-compose.yml -f docker-compose.tls.yml pull &&
-        docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
-    "
+# Full rebuild (collect + build + push + deploy):
+VM_NAME=user-study-test ./deploy/push_deploy.sh
+
+# Code-only change (artifacts already bundled):
+VM_NAME=user-study-test ./deploy/push_deploy.sh --no-collect
+
+# Update only the demo password (no image rebuild):
+VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=newpassword
 ```
 
----
+`push_deploy.sh` flags:
 
-## Updating a running deployment
+| Flag | Effect |
+|------|--------|
+| `--no-collect` | Skip `collect_artifacts.sh` (faster when only code changed) |
+| `--no-build` | Reuse last-built image (skip `docker build`) |
+| `--no-push` | Skip Artifact Registry push (re-deploy already-pushed image) |
+| `--no-cache` | Force full Docker layer rebuild |
+| `--set-password=<pw>` | Hash the password, update `APP_PASSWORD_SHA256` in the VM's `.env`, restart stack — no image rebuild |
 
-After code or data changes:
-
-```bash
-# Re-bundle + rebuild + restart
-./deploy/deploy_study_stack.sh
-
-# Or just rebuild without re-collecting artifacts
-./deploy/deploy_study_stack.sh --no-collect
-```
-
-For the GCP VM, rebuild and push the image, then SSH in and pull (see the
-"Updating the running deployment" snippet under [Production deploy](#production-deploy--public-domain--https)).
+The `.env` on the VM is **never overwritten** by a normal deploy (excluded from the sync tarball). Use `--set-password` or SSH in to change individual variables.
 
 ---
 
@@ -368,28 +406,22 @@ the image small.
 
 ## Troubleshooting
 
-**Container starts but survey responses aren't in GCS**
-- Check `SURVEY_GCS_BUCKET` is set in the container: `docker exec <container> env | grep SURVEY`
-- Verify the service account has `storage.objectCreator` on the bucket
-- Check app logs: `docker compose logs survey`
-
 **`DNS_PROBE_FINISHED_NXDOMAIN` in the browser locally**
 - `*.localhost` may not resolve automatically on every system
 - Either add `127.0.0.1 study.localhost demo.localhost` to `/etc/hosts`,
   or set `STUDY_DOMAIN=study.lvh.me DEMO_DOMAIN=demo.lvh.me` in `deploy/.env`
 
-**Subdomains not reachable on GCP**
-- Confirm DNS A records resolve to the VM's static IP (`dig study.<domain>`)
-- Ensure the GCP firewall opens tcp:80 + tcp:443 with the `policy-doctor-http` tag
+**Subdomains not reachable on GCP (tunnel setup)**
+- Check the tunnel container is running and connected: `docker compose logs tunnel`
+- A `registered` log line means the tunnel is up; if you see `failed to connect`, verify the credentials JSON and config.yml are in `deploy/cloudflared/` and the tunnel ID matches
+- Confirm Cloudflare DNS records exist: `cloudflared tunnel info policy-doctor`
+
+**Proxy logs show errors / `502 Bad Gateway` from nginx**
 - Check the proxy logs: `docker compose logs proxy`
 
 **`502 Bad Gateway` from the proxy**
 - The streamlit container probably crashed — `docker compose logs survey` / `demo`
 - After a fix: `docker compose restart survey demo` (no need to rebuild)
-
-**Let's Encrypt issues `unauthorized` / `connection refused`**
-- DNS hasn't propagated yet, or port 80 isn't reachable from the internet
-- Test with `STAGING=1 ./init_letsencrypt.sh` first — staging has no rate limit
 
 **`collect_artifacts.sh` fails on a task**
 - Verify `data/study_mp4s/<task>/index.json` exists

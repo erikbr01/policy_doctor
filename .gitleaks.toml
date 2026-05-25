@@ -1,0 +1,42 @@
+# Gitleaks configuration for Policy Doctor.
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+#
+# We extend the built-in ruleset and add allowlists for patterns in this
+# repo that look secret-shaped but are intentionally safe to commit.
+
+[extend]
+# Pull in gitleaks' full built-in rule library as the base.
+useDefault = true
+
+[allowlist]
+description = "Safe patterns in this repo"
+
+regexes = [
+    # SHA-256 password placeholders in docs/examples — these are fake hashes,
+    # not real secrets.  The actual hash lives in .env (gitignored).
+    "APP_PASSWORD_SHA256=",
+    "SURVEY_PASSWORD_SHA256=",
+
+    # GCS bucket name placeholder — not a credential.
+    "SURVEY_GCS_BUCKET=",
+
+    # Cloudflare Tunnel UUID placeholder — the real UUID goes in
+    # cloudflared/config.yml which is gitignored.
+    "<TUNNEL_ID>",
+]
+
+paths = [
+    # Example / template files are safe to contain placeholder-shaped strings.
+    "deploy/.env.example",
+    "deploy/cloudflared/config.yml.example",
+
+    # Conda environment lock files — package version hashes like
+    # `google-auth=2.40.3=pyhd8ed1ab_0` have high entropy but are not secrets.
+    "environment.yaml",
+    "environment_policy_doctor.yaml",
+    "environment_mimicgen_torch2.yaml",
+    "environment_robocasa.yaml",
+
+    # Third-party vendored code — not our secrets to manage.
+    "third_party",
+]

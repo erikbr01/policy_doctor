@@ -1,0 +1,42 @@
+# Compose overlay — replaces the Let's Encrypt TLS stack with a Cloudflare Tunnel.
+#
+# With this overlay the traffic flow becomes:
+#
+#     Browser ──► Cloudflare edge (TLS) ──► cloudflared ──► proxy:80 (nginx)
+#                                                             ├─ study.* ──► survey:8501
+#                                                             └─  demo.* ──►   demo:8501
+#
+# Advantages of this approach:
+#   - No static external IP required (tunnel uses outbound-only connections)
+#   - No firewall ports need to be open on the host
+#   - TLS is handled at Cloudflare's edge — no cert management needed
+#   - Cloudflare Access can be layered on for participant gating
+#
+# Prerequisites — run once from any machine with cloudflared installed:
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create policy-doctor
+#   cloudflared tunnel route dns policy-doctor study.behavior-graphs.com
+#   cloudflared tunnel route dns policy-doctor  demo.behavior-graphs.com
+#
+# Then on the GCE host:
+#   1. cp deploy/cloudflared/config.yml.example deploy/cloudflared/config.yml
+#      and fill in TUNNEL_ID and your hostnames.
+#   2. Copy the <TUNNEL_ID>.json credentials file into deploy/cloudflared/
+#      (it is gitignored — never commit it).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
+#
+# Or via the launcher script:
+#   ./deploy/deploy_study_stack.sh --tunnel
+
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - proxy
