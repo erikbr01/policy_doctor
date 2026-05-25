@@ -215,34 +215,40 @@ You have been assigned to the condition with the behavior graph visualization.
 # STEP 1 — Introduction
 # ─────────────────────────────────────────────────────────────────────────────
 elif step == 1:
-    st.title("Study Introduction")
+    st.title("Your Mission")
 
     st.markdown("""
-### Background: How does the robot learn?
+### Your role
 
-Instead of programming the robot with explicit rules, we show it many examples of the task being done correctly.
-The robot learns a *policy* — a mapping from what it sees (camera images, joint positions) to what action to take next.
-
-This approach is called **Learning from Demonstrations (LfD)**.
+You are a **data designer** at a robotics company.
+Your robots are controlled by machine learning models trained on *expert demonstrations*:
+human data collectors teleoperate the robots to record example task executions.
 
 ### The task
 
-The robot must pick up an object from a table and transport it to a goal location.
-- ✓ **Success** — the object reaches the goal
-- ✗ **Failure** — the robot drops it, misses, or runs out of time
+Your latest project is a partnership with a **kendama toy manufacturer** who wants to automate
+the packing of their kendama toys. You need to train a robot policy to pick up and pack
+kendama toys reliably.
 
-### Your role
+To collect training data, you hired **two data-collection companies**:
 
-You will watch videos of the robot's current behavior and explore a **behavior graph** — an
-automatic grouping of the robot's movement patterns into labeled behavioral modes.
-Then you will allocate a **demo collection budget** across different data collection strategies.
+- **Company A** recorded demonstrations that pick up the kendama **in one continuous motion**.
+- **Company B** recorded demonstrations that pick up the kendama **in two steps** (a brief
+  intermediate re-grip before completing the lift).
 
-### About the behavior graph
+You trained a first policy on this combined dataset and ran it on the robot.
+Now you want to answer two questions:
 
-The behavior graph clusters the robot's rollouts into recurring movement patterns ("behaviors").
-Arrows in the graph show how often the robot transitions from one behavior to another, and which
-transitions tend to lead to success or failure.
-**You can click any node or edge** to see example video clips for that behavior or transition.
+1. **Which collection strategy is more robust** — Company A's one-shot lifts or Company B's
+   two-step lifts?
+2. **Where do you need more data** — which scenarios are causing the most failures?
+
+### How you'll explore the data
+
+You will watch videos of the robot and explore a **behavior graph** — an automatic grouping of
+the robot's movement patterns into labeled behavioral modes.
+Arrows show how often the robot transitions between behaviors and which transitions lead to
+success or failure. **You can click any node or edge** to see video clips for that behavior.
 """)
 
     limit_min = rollout_limit // 60

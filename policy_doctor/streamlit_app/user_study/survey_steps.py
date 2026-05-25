@@ -154,7 +154,6 @@ def render_rollout_timer(
             </script>
             """,
             height=72,
-            key=key,
         )
 
         if remaining <= 10:
