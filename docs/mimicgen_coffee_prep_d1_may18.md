@@ -5,6 +5,24 @@
 
 ---
 
+## Setup Cross-Check (May 24 v15 — verified against the four most recent commits)
+
+Before launching, confirmed the pipeline is consistent with the most recent fixes
+on `feat/mimicgen-trajectory-pipeline`:
+
+| Concern | Commit | Status in v15 |
+|---|---|---|
+| `seed_object_poses` were silently read from the SQUARE source HDF5, so coffee/kitchen/threading constraints fell through (`square_nut`/`square_peg` ≠ `mug`/`drawer`/...) and the mug ran free at full D1 | `9568637 fix: read seed_object_poses from prepared seed.hdf5 directly` + `b8a0210 docs+fix: round-3 seed_object_poses source-dataset bug` | ✅ v15 log shows `read seed_object_poses from prepared seed.hdf5: ['coffee_machine', 'coffee_pod', 'drawer', 'mug']` and per-seed `mug(x=[…], y=[…], z_rot=[…])` constraint windows — the ±40 mm / ±30° spec is actually being enforced. All earlier coffee_prep runs (v8 and prior) generated data with **no mug constraint**; that data has been deleted. |
+| Combined-arm trainer was loading the full source dataset (1000 demos) + N generated, defeating the few-shot baseline-vs-augmented comparison | `3e6f2f0 fix: combined arm trains on baseline subset + generated, not full source` (this branch — adds `max_original_demos` to `combine_hdf5_datasets`, wired from `baseline.max_train_episodes`) | ✅ v15's `combined.hdf5` should be `100 baseline + 100 generated = 200` demos. Verify per arm via `find $RD/mimicgen_budget_rep_sweep -name combined.hdf5 -exec h5ls -d {}/data \; \| wc -l`. (v14 incorrectly produced 1100/1029-demo files due to stale `__pycache__` from a prior pipeline launch — pyc cache nuked before v15.) |
+| Per-arm mimicgen datagen was writing to a shared output path, so every arm trained on essentially the same generated demos | `e6f3f18 fix: per-arm mimicgen datagen dir + --guarantee passthrough` (later obsoleted by EEF's `step_dir/output` isolation in `f2e42c9 restore: generate_mimicgen_demos + run_mimicgen_generate from EEF worktree`) | ✅ Each arm writes under `$RD/mimicgen_budget_rep_sweep/<arm_name>/generate_mimicgen_demos/output/seed_<i>/`. |
+| `task_spec` for non-square tasks was hardcoded to SQUARE (`subtask_term_signal="grasp"`) → `KeyError: 'grasp'` against coffee's `{mug_grasp, mug_place, drawer_open, pod_grasp}` signals | `7ea2bb9 fix: non-square task_spec + source_dataset_path for coffee_prep` (this branch) | ✅ v15 uses the env-interface template subtask spec for non-square tasks; first arm's log shows `signals=['mug_grasp', 'mug_place', 'drawer_open', 'pod_grasp', None]`. |
+
+**Invariant for the v15 run:** every arm trains on a 200-demo combined dataset
+(100 baseline + 100 mug-constrained generated). All earlier coffee_prep
+generation data has been deleted before this launch.
+
+---
+
 ## Run Commands (May 24 v13 — budget=100 only, random vs BG)
 
 ```bash
