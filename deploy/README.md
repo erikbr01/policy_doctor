@@ -528,20 +528,180 @@ gcloud compute ssh user-study-test --zone us-west1-a \
 
 ---
 
-## Every deploy (ongoing)
+## Pushing updates and making changes
+
+### Quick-reference by change type
+
+| What changed | Command |
+|---|---|
+| Python code (`policy_doctor/`) | `./deploy/push_deploy.sh --no-collect` |
+| Data (new MP4s, clusterings) | `./deploy/push_deploy.sh` (full) |
+| Session YAML (e.g. time limit) | `./deploy/push_deploy.sh` (full, YAML is baked into image) |
+| nginx config | `./deploy/push_deploy.sh --no-collect --no-build` |
+| Compose files / scripts | `./deploy/push_deploy.sh --no-collect --no-build --no-push` |
+| Password only | `./deploy/push_deploy.sh --set-password=newpassword` |
+| Env var (other) | SSH in + edit `.env` + `docker compose restart` |
+| Just restart stuck container | SSH in + `docker compose restart survey` |
+| Rollback to previous image | SSH in (see below) |
+
+---
+
+### Code change (Python / Streamlit)
+
+When you edit files under `policy_doctor/` or `third_party/`:
 
 ```bash
-# Full rebuild — collect artifacts, build, push, sync, restart:
-VM_NAME=user-study-test ./deploy/push_deploy.sh
-
-# Code-only change (artifacts already bundled):
+# Artifacts (clusterings, MP4s) are already bundled — skip collect.
+# This rebuilds the image, pushes it, and restarts the stack.
 VM_NAME=user-study-test ./deploy/push_deploy.sh --no-collect
+```
 
-# Update password only (no image rebuild — done in ~10 seconds):
+**What happens:** `push_deploy.sh` runs `docker build --platform linux/amd64`
+(takes 3–10 min depending on layer cache hits), pushes to Artifact Registry,
+tar-syncs the deploy folder, SSHes in, `docker pull`s the new image, tags it
+`policy-doctor-demo`, and restarts the stack.
+
+Use `--no-cache` if you suspect a stale pip install (forces full layer rebuild):
+```bash
+VM_NAME=user-study-test ./deploy/push_deploy.sh --no-collect --no-cache
+```
+
+---
+
+### Data change (new MP4s, clustering updates)
+
+When you add a new task, update rollout videos, or change clustering outputs:
+
+```bash
+# Full pipeline: collect artifacts → build → push → deploy.
+VM_NAME=user-study-test ./deploy/push_deploy.sh
+```
+
+`collect_artifacts.sh` re-rsyncs all data directories into `deploy/` before the
+build. If only one task changed you can still run the full collect — rsync skips
+unchanged files and the Docker layer cache means unchanged layers are not re-pushed.
+
+---
+
+### Deploy-config change (compose files, nginx, shell scripts)
+
+When you edit `docker-compose.yml`, `docker-compose.tunnel.yml`, nginx templates,
+or shell scripts — but the image itself hasn't changed:
+
+```bash
+# Skip build and push entirely — just sync the files and restart.
+VM_NAME=user-study-test ./deploy/push_deploy.sh --no-collect --no-build --no-push
+```
+
+**What happens:** The tar pipe syncs the updated scripts/configs to the VM,
+then SSHes in and runs `deploy_study_stack.sh --tunnel --no-collect --no-build`.
+Compose picks up any YAML changes on `up -d`.
+
+---
+
+### Password update
+
+```bash
 VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=newpassword
 ```
 
-`push_deploy.sh` flags:
+Takes ~10 seconds: no image rebuild, no file sync. It hashes the plaintext
+locally, SSHes in, `sed -i`s the `APP_PASSWORD_SHA256=` line in `~/deploy/.env`,
+and restarts the stack. If the variable doesn't exist yet it is appended.
+
+---
+
+### Other environment variable change
+
+Variables in `.env` are never touched by deploys. SSH in and edit them directly:
+
+```bash
+gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data
+
+# On the VM:
+nano ~/deploy/.env
+# Edit STUDY_DOMAIN, DEMO_DOMAIN, SURVEY_RESPONSES_DIR, etc.
+
+# Pick up the change:
+cd ~/deploy && docker compose -f docker-compose.yml -f docker-compose.tunnel.yml \
+    up -d --force-recreate
+```
+
+Only the containers that read the changed variable need recreating. If you only
+changed `DEMO_DOMAIN`, recreating `proxy` is enough:
+```bash
+cd ~/deploy && docker compose up -d --force-recreate proxy
+```
+
+---
+
+### Hotfix — restart a stuck container without rebuilding
+
+```bash
+gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data \
+    --command "cd ~/deploy && docker compose restart survey demo"
+```
+
+`restart` sends `SIGTERM` then `SIGKILL` to the container process and starts a
+new one from the existing image. Takes ~5 seconds. No image pull required.
+
+To restart the full stack (including the tunnel and proxy):
+```bash
+gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data \
+    --command "cd ~/deploy && bash deploy_study_stack.sh --tunnel --no-collect --no-build"
+```
+
+---
+
+### Rollback to a previous image
+
+Every push tags the image with both `latest` and the short git SHA. To roll back:
+
+```bash
+# Find the SHA you want to roll back to:
+gcloud artifacts docker images list \
+    us-west1-docker.pkg.dev/gcp-driven-data/policy-doctor/demo \
+    --include-tags
+
+# On the VM — pull the old SHA and retag it as the running image:
+gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data \
+    --command "
+        docker pull us-west1-docker.pkg.dev/gcp-driven-data/policy-doctor/demo:<old-sha>
+        docker tag  us-west1-docker.pkg.dev/gcp-driven-data/policy-doctor/demo:<old-sha> \
+                    policy-doctor-demo
+        cd ~/deploy && docker compose up -d --force-recreate survey demo
+    "
+```
+
+---
+
+### Checking what's running on the VM
+
+```bash
+# All containers + health status:
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'"
+
+# Tunnel connection logs:
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "cd ~/deploy && docker compose logs tunnel --tail=30"
+
+# App logs (survey or demo):
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "cd ~/deploy && docker compose logs demo --tail=50"
+
+# Which image version is running:
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "docker inspect policy-doctor-demo --format '{{.Id}} {{.RepoTags}}'"
+
+# Disk space:
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "df -h && docker system df"
+```
+
+---
+
+`push_deploy.sh` flags reference:
 
 | Flag | Effect |
 |------|--------|
