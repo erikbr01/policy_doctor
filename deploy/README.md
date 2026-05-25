@@ -2,39 +2,32 @@
 
 Two Streamlit apps are deployed from the same Docker image:
 
-For the ordered checklist of remaining work to ship to participants, see
-[DEPLOY_PLAN.md](DEPLOY_PLAN.md). This file is the **how-to reference**.
+| App | URL | Purpose |
+|-----|-----|---------|
+| **Survey app** | `https://study.behavior-graphs.com` | Participant-facing — randomly assigns Group A or B |
+| **Graph demo** | `https://demo.behavior-graphs.com` | Researcher-facing — graph explorer, sweep analysis, survey analytics |
 
----
-
-| App | URL (default) | Purpose |
-|-----|---------------|---------|
-| **Survey app** | `http://study.localhost` | Participant-facing — randomly assigns Group A or B; this is the URL you share |
-| **Graph demo** | `http://demo.localhost` | Researcher-facing — graph explorer + sweep analysis + survey analytics page |
-
-Both apps run as internal-only Docker services (no host port mapping). All
-traffic enters through an **nginx reverse proxy** which routes by subdomain
-to the right container.
-
-For production, ingress goes through a **Cloudflare Tunnel**
-(`docker-compose.tunnel.yml`): a `cloudflared` sidecar container opens an
-outbound-only connection to Cloudflare's edge, so no static IP, open firewall
-ports, or TLS certificate management is required.
-
-Survey responses are written to a Docker volume on the VM and can be
-retrieved at any time with `docker cp` (see [Response storage](#response-storage)).
+Both apps run as internal-only Docker services (no host port mapping). All traffic enters
+through an **nginx reverse proxy** that routes by subdomain. In production, ingress comes
+from a **Cloudflare Tunnel** sidecar: an outbound-only connection to Cloudflare's edge.
+No static IP, open firewall ports, or TLS certificate management is required.
 
 ```
 [ Browser ]
-      │  HTTPS (Cloudflare edge terminates TLS)
+      │  HTTPS  (Cloudflare edge terminates TLS — no cert needed on VM)
       ▼
-[ cloudflared sidecar ]  ← outbound tunnel, no open ports on host
+[ cloudflared container ]  ← outbound-only tunnel, zero open inbound ports
       │  HTTP
       ▼
-[ nginx proxy :80 ]
-   ├─ study.behavior-graphs.com ─►  survey  container :8501  (internal-only)
-   └─  demo.behavior-graphs.com ─►  demo    container :8501  (internal-only)
+[ nginx proxy :80 ]  (Docker-internal only — not reachable from internet directly)
+   ├─ study.behavior-graphs.com ──►  survey container :8501
+   └─  demo.behavior-graphs.com ──►    demo container :8501
 ```
+
+Survey responses are written as JSON files to a **persistent disk** (`/mnt/data/survey_responses`)
+that survives VM deletion. See [Response storage](#response-storage).
+
+For the ordered TODO checklist, see [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 
 ---
 
@@ -43,29 +36,526 @@ retrieved at any time with `docker cp` (see [Response storage](#response-storage
 ```
 deploy/
 ├── Dockerfile                    # Shared container image (survey + demo)
-├── docker-compose.yml            # Base stack: proxy + survey + demo (HTTP only)
-├── docker-compose.tunnel.yml     # Overlay: Cloudflare Tunnel sidecar (production)
+├── docker-compose.yml            # Base stack: proxy + survey + demo
+├── docker-compose.tunnel.yml     # Overlay: adds cloudflared sidecar (production)
 ├── cloudflared/
-│   └── config.yml.example        # Tunnel config template — copy to config.yml
+│   └── config.yml.example        # Tunnel config template — fill in TUNNEL_ID
 ├── nginx/
-│   └── templates/                # nginx config — envsubst'd at container start
-├── requirements.txt              # Python deps (includes google-cloud-storage)
-├── .env.example                  # Template for deployment environment variables
+│   └── templates/                # nginx virtual-host config (envsubst'd at startup)
+├── requirements.txt              # Python deps baked into the image
+├── .env.example                  # Template for all deployment env vars
 ├── collect_artifacts.sh          # Bundle code + clusterings + MP4s into deploy/
-├── deploy_study_stack.sh         # Build + launch all services via compose (on VM)
-├── create_vm.sh                  # One-time: create Debian VM with Docker CE + AR auth
-├── setup_data_disk.sh            # One-time: create + mount persistent data disk on VM
-├── push_deploy.sh                # Build + push image + sync deploy/ + restart stack
+├── deploy_study_stack.sh         # Build + launch the Compose stack on the VM
+├── create_vm.sh                  # One-time: provision Debian 12 VM with Docker + AR auth
+├── setup_data_disk.sh            # One-time: create + mount persistent data disk
+├── push_deploy.sh                # Build image → push to AR → sync deploy/ → restart stack
 ├── deploy_gcp_vm.sh              # Legacy: single-container COS deploy (policy-doctor-demo)
-├── deploy_gcp.sh                 # Cloud Run alternative
 └── sync_from_dev_and_deploy.sh
 ```
 
 ---
 
+## Step-by-step setup walkthrough
+
+This section documents **every step needed to go from zero to a live production deployment**.
+Follow it in order for a brand-new VM.
+
+---
+
+### Step 0 — Prerequisites
+
+You need these tools on your laptop:
+
+| Tool | Install | Purpose |
+|------|---------|---------|
+| `gcloud` CLI | [cloud.google.com/sdk](https://cloud.google.com/sdk/docs/install) | VM management, SSH, SCP |
+| `docker` + Docker Desktop | [docs.docker.com](https://docs.docker.com/get-docker/) | Build the image locally |
+| `cloudflared` | `brew install cloudflared` (macOS) | Create and manage the tunnel |
+
+Authenticate gcloud:
+```bash
+gcloud auth login
+gcloud config set project gcp-driven-data
+```
+
+---
+
+### Step 1 — Create the Cloudflare Tunnel
+
+A Cloudflare Tunnel is a long-lived outbound connection from your VM to Cloudflare's
+edge. Because it's outbound-only, the VM never needs to open any inbound firewall ports.
+Cloudflare holds the public DNS records and forwards HTTPS traffic down the tunnel.
+
+**This step runs once from any machine with `cloudflared` and a Cloudflare account.**
+
+#### 1a. Log in to Cloudflare
+
+```bash
+cloudflared tunnel login
+```
+
+This opens a browser OAuth flow. Select your Cloudflare account and authorise
+`behavior-graphs.com`. `cloudflared` writes a certificate to
+`~/.cloudflared/cert.pem` — this is your account credential for managing tunnels.
+
+#### 1b. Create the tunnel
+
+```bash
+cloudflared tunnel create policy-doctor
+```
+
+Output looks like:
+```
+Created tunnel policy-doctor with id a1b2c3d4-e5f6-...
+```
+
+Two files are written:
+- `~/.cloudflared/a1b2c3d4-e5f6-....json` — the **tunnel credentials JSON**. This
+  file authorises the `cloudflared` daemon to run *this specific tunnel*. Treat it
+  like a password — never commit it to git. It can be revoked at any time from the
+  Cloudflare dashboard.
+- The tunnel UUID (`a1b2c3d4-e5f6-...`) is the stable identifier you use everywhere.
+
+#### 1c. Create DNS records
+
+```bash
+cloudflared tunnel route dns policy-doctor study.behavior-graphs.com
+cloudflared tunnel route dns policy-doctor  demo.behavior-graphs.com
+```
+
+Each command creates a CNAME record in Cloudflare DNS:
+```
+study.behavior-graphs.com  CNAME  a1b2c3d4-e5f6-....cfargotunnel.com
+ demo.behavior-graphs.com  CNAME  a1b2c3d4-e5f6-....cfargotunnel.com
+```
+
+Cloudflare proxies both hostnames through the tunnel. TLS is terminated at the
+Cloudflare edge; the VM only ever sees plain HTTP.
+
+#### 1d. Fill in the config template
+
+On your laptop, in the repo:
+```bash
+cp deploy/cloudflared/config.yml.example deploy/cloudflared/config.yml
+```
+
+Edit `deploy/cloudflared/config.yml`:
+```yaml
+tunnel: a1b2c3d4-e5f6-...           # ← your tunnel UUID
+credentials-file: /etc/cloudflared/a1b2c3d4-e5f6-....json
+
+ingress:
+  - hostname: study.behavior-graphs.com
+    service: http://proxy:80
+  - hostname: demo.behavior-graphs.com
+    service: http://proxy:80
+  - service: http_status:404
+```
+
+`config.yml` is gitignored. Only `config.yml.example` (with the `<TUNNEL_ID>` placeholder)
+is committed.
+
+---
+
+### Step 2 — Create the GCE VM
+
+`create_vm.sh` provisions a **Debian 12** VM and fully configures it via a
+startup script. You never need to SSH in manually for this step.
+
+```bash
+VM_NAME=user-study-test ./deploy/create_vm.sh
+```
+
+**What the script does:**
+
+1. Writes a bash startup script to a temp file. This runs as `root` on first boot.
+2. Calls `gcloud compute instances create` with:
+   - `--image-family=debian-12` / `--image-project=debian-cloud`
+   - `--machine-type=e2-standard-2` (2 vCPU, 8 GB RAM — tunable at top of script)
+   - `--boot-disk-size=20GB` (OS + Docker images)
+   - `--scopes=cloud-platform` — grants the VM's service account access to
+     Artifact Registry (and other GCP APIs) via Application Default Credentials.
+     No credential files needed on the VM.
+   - `--metadata-from-file startup-script=<tmpfile>` — the startup script runs once.
+
+**What the startup script does (on the VM, runs as root):**
+
+1. Logs to `/var/log/vm-setup.log` so you can verify it completed:
+   ```bash
+   gcloud compute ssh user-study-test --zone us-west1-a \
+       --command "tail -f /var/log/vm-setup.log"
+   ```
+2. Installs **Docker CE** from Docker's official apt repo (not the older `docker.io`
+   distro package). Enables and starts `docker.service`.
+3. Adds all human users (UID 1000–65533) to the `docker` group so they can run
+   `docker` without `sudo`.
+4. Downloads `docker-credential-gcr` and writes `/etc/docker/config.json` with
+   the Artifact Registry credential helper so `docker pull` authenticates
+   automatically using the VM's service account.
+5. Installs `docker compose` (the v2 plugin).
+6. Creates `~/deploy/` and `~/deploy/cloudflared/` directories.
+
+**Verify the startup script completed:**
+```bash
+# Wait ~2 min after VM creation, then:
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "docker --version && docker compose version && echo OK"
+```
+Expected: `Docker version 27.x.x` and `Docker Compose version v2.x.x`.
+
+**Note on firewall rules:** No HTTP/HTTPS firewall rules are needed. The Cloudflare
+Tunnel uses outbound-only connections. SSH (tcp:22) is open by the GCP project's
+default rules and is needed for `gcloud compute ssh`.
+
+---
+
+### Step 3 — Create the persistent data disk
+
+Survey responses must survive VM deletion, OS re-imaging, or instance recreation.
+A separate **persistent disk** (independent of the boot disk) is the right tool:
+GCP never auto-deletes it, and it can be re-attached to any replacement VM.
+
+```bash
+VM_NAME=user-study-test ./deploy/setup_data_disk.sh
+```
+
+**What the script does, step by step:**
+
+1. **Creates the disk:**
+   ```bash
+   gcloud compute disks create policy-doctor-data \
+       --size=10GB --type=pd-standard --zone=us-west1-a
+   ```
+   10 GB is more than enough for JSON survey responses.
+
+2. **Attaches it to the VM:**
+   ```bash
+   gcloud compute instances attach-disk user-study-test \
+       --disk=policy-doctor-data --device-name=data-disk --zone=us-west1-a
+   ```
+
+3. **Disables auto-delete** (critical — this is what prevents accidental deletion):
+   ```bash
+   gcloud compute instances set-disk-auto-delete user-study-test \
+       --no-auto-delete --disk=policy-doctor-data --zone=us-west1-a
+   ```
+   With `auto-delete` off, deleting the VM with `gcloud compute instances delete`
+   will leave the disk intact. Verify at any time:
+   ```bash
+   gcloud compute instances describe user-study-test \
+       --zone=us-west1-a --format="value(disks[].autoDelete)"
+   # → false  false    (boot disk | data disk)
+   ```
+
+4. **Formats and mounts** (SSHes into the VM):
+   ```bash
+   # Detect the new block device (typically /dev/sdb or /dev/disk/by-id/...-data-disk)
+   sudo mkfs.ext4 -F /dev/disk/by-id/google-data-disk
+   sudo mkdir -p /mnt/data
+   sudo mount /dev/disk/by-id/google-data-disk /mnt/data
+   ```
+
+5. **Adds an fstab entry** so the disk auto-mounts on reboot:
+   ```
+   /dev/disk/by-id/google-data-disk  /mnt/data  ext4  defaults,nofail  0  2
+   ```
+   `nofail` means the VM still boots even if the disk is temporarily detached.
+
+6. **Creates the responses directory:**
+   ```bash
+   sudo mkdir -p /mnt/data/survey_responses
+   sudo chmod 777 /mnt/data/survey_responses
+   ```
+   `chmod 777` is required because the Docker containers run as root inside the
+   container but map to a non-root UID on the host. The wide permissions allow
+   the containers to write files without a `chown` dance.
+
+**Reattaching to a new VM later:**
+```bash
+gcloud compute instances attach-disk NEW_VM_NAME \
+    --disk=policy-doctor-data --zone=us-west1-a
+# Then SSH in and re-run the mount + fstab steps, or re-run setup_data_disk.sh
+# with CREATE_DISK=false (edit the variable at the top of the script).
+```
+
+---
+
+### Step 4 — Copy tunnel credentials to the VM
+
+`push_deploy.sh` handles this automatically on every run (it copies the credentials
+JSON at sync time, excluded from the main tarball). But on first setup you may want
+to do it manually:
+
+```bash
+# Find your tunnel UUID:
+cloudflared tunnel list
+
+# Copy the JSON:
+gcloud compute scp ~/.cloudflared/<TUNNEL_ID>.json \
+    user-study-test:~/deploy/cloudflared/ \
+    --zone us-west1-a --project gcp-driven-data
+```
+
+The file must be readable by the `cloudflared` container (it mounts
+`~/deploy/cloudflared/` as `/etc/cloudflared/:ro`).
+
+Also push your filled-in `config.yml` at this point if you haven't already:
+```bash
+gcloud compute scp deploy/cloudflared/config.yml \
+    user-study-test:~/deploy/cloudflared/config.yml \
+    --zone us-west1-a --project gcp-driven-data
+```
+
+---
+
+### Step 5 — Create `.env` on the VM
+
+The `.env` file is never committed to git and is never overwritten by deploys.
+Create it once directly on the VM:
+
+```bash
+gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data \
+    --command "printf 'STUDY_DOMAIN=study.behavior-graphs.com\nDEMO_DOMAIN=demo.behavior-graphs.com\nSURVEY_RESPONSES_DIR=/mnt/data/survey_responses\n' > ~/deploy/.env"
+```
+
+**All available variables:**
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STUDY_DOMAIN` | No | `study.localhost` | Hostname routed to the survey container |
+| `DEMO_DOMAIN` | No | `demo.localhost` | Hostname routed to the demo container |
+| `SURVEY_RESPONSES_DIR` | No | `./survey_responses` | Host path bind-mounted into both containers |
+| `APP_PASSWORD_SHA256` | No | *(open)* | SHA-256 hash of the graph-demo password |
+| `SURVEY_PASSWORD_SHA256` | No | *(open)* | SHA-256 hash of the survey app password |
+| `HTTP_PORT` | No | `80` | Host port the proxy binds (local testing only) |
+
+Docker Compose reads `.env` automatically from the same directory as
+`docker-compose.yml`. The file is loaded before container start, so a restart
+is needed to pick up changes.
+
+---
+
+### Step 6 — Set the demo password
+
+The graph-demo page is password-gated. `push_deploy.sh --set-password` hashes
+the plaintext password with SHA-256, SSHes in, and does a `sed -i` on just
+the `APP_PASSWORD_SHA256` line in `.env` — no full redeploy needed:
+
+```bash
+VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=bgproject26
+```
+
+**What it does:**
+1. Runs `printf '%s' "bgproject26" | sha256sum` locally to get the hash.
+2. SSHes into the VM.
+3. If `APP_PASSWORD_SHA256=...` exists in `~/deploy/.env`, replaces that line in-place
+   with `sed -i`. Otherwise appends it.
+4. Restarts the Compose stack (`deploy_study_stack.sh --tunnel --no-collect --no-build`).
+
+To generate a hash manually:
+```bash
+python3 -c "import hashlib; print(hashlib.sha256(b'bgproject26').hexdigest())"
+# or:
+printf '%s' 'bgproject26' | sha256sum
+```
+
+---
+
+### Step 7 — First full deploy
+
+```bash
+VM_NAME=user-study-test ./deploy/push_deploy.sh
+```
+
+`push_deploy.sh` runs five stages in sequence:
+
+#### Stage 1: Collect artifacts (`collect_artifacts.sh`)
+
+Copies everything the Docker build needs from the worktree into `deploy/`:
+- `policy_doctor/` Python source package
+- Clustering directories from `third_party/influence_visualizer/configs/<task>/`
+- MP4 rollout videos from `data/study_mp4s/<task>/` (with `index.json`)
+- `data/clusterings/` (data-support features)
+- `data/demo_sweep/` (sweep analysis results)
+- Kendama rollout MP4s (runs `cluster_kendama_rollouts.py` if not yet run)
+
+Bulky artifacts that the Streamlit app never loads (`clustering_models.pkl`,
+`embedding_models.pkl`, `joint_umap.joblib`) are excluded to keep the image small.
+
+Skip with `--no-collect` if you've already run this and only changed code.
+
+#### Stage 2: Build image (`docker build --platform linux/amd64`)
+
+```bash
+docker build --platform linux/amd64 \
+    -t us-west1-docker.pkg.dev/gcp-driven-data/policy-doctor/demo:latest \
+    -t us-west1-docker.pkg.dev/gcp-driven-data/policy-doctor/demo:<git-sha> \
+    deploy/
+```
+
+`--platform linux/amd64` is mandatory when building on an Apple Silicon Mac —
+GCE instances are always x86-64. Two tags are pushed: `latest` (for deploy) and
+the short git SHA (for rollback / audit trail).
+
+The Dockerfile:
+- Base: `python:3.10-slim`
+- Installs: `libgl1`, `libglib2.0-0`, `ffmpeg` (for video frame extraction)
+- Installs Python deps from `requirements.txt`
+- Copies `policy_doctor/`, `third_party/`, `data/` into the image
+- Sets `PYTHONPATH=/app`
+- Healthcheck: `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"` every 30 s (uses stdlib — no `curl` needed)
+
+#### Stage 3: Push to Artifact Registry
+
+```bash
+gcloud auth configure-docker us-west1-docker.pkg.dev
+docker push us-west1-docker.pkg.dev/.../demo:latest
+docker push us-west1-docker.pkg.dev/.../demo:<git-sha>
+```
+
+If the `policy-doctor` Artifact Registry repo doesn't exist yet, the script creates
+it automatically. The VM pulls from here using its service account (no credential
+files needed on the VM).
+
+#### Stage 4: Sync `deploy/` folder to the VM
+
+```bash
+tar -czf - -C deploy/ \
+    --exclude='.env' \
+    --exclude='cloudflared/*.json' \
+    --exclude='policy_doctor' \
+    --exclude='third_party' \
+    --exclude='data' \
+    --exclude='survey_responses' \
+    . \
+| gcloud compute ssh user-study-test --command "tar -xzf - -C ~/deploy"
+```
+
+A tar pipe over SSH is used instead of `gcloud compute scp` because `scp` doesn't
+support `--exclude`. The tarball contains scripts, nginx templates, and compose
+files — everything except:
+- `.env` — never overwritten; managed manually or via `--set-password`
+- `cloudflared/*.json` — credentials; copied separately below
+- `policy_doctor/`, `third_party/`, `data/` — baked into the Docker image, not needed on the VM host
+- `survey_responses/` — live data, never touched
+
+After the tar sync, the tunnel credentials JSON is copied separately:
+```bash
+gcloud compute ssh user-study-test --command \
+    "cat > ~/deploy/cloudflared/<TUNNEL_ID>.json" < ~/.cloudflared/<TUNNEL_ID>.json
+```
+
+#### Stage 5: Pull image + restart stack on the VM
+
+SSHes into the VM and runs:
+```bash
+# Configure the Artifact Registry credential helper for this user
+docker-credential-gcr configure-docker \
+    --registries=us-west1-docker.pkg.dev \
+    --include-artifact-registry
+
+# Pull new image and tag it with the local name Compose expects
+docker pull us-west1-docker.pkg.dev/.../demo:latest
+docker tag  us-west1-docker.pkg.dev/.../demo:latest policy-doctor-demo
+
+# Restart the full Compose stack with the tunnel sidecar
+cd ~/deploy
+bash deploy_study_stack.sh --tunnel --no-collect --no-build
+```
+
+`deploy_study_stack.sh --tunnel` uses two compose files:
+```bash
+docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.tunnel.yml \
+    up -d --remove-orphans
+```
+
+`docker-compose.tunnel.yml` adds a `cloudflared` service:
+```yaml
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - proxy
+```
+
+On startup, `cloudflared` reads `config.yml`, opens a TLS connection to
+`<TUNNEL_ID>.cfargotunnel.com`, and registers the tunnel with Cloudflare's edge.
+From that point all traffic for `study.behavior-graphs.com` and
+`demo.behavior-graphs.com` is forwarded by Cloudflare to `http://proxy:80` inside
+the Docker network.
+
+---
+
+### Step 8 — Verify the deployment
+
+```bash
+# Check all four containers are running (tunnel, proxy, survey, demo):
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "docker ps --format 'table {{.Names}}\t{{.Status}}'"
+
+# Check tunnel is connected (look for "Registered tunnel connection" log lines):
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "cd ~/deploy && docker compose logs tunnel --tail=20"
+
+# Check the apps are responding (from the VM):
+gcloud compute ssh user-study-test --zone us-west1-a \
+    --command "curl -fsS http://localhost:80/ -H 'Host: demo.behavior-graphs.com' | head -c 200"
+
+# From your browser: https://demo.behavior-graphs.com
+# Should prompt for a password.
+```
+
+---
+
+## Security posture
+
+| Surface | Status | Notes |
+|---------|--------|-------|
+| Inbound ports | **None open** | No GCP firewall rules open tcp:80 or tcp:443. The tunnel uses outbound-only connections. |
+| SSH (tcp:22) | Open to 0.0.0.0/0 | GCP project default. Required for `gcloud compute ssh`. Protected by OS Login / project SSH keys. |
+| Streamlit port 8501 | Not exposed | Containers use `expose` (Docker-internal), not `ports`. No host binding. |
+| `policy-doctor-http` tag | Removed | This tag opened tcp:8501 via `policy-doctor-allow-8501` firewall rule. Removed from `user-study-test` — only `policy-doctor-demo` (old single-container instance) keeps it. |
+| Cloudflare credentials JSON | Gitignored | Lives in `deploy/cloudflared/` on the VM. Not world-readable. Revocable from the Cloudflare dashboard. |
+| `.env` (passwords + domains) | Gitignored | Never committed, never overwritten by deploys. `chmod 600` recommended. |
+| Survey responses on disk | Persistent disk | Encrypted at rest by default (GCP). `chmod 777` on the directory is required for Docker-root container writes. |
+| Pre-commit secret scanning | `gitleaks` | `.pre-commit-config.yaml` runs `gitleaks protect --staged` on every commit. Allowlist in `.gitleaks.toml`. |
+
+---
+
+## Every deploy (ongoing)
+
+```bash
+# Full rebuild — collect artifacts, build, push, sync, restart:
+VM_NAME=user-study-test ./deploy/push_deploy.sh
+
+# Code-only change (artifacts already bundled):
+VM_NAME=user-study-test ./deploy/push_deploy.sh --no-collect
+
+# Update password only (no image rebuild — done in ~10 seconds):
+VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=newpassword
+```
+
+`push_deploy.sh` flags:
+
+| Flag | Effect |
+|------|--------|
+| `--no-collect` | Skip `collect_artifacts.sh` |
+| `--no-build` | Skip `docker build` (reuse existing image) |
+| `--no-push` | Skip Artifact Registry push |
+| `--no-cache` | Force full Docker layer rebuild |
+| `--set-password=<pw>` | Update `APP_PASSWORD_SHA256` in the VM's `.env` and restart stack; no image rebuild |
+
+---
+
 ## Local development (no Docker)
 
-Run either app directly from the worktree (no container, no artifact collection):
+Run either app directly from the worktree:
 
 ```bash
 conda activate policy_doctor
@@ -78,278 +568,77 @@ streamlit run policy_doctor/streamlit_app/demo_app/Home.py
 ```
 
 Both apps discover clusterings under `third_party/` and MP4s under `/tmp/study_mp4s/`.
-Leave `SURVEY_GCS_BUCKET` unset — responses are saved to `data/study_mp4s/<task>/study_responses/` locally.
 
 ---
 
-## Local Docker deploy — proxy + both apps
+## Local Docker deploy
 
 ```bash
-# 1. Bundle artifacts (re-run after any code/data change)
+# 1. Bundle artifacts
 ./deploy/collect_artifacts.sh
 
-# 2. Build + launch the proxy + both services
+# 2. Build + launch proxy + both services
 ./deploy/deploy_study_stack.sh
 ```
 
-After startup the proxy listens on port 80 and routes by subdomain:
-- **Survey app** → http://study.localhost  *(share this with participants)*
-- **Graph demo** → http://demo.localhost  *(researchers)*
+Proxy listens on port 80 and routes by subdomain:
+- **Survey** → `http://study.localhost`
+- **Demo** → `http://demo.localhost`
 
-### Local DNS for testing without a real domain
-
-`*.localhost` resolves to 127.0.0.1 on most modern systems out of the box. If
-your browser shows `DNS_PROBE_FINISHED_NXDOMAIN`, pick one of:
-
-1. **Edit `/etc/hosts`** (one line, persistent):
-   ```
-   127.0.0.1  study.localhost demo.localhost
-   ```
-2. **Use a wildcard DNS service** (no host-file edits, needs internet):
-   ```bash
-   # deploy/.env
-   STUDY_DOMAIN=study.lvh.me
-   DEMO_DOMAIN=demo.lvh.me
-   ```
-   `lvh.me` is a public DNS entry that always points at 127.0.0.1.
-
-If host port 80 is already taken, override `HTTP_PORT=8080` in `.env` — the
-launcher prints the right URL with the port suffix.
-
-### Running on a remote machine — SSH tunnel access
-
-When the proxy is bound to port 80 on a remote host that doesn't expose
-that port publicly, forward it over SSH and hit it from your laptop's
-browser. The browser still sends the right Host header, so nginx routes
-the request normally.
-
-```bash
-# On your laptop. (Use any unused local port; 8080 here.)
-ssh -L 8080:localhost:80 user@remote-host
+`*.localhost` resolves to 127.0.0.1 on most systems. If not, add to `/etc/hosts`:
 ```
+127.0.0.1  study.localhost demo.localhost
+```
+Or use `lvh.me` (public DNS → 127.0.0.1): set `STUDY_DOMAIN=study.lvh.me` etc. in `.env`.
 
-Then either:
-
-1. **Edit your laptop's `/etc/hosts`** (works against the default
-   `study.localhost` / `demo.localhost`):
-   ```
-   127.0.0.1  study.localhost demo.localhost
-   ```
-   Open `http://study.localhost:8080` and `http://demo.localhost:8080`.
-
-2. **Use `lvh.me`** (no host-file edit, requires changing
-   `STUDY_DOMAIN` / `DEMO_DOMAIN` in the remote's `.env` to `study.lvh.me`
-   / `demo.lvh.me` and restarting the proxy):
-   ```bash
-   # On remote, after editing .env:
-   cd deploy && docker compose up -d --force-recreate proxy
-   ```
-   Open `http://study.lvh.me:8080` and `http://demo.lvh.me:8080`.
-
-Browsing `http://localhost:8080` directly returns nothing — the proxy
-drops unknown Host headers (`return 444;`). You must hit one of the two
-subdomains. Tunneling is only for the developer testing themselves; real
-study URLs go through Cloudflare (see [Production deploy](#production-deploy--cloudflare-tunnel)).
-
-To stop: `docker compose -f deploy/docker-compose.yml down`
-
-Flags for `deploy_study_stack.sh`:
+`deploy_study_stack.sh` flags:
 
 | Flag | Effect |
 |------|--------|
-| `--no-collect` | Skip `collect_artifacts.sh` (faster rebuild after code-only changes) |
+| `--no-collect` | Skip artifact bundling |
 | `--no-build` | Reuse existing image |
 | `--no-cache` | Force full Docker rebuild |
-| `--tunnel` | Layer in `docker-compose.tunnel.yml` (requires `cloudflared/config.yml` — see [Production deploy](#production-deploy--cloudflare-tunnel)) |
-
----
-
-## Environment variables
-
-Copy `deploy/.env.example` to `deploy/.env` and fill in values.
-Docker Compose picks up `.env` automatically.
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `APP_PASSWORD_SHA256` | No | SHA-256 hash of the graph-demo password (omit = open) |
-| `SURVEY_PASSWORD_SHA256` | No | SHA-256 hash of the survey app password (omit = open) |
-| `STUDY_DOMAIN` | No | Hostname routed to the survey container (default `study.localhost`) |
-| `DEMO_DOMAIN` | No | Hostname routed to the demo container (default `demo.localhost`) |
-| `HTTP_PORT` | No | Host port the proxy binds for local HTTP testing (default `80`) |
-
-Generate a password hash:
-```bash
-python3 -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
-```
+| `--tunnel` | Add `docker-compose.tunnel.yml` (needs `cloudflared/config.yml`) |
 
 ---
 
 ## Response storage
 
-Survey responses are written as JSON files to a bind-mounted host path
-(`SURVEY_RESPONSES_DIR`). The default for local testing is `./survey_responses`
-(relative to the `deploy/` folder, gitignored).
+Survey responses are written as JSON files to the bind-mounted `SURVEY_RESPONSES_DIR`.
 
-In production, `SURVEY_RESPONSES_DIR` points at a **separate persistent disk**
-(`/mnt/data/survey_responses`) that is never auto-deleted when the VM is
-stopped, deleted, or recreated — see [Persistent disk setup](#persistent-disk-setup).
+- **Locally:** `./deploy/survey_responses/` (gitignored)
+- **Production:** `/mnt/data/survey_responses` on the persistent disk
 
-Retrieve responses at any time:
-
+Retrieve responses:
 ```bash
-# On the VM:
-ls /mnt/data/survey_responses/
-
 # From your laptop:
 gcloud compute scp --recurse \
-    policy-doctor-demo:/mnt/data/survey_responses ./responses \
+    user-study-test:/mnt/data/survey_responses ./local_responses \
     --zone us-west1-a --project gcp-driven-data
 ```
 
 Each file is named `group_{a|b}_{timestamp}_{participant_id}.json`.
 
-> The **Survey Analytics** page in the demo app requires GCS and will show
-> no data with local-volume storage.
-
 ---
 
-## Persistent disk setup
+## Persistent disk reference
 
-Run once from your local machine **before the first deployment**:
-
-```bash
-./deploy/setup_data_disk.sh
-```
-
-This creates a `policy-doctor-data` persistent disk (10 GB, pd-standard),
-attaches it to the VM with `--no-auto-delete`, formats it as ext4, mounts
-it at `/mnt/data`, and adds an fstab entry so it remounts automatically on
-reboot.
-
-Then add to `~/deploy/.env` on the VM:
-```
-SURVEY_RESPONSES_DIR=/mnt/data/survey_responses
-```
-
-**Key properties of the disk:**
-- `--no-auto-delete` means the disk is **never deleted** when the VM is
-  deleted — you can reattach it to a replacement VM with:
-  ```bash
-  gcloud compute instances attach-disk NEW_VM_NAME \
-      --disk=policy-doctor-data --zone=us-west1-a --no-auto-delete
-  ```
-- The disk is independent of the boot disk, so OS re-imaging or VM recreation
-  doesn't touch your data.
-- To verify `auto-delete` is off at any time:
-  ```bash
-  gcloud compute instances describe policy-doctor-demo \
-      --zone=us-west1-a --format="value(disks[].autoDelete)"
-  ```
-
----
-
-## Production deploy — Cloudflare Tunnel
-
-The recommended production setup uses a Cloudflare Tunnel instead of
-Let's Encrypt. Advantages:
-
-- **No static external IP required** — the tunnel uses outbound-only connections
-- **No open firewall ports** — you can remove (or never add) tcp:80/443 GCP rules
-- **No cert management** — TLS is terminated at Cloudflare's edge automatically
-- **Free DDoS protection and Cloudflare Access** (optional participant gating)
-
-### One-time tunnel setup (run from any machine with `cloudflared`)
-
-Install `cloudflared` if needed:
-```bash
-# macOS
-brew install cloudflared
-
-# Linux (Debian/Ubuntu)
-curl -L https://pkg.cloudflare.com/cloudflare-main.gpg \
-  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] \
-  https://pkg.cloudflare.com/cloudflared any main' \
-  | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt update && sudo apt install cloudflared
-```
-
-Create the tunnel and DNS records:
-```bash
-cloudflared tunnel login
-cloudflared tunnel create policy-doctor
-cloudflared tunnel route dns policy-doctor study.behavior-graphs.com
-cloudflared tunnel route dns policy-doctor  demo.behavior-graphs.com
-```
-
-`tunnel create` prints a **tunnel UUID** and writes a credentials JSON to
-`~/.cloudflared/<TUNNEL_ID>.json`. Copy both to the GCE host (see below).
-
-### Fresh VM — end-to-end checklist
-
-Run these once, in order, for a brand-new VM:
+The `policy-doctor-data` disk is attached to `user-study-test` with `auto-delete=false`.
 
 ```bash
-# 1. Create the VM (Debian 12, Docker CE, Artifact Registry auth pre-configured):
-VM_NAME=user-study-test ./deploy/create_vm.sh
-# Wait ~2 min for the startup script to finish, then confirm:
-gcloud compute ssh user-study-test --zone us-west1-a \
-    --command "docker --version && docker compose version"
+# Verify auto-delete is still off:
+gcloud compute instances describe user-study-test \
+    --zone=us-west1-a --format="value(disks[].autoDelete)"
+# → false  false
 
-# 2. Create and mount the persistent data disk (survives VM deletion):
-VM_NAME=user-study-test ./deploy/setup_data_disk.sh
-
-# 3. Copy the tunnel credentials JSON to the VM:
-gcloud compute scp ~/.cloudflared/<TUNNEL_ID>.json \
-    user-study-test:~/deploy/cloudflared/ \
-    --zone us-west1-a --project gcp-driven-data
-# Also fill in deploy/cloudflared/config.yml from config.yml.example and push it.
-
-# 4. Create .env on the VM:
-gcloud compute ssh user-study-test --zone us-west1-a --project gcp-driven-data \
-    --command "printf 'STUDY_DOMAIN=study.behavior-graphs.com\nDEMO_DOMAIN=demo.behavior-graphs.com\nSURVEY_RESPONSES_DIR=/mnt/data/survey_responses\n' > ~/deploy/.env"
-
-# 5. Set the demo password:
-VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=bgproject26
-
-# 6. First full deploy (collect + build + push + start stack):
-VM_NAME=user-study-test ./deploy/push_deploy.sh
+# Re-attach to a new VM after VM recreation:
+gcloud compute instances attach-disk NEW_VM_NAME \
+    --disk=policy-doctor-data --zone=us-west1-a
+# Then SSH in and mount:
+gcloud compute ssh NEW_VM_NAME --zone=us-west1-a \
+    --command "sudo mount /dev/disk/by-id/google-data-disk /mnt/data"
+# (fstab entry from setup_data_disk.sh handles this automatically on subsequent reboots)
 ```
-
-### Every deploy
-
-```bash
-VM_NAME=user-study-test ./deploy/push_deploy.sh
-```
-
-This collects artifacts, builds a `linux/amd64` image, pushes it to Artifact
-Registry, syncs the `deploy/` folder (excluding `.env` and credentials) to the
-VM, pulls the new image, and restarts the Compose stack with the tunnel sidecar.
-
-### Updating the running deployment
-
-```bash
-# Full rebuild (collect + build + push + deploy):
-VM_NAME=user-study-test ./deploy/push_deploy.sh
-
-# Code-only change (artifacts already bundled):
-VM_NAME=user-study-test ./deploy/push_deploy.sh --no-collect
-
-# Update only the demo password (no image rebuild):
-VM_NAME=user-study-test ./deploy/push_deploy.sh --set-password=newpassword
-```
-
-`push_deploy.sh` flags:
-
-| Flag | Effect |
-|------|--------|
-| `--no-collect` | Skip `collect_artifacts.sh` (faster when only code changed) |
-| `--no-build` | Reuse last-built image (skip `docker build`) |
-| `--no-push` | Skip Artifact Registry push (re-deploy already-pushed image) |
-| `--no-cache` | Force full Docker layer rebuild |
-| `--set-password=<pw>` | Hash the password, update `APP_PASSWORD_SHA256` in the VM's `.env`, restart stack — no image rebuild |
-
-The `.env` on the VM is **never overwritten** by a normal deploy (excluded from the sync tarball). Use `--set-password` or SSH in to change individual variables.
 
 ---
 
@@ -359,36 +648,15 @@ Each study session is a YAML file at
 `policy_doctor/configs/user_study/sessions/<name>.yaml`:
 
 ```yaml
-label: "Transport MH (Jan 28)"           # Display name in the session picker
+label: "Transport MH (Jan 28)"
 mp4_dir: /tmp/study_mp4s/transport_mh_jan28
 study_config: policy_doctor/configs/user_study/transport_mh_jan28.yaml
 clustering_dir: third_party/influence_visualizer/configs/transport_mh_jan28/clustering/...
-rollout_time_limit_seconds: 600          # Timer for the Rollout Info step (default: 600 = 10 min)
+rollout_time_limit_seconds: 600
 ```
 
-Changing `rollout_time_limit_seconds` only requires re-running `collect_artifacts.sh`
-and rebuilding the image — no code changes.
-
----
-
-## Artifact collection
-
-`collect_artifacts.sh` copies everything the Docker build needs into `deploy/`:
-
-```bash
-./deploy/collect_artifacts.sh
-```
-
-It syncs:
-- `policy_doctor/` source package
-- All clustering directories for the configured tasks
-- MP4 rollout videos (`data/study_mp4s/<task>/`) and their `index.json` files
-- `data/clusterings/` (data-support features for the graph demo)
-- `data/demo_sweep/` (sweep analysis results)
-
-Re-run it whenever you add a new task, change clusterings, or add MP4s.
-It excludes bulky artifacts (`clustering_models.pkl`, `joint_umap.joblib`) to keep
-the image small.
+Changing `rollout_time_limit_seconds` requires re-collecting and rebuilding the image;
+no code changes.
 
 ---
 
@@ -396,37 +664,41 @@ the image small.
 
 1. Add a session YAML: `policy_doctor/configs/user_study/sessions/<task>.yaml`
 2. Add a study config: `policy_doctor/configs/user_study/<task>.yaml`
-   (defines strategies, budget, allocation_step)
 3. Place MP4s + `index.json` under `data/study_mp4s/<task>/`
 4. For Group B: place clustering data under `third_party/influence_visualizer/configs/<task>/clustering/`
-5. Add `<task>` to the `TASKS` array in `collect_artifacts.sh`
-6. Re-collect + rebuild: `./deploy/deploy_study_stack.sh`
+5. Add `<task>` to `TASKS` in `collect_artifacts.sh`
+6. Re-collect + rebuild: `./deploy/push_deploy.sh`
 
 ---
 
 ## Troubleshooting
 
-**`DNS_PROBE_FINISHED_NXDOMAIN` in the browser locally**
-- `*.localhost` may not resolve automatically on every system
-- Either add `127.0.0.1 study.localhost demo.localhost` to `/etc/hosts`,
-  or set `STUDY_DOMAIN=study.lvh.me DEMO_DOMAIN=demo.lvh.me` in `deploy/.env`
+**Containers show `(unhealthy)` in `docker ps`**
+- The healthcheck polls `http://localhost:8501/_stcore/health` every 30 s with a
+  20 s grace period on startup. It uses `python -c urllib...` (no `curl` needed).
+- If unhealthy after >2 min, check logs: `docker compose logs demo`
 
-**Subdomains not reachable on GCP (tunnel setup)**
-- Check the tunnel container is running and connected: `docker compose logs tunnel`
-- A `registered` log line means the tunnel is up; if you see `failed to connect`, verify the credentials JSON and config.yml are in `deploy/cloudflared/` and the tunnel ID matches
-- Confirm Cloudflare DNS records exist: `cloudflared tunnel info policy-doctor`
+**`DNS_PROBE_FINISHED_NXDOMAIN` in the browser (local)**
+- Add `127.0.0.1 study.localhost demo.localhost` to `/etc/hosts`, or
+  set `STUDY_DOMAIN=study.lvh.me DEMO_DOMAIN=demo.lvh.me` in `.env`
 
-**Proxy logs show errors / `502 Bad Gateway` from nginx**
-- Check the proxy logs: `docker compose logs proxy`
+**Subdomains not reachable in production**
+- Check tunnel container: `docker compose logs tunnel --tail=30`
+- `Registered tunnel connection` = tunnel is up
+- `failed to connect` = credentials JSON or `config.yml` missing/wrong tunnel ID
+- Verify DNS: `cloudflared tunnel info policy-doctor` — should show two CNAME routes
 
-**`502 Bad Gateway` from the proxy**
-- The streamlit container probably crashed — `docker compose logs survey` / `demo`
-- After a fix: `docker compose restart survey demo` (no need to rebuild)
+**`502 Bad Gateway` from nginx**
+- Survey/demo container crashed: `docker compose logs survey` or `docker compose logs demo`
+- Quick restart without rebuild: `docker compose restart survey demo`
 
 **`collect_artifacts.sh` fails on a task**
 - Verify `data/study_mp4s/<task>/index.json` exists
-- Verify the clustering directory path matches the session YAML
+- Verify the clustering directory path in the session YAML is correct
+
+**`push_deploy.sh` fails at `collect_artifacts.sh` but `deploy/data/` already exists**
+- Use `--no-collect` to skip re-bundling: `./deploy/push_deploy.sh --no-collect`
 
 **Survey app always shows Group A (or B)**
-- Group assignment is random per session, stored in `st.session_state`
-- Each new browser session (or incognito window) gets a fresh random assignment
+- Group assignment is random per browser session (`st.session_state`)
+- Each new incognito window gets a fresh random assignment
