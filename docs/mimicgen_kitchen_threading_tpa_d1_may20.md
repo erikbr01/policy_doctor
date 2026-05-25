@@ -318,6 +318,36 @@ Launch attempts revealed several issues:
 6. **Mid-debug regression**: at one point I "loosened" z_rot to `[-1.047, 1.047]` (±π/3). That's the wrong direction — wider range = harder MimicGen replay, worse success. Reverted.
 7. **HDF5 file-lock + b-tree corruption from concurrent test runs on shared `seed.hdf5`** — investigating z_rot's effect by running multiple `prepare_src_dataset` calls in parallel on the same seed file corrupted it (b-tree "duplicate key", "negative link count"). Resolved by clearing `select_mimicgen_seed/` for every arm so seeds regenerate cleanly; also exported `HDF5_USE_FILE_LOCKING=FALSE` in test scripts.
 
+### Round-3 (2026-05-25): the `seed_object_poses` source-dataset bug
+
+After resolving every subtask/config issue in round-2, MimicGen still hit ~0% success on kitchen with bread perturbed even ±4cm x/y. Diagnosis (via inspecting CLI args of running mimicgen subprocesses):
+
+```
+[run_mimicgen_generate] constrained object poses on Kitchen_D1:
+  square_nut(x=-0.024(pinned), y=-0.001(pinned), z_rot=2.786(pinned));
+  square_peg(x=0.100(pinned), y=-0.082(pinned), z_rot=0.000(pinned))
+```
+
+Kitchen has no `square_nut`/`square_peg` — those are the square task's objects. The script was silently constraining **non-existent objects** in the kitchen env, so the constraint did nothing and bread sampled across the full D1 random range (`x ∈ (-0.2, 0.0), y ∈ (-0.25, -0.05), z_rot ∈ (-π/2, π/2)`) — guaranteeing ~0% replay success.
+
+**Root cause** (3 layers):
+
+1. **Hardcoded square default**: `_DEFAULT_SOURCE_DATASET = "data/source/mimicgen/core_datasets/square/demo_src_square_task_D1/demo.hdf5"` in `generate_mimicgen_demos.py:85`. None of the kitchen/threading/TPA yamls override `mimicgen_datagen.source_dataset_path` → this default kicks in.
+
+2. **Wrong fallback target**: when `seed.hdf5` (from `select_mimicgen_seed`) lacks `datagen_info`, the pipeline step falls back to reading object poses from the SOURCE dataset. But source object poses are from a SOURCE demo, not the rollout being seeded. For square's source happened to share object names with square's env, so the bug was invisible there.
+
+3. **`prepare_src_dataset` is run by the subprocess ANYWAY**: line 192 of `run_mimicgen_generate.py` calls `prepare_src_dataset(seed_hdf5, …)` before constraint application. After this, `seed.hdf5` HAS `datagen_info/object_poses` — those are the correct rollout-state poses. The pre-computation in the pipeline step was unnecessary AND wrong.
+
+**Fix (commits `6f79de3` + `6012904` + this one):**
+
+- Set `mimicgen_datagen.source_dataset_path: data/source/mimicgen/core_datasets/<task>_d1/demo.hdf5` in all three may20 experiment yamls (defensive: future code paths that read from source get the right file).
+- `run_mimicgen_generate.py`: read `seed_object_poses` directly from prepared `seed.hdf5` (after the subprocess's own `prepare_src_dataset` runs). CLI `--seed_object_poses` kept as a fallback for legacy callers, with a WARNING.
+- `generate_mimicgen_demos.py`: stop pre-computing `seed_object_poses` from a source dataset. Pass only `--object_pose_ranges` to the subprocess.
+
+**Aborted detour**: tried to fix by running `prepare_src_dataset` once on the kitchen source HDF5 (1000 demos × ~2s each = ~33 min). Killed mid-way once we realized source-dataset poses are not the same as rollout-seed poses — fixing the read-path was the right fix, not running prepare on the source.
+
+Aside: the killed `prepare_src_dataset` left `kitchen_d1/demo.hdf5` in a corrupted state (`Unable to open object (len not positive after adjustment for EOA)`). The new code doesn't read from this file, but if any other downstream code does, the file would need to be restored.
+
 ### Code fixes committed during the re-run (branch `feat/mimicgen-trajectory-pipeline`)
 
 | Commit | Description |
