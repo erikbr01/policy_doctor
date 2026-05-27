@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import pathlib
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TYPE_CHECKING, TypeVar
 
 from omegaconf import DictConfig, OmegaConf
 
 from policy_doctor.paths import REPO_ROOT
+
+if TYPE_CHECKING:
+    from policy_doctor.experiment import Experiment
 
 T = TypeVar("T")
 
@@ -35,14 +38,20 @@ class PipelineStep(ABC, Generic[T]):
     Args:
         cfg:            Hydra config for the pipeline run.
         run_dir:        Directory this step writes its results into.
-                        For top-level steps this is the pipeline run root.
-                        For steps inside a :class:`CompositeStep` this is the
-                        composite's ``step_dir``, so results are namespaced
-                        under ``<run_root>/<composite_name>/<step_name>/``.
+                        For top-level steps this is the pipeline run root
+                        (typically ``experiment.artifacts_dir``).  For steps
+                        inside a :class:`CompositeStep` this is the composite's
+                        ``step_dir``, so results are namespaced under
+                        ``<artifacts_dir>/<arm_name>/<step_name>/``.
         parent_run_dir: Top-level pipeline run root.  Used by steps that need
                         to read results from *sibling* top-level steps (e.g.
                         ``SelectMimicgenSeedStep`` reading ``RunClusteringStep``).
                         Defaults to *run_dir* for top-level steps.
+        experiment:     The :class:`Experiment` this step runs inside, if any.
+                        When set, steps can reach the shared baseline checkpoint
+                        via ``self.experiment.shared_dir`` and write config
+                        snapshots via ``self.experiment.append_config_snapshot``.
+                        ``None`` for legacy callers that still use raw run_dirs.
     """
 
     name: str  # must be set by every concrete subclass
@@ -52,11 +61,14 @@ class PipelineStep(ABC, Generic[T]):
         cfg: DictConfig,
         run_dir: pathlib.Path,
         parent_run_dir: Optional[pathlib.Path] = None,
+        *,
+        experiment: Optional["Experiment"] = None,
     ) -> None:
         self.cfg = cfg
         self.run_dir = run_dir
         self.parent_run_dir = parent_run_dir if parent_run_dir is not None else run_dir
         self.step_dir = run_dir / self.name
+        self.experiment = experiment
 
     # ------------------------------------------------------------------
     # Properties derived from config
@@ -190,7 +202,12 @@ class CompositeStep(PipelineStep[dict]):
 
         results: dict = {}
         for cls in self.sub_step_classes:
-            step = cls(sub_cfg, sub_run_dir, parent_run_dir=parent_run_dir)
+            step = cls(
+                sub_cfg,
+                sub_run_dir,
+                parent_run_dir=parent_run_dir,
+                experiment=self.experiment,
+            )
             result = step.run(skip_if_done=True)
             results[cls.name] = result
 

@@ -112,6 +112,28 @@ Format per entry:
 
 **Plan impact:** none. Next Phase-2 commit will be the PipelineStep base-class refactor.
 
+---
+
+## 2026-05-27 — Phase 2 — CurationPipeline ↔ Experiment bridge
+
+**Context:** Wire the new `Experiment` module into the orchestrator without breaking the existing run_dir-driven pipeline.
+
+**Finding:**
+- `PipelineStep.__init__` gained an optional `experiment: Experiment | None` kwarg (TYPE_CHECKING import avoids a circular). All other shape unchanged — existing callers keep working.
+- `CompositeStep.compute` forwards `experiment=self.experiment` to sub-steps so arm sub-steps see the same Experiment.
+- `CurationPipeline.__init__` branches on `cfg.experiment_name`:
+  - If set: creates or resumes the Experiment, sets `run_dir = experiment.artifacts_dir`, mirrors back into `cfg.run_dir` so steps that read `cfg.run_dir` stay consistent. `baseline_from` from config propagates to `Experiment.create`.
+  - If not set: legacy `run_name` → `data/pipeline_runs/<run_name>` path is unchanged.
+- `_save_config` branches the same way: experiment path appends a snapshot via `experiment.append_config_snapshot`; legacy path writes the single `pipeline_config.yaml`.
+- `run()` and `step()` pass `experiment=self.experiment` to every step constructor.
+- 5 new pipeline-integration tests cover experiment-create, experiment-resume, snapshot-append, legacy-runtime, baseline-from propagation. 32/32 tests pass in 0.92s.
+
+**Decision / action:**
+- Steps don't *use* `self.experiment` yet — they still construct paths from `run_dir`. That's fine — the bridge is in place, migration of individual step path-construction logic comes next.
+- The next big chunk is stripping `train_date`/`eval_date` from `policy_doctor/curation_pipeline/paths.py` (5 `get_*` functions) and the 30+ places that call them. That deserves its own commit.
+
+**Plan impact:** none.
+
 **Context:** First Phase-1 milestone — establish a uv-managed `analysis` env and prove the goldens reproduce inside it.
 
 **Finding:**

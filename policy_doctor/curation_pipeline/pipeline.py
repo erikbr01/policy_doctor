@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Type
 from omegaconf import DictConfig, OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
+from policy_doctor.experiment import Experiment, experiment_dir
 from policy_doctor.paths import PACKAGE_ROOT, REPO_ROOT
 
 _REPO_ROOT = REPO_ROOT
@@ -239,21 +240,41 @@ class CurationPipeline:
         if not OmegaConf.select(cfg, "repo_root"):
             OmegaConf.update(cfg, "repo_root", str(_REPO_ROOT), merge=True)
 
-        # Resolve run_name
-        run_name = OmegaConf.select(cfg, "run_name")
-        if not run_name:
-            run_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            OmegaConf.update(cfg, "run_name", run_name, merge=True)
+        # New experiment-centric path: cfg.experiment_name (or alias cfg.experiment
+        # when not a Hydra group) creates/resumes a self-contained Experiment.
+        # Legacy path: cfg.run_name + cfg.run_dir constructs an ad-hoc run dir.
+        experiment_name = OmegaConf.select(cfg, "experiment_name")
 
-        # Resolve run_dir
-        run_dir_str = OmegaConf.select(cfg, "run_dir")
-        if not run_dir_str:
-            run_dir_str = f"data/pipeline_runs/{run_name}"
-            OmegaConf.update(cfg, "run_dir", run_dir_str, merge=True)
+        self.experiment: Optional[Experiment] = None
+        if experiment_name:
+            if experiment_dir(experiment_name).is_dir():
+                self.experiment = Experiment.load(experiment_name)
+            else:
+                baseline_from = OmegaConf.select(cfg, "baseline_from")
+                self.experiment = Experiment.create(
+                    experiment_name,
+                    baseline_from=baseline_from,
+                )
+            run_dir = self.experiment.artifacts_dir
+            # Mirror the experiment's chosen layout back into cfg so downstream
+            # steps reading cfg.run_dir get a path consistent with the Experiment.
+            OmegaConf.update(cfg, "run_dir", str(run_dir), merge=True)
+        else:
+            # Resolve run_name (legacy path)
+            run_name = OmegaConf.select(cfg, "run_name")
+            if not run_name:
+                run_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                OmegaConf.update(cfg, "run_name", run_name, merge=True)
 
-        run_dir = pathlib.Path(run_dir_str)
-        if not run_dir.is_absolute():
-            run_dir = pathlib.Path(OmegaConf.select(cfg, "repo_root")) / run_dir
+            # Resolve run_dir (legacy path)
+            run_dir_str = OmegaConf.select(cfg, "run_dir")
+            if not run_dir_str:
+                run_dir_str = f"data/pipeline_runs/{run_name}"
+                OmegaConf.update(cfg, "run_dir", run_dir_str, merge=True)
+
+            run_dir = pathlib.Path(run_dir_str)
+            if not run_dir.is_absolute():
+                run_dir = pathlib.Path(OmegaConf.select(cfg, "repo_root")) / run_dir
 
         self.cfg: DictConfig = cfg
         self.run_dir: pathlib.Path = run_dir
@@ -288,7 +309,9 @@ class CurationPipeline:
         results: Dict[str, Any] = {}
         for step_name in steps:
             print(f"\n[Pipeline] ── {step_name}")
-            step = registry[step_name](self.cfg, self.run_dir)
+            step = registry[step_name](
+                self.cfg, self.run_dir, experiment=self.experiment
+            )
             results[step_name] = step.run(skip_if_done=skip_if_done)
 
         return results
@@ -298,13 +321,21 @@ class CurationPipeline:
         registry = _build_step_registry()
         if name not in registry:
             raise ValueError(f"Unknown step: {name!r}. Valid: {ALL_STEPS}")
-        return registry[name](self.cfg, self.run_dir)
+        return registry[name](self.cfg, self.run_dir, experiment=self.experiment)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _save_config(self) -> None:
+        # Experiment path: append a Hydra-invocation snapshot to the
+        # append-only audit log under <experiment>/config/.
+        if self.experiment is not None:
+            resolved = OmegaConf.to_container(self.cfg, resolve=True)
+            self.experiment.append_config_snapshot(resolved)
+            return
+
+        # Legacy path: drop a single pipeline_config.yaml in run_dir.
         config_path = self.run_dir / "pipeline_config.yaml"
         if not config_path.exists():
             OmegaConf.save(self.cfg, config_path)
