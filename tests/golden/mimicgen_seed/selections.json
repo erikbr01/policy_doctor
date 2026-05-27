@@ -1,0 +1,590 @@
+{
+  "behavior_graph_path": [
+    {
+      "info": {
+        "all_eligible_rollouts": [
+          1,
+          4,
+          5,
+          6
+        ],
+        "heuristic": "behavior_graph_path",
+        "selected_cluster_seq": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_path": [
+          -2,
+          0,
+          1,
+          2,
+          3,
+          -4
+        ],
+        "selected_path_prob": 0.5,
+        "top_paths": [
+          {
+            "cluster_seq": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              1,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.5,
+            "rollout_idxs": [
+              1,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              4,
+              2,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              4,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.375,
+            "rollout_idxs": [
+              0,
+              2,
+              7
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              1,
+              5,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              1,
+              5,
+              3,
+              -4
+            ],
+            "path_prob": 0.125,
+            "rollout_idxs": [
+              3
+            ]
+          }
+        ]
+      },
+      "rollout_idx": 6
+    },
+    {
+      "info": {
+        "all_eligible_rollouts": [
+          1,
+          4,
+          5,
+          6
+        ],
+        "heuristic": "behavior_graph_path",
+        "selected_cluster_seq": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_path": [
+          -2,
+          0,
+          1,
+          2,
+          3,
+          -4
+        ],
+        "selected_path_prob": 0.5,
+        "top_paths": [
+          {
+            "cluster_seq": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              1,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.5,
+            "rollout_idxs": [
+              1,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              4,
+              2,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              4,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.375,
+            "rollout_idxs": [
+              0,
+              2,
+              7
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              1,
+              5,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              1,
+              5,
+              3,
+              -4
+            ],
+            "path_prob": 0.125,
+            "rollout_idxs": [
+              3
+            ]
+          }
+        ]
+      },
+      "rollout_idx": 5
+    },
+    {
+      "info": {
+        "all_eligible_rollouts": [
+          1,
+          4,
+          5,
+          6
+        ],
+        "heuristic": "behavior_graph_path",
+        "selected_cluster_seq": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_path": [
+          -2,
+          0,
+          1,
+          2,
+          3,
+          -4
+        ],
+        "selected_path_prob": 0.5,
+        "top_paths": [
+          {
+            "cluster_seq": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              1,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.5,
+            "rollout_idxs": [
+              1,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              4,
+              2,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              4,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.375,
+            "rollout_idxs": [
+              0,
+              2,
+              7
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              1,
+              5,
+              3
+            ],
+            "has_match": true,
+            "path": [
+              -2,
+              0,
+              1,
+              5,
+              3,
+              -4
+            ],
+            "path_prob": 0.125,
+            "rollout_idxs": [
+              3
+            ]
+          }
+        ]
+      },
+      "rollout_idx": 4
+    }
+  ],
+  "diversity": [
+    {
+      "info": {
+        "heuristic": "diversity",
+        "pass": 0,
+        "selected_cluster_seq": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_path": [
+          -2,
+          0,
+          1,
+          2,
+          3,
+          -4
+        ],
+        "selected_path_prob": 0.5,
+        "top_paths": [
+          {
+            "cluster_seq": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              1,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.5,
+            "rollout_idxs": [
+              1,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              4,
+              2,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              4,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.375,
+            "rollout_idxs": [
+              0,
+              2,
+              7
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              1,
+              5,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              1,
+              5,
+              3,
+              -4
+            ],
+            "path_prob": 0.125,
+            "rollout_idxs": [
+              3
+            ]
+          }
+        ]
+      },
+      "rollout_idx": 6
+    },
+    {
+      "info": {
+        "heuristic": "diversity",
+        "pass": 0,
+        "selected_cluster_seq": [
+          0,
+          4,
+          2,
+          3
+        ],
+        "selected_path": [
+          -2,
+          0,
+          4,
+          2,
+          3,
+          -4
+        ],
+        "selected_path_prob": 0.375,
+        "top_paths": [
+          {
+            "cluster_seq": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              1,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.5,
+            "rollout_idxs": [
+              1,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              4,
+              2,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              4,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.375,
+            "rollout_idxs": [
+              0,
+              2,
+              7
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              1,
+              5,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              1,
+              5,
+              3,
+              -4
+            ],
+            "path_prob": 0.125,
+            "rollout_idxs": [
+              3
+            ]
+          }
+        ]
+      },
+      "rollout_idx": 7
+    },
+    {
+      "info": {
+        "heuristic": "diversity",
+        "pass": 0,
+        "selected_cluster_seq": [
+          0,
+          1,
+          5,
+          3
+        ],
+        "selected_path": [
+          -2,
+          0,
+          1,
+          5,
+          3,
+          -4
+        ],
+        "selected_path_prob": 0.125,
+        "top_paths": [
+          {
+            "cluster_seq": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              1,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.5,
+            "rollout_idxs": [
+              1,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              4,
+              2,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              4,
+              2,
+              3,
+              -4
+            ],
+            "path_prob": 0.375,
+            "rollout_idxs": [
+              0,
+              2,
+              7
+            ]
+          },
+          {
+            "cluster_seq": [
+              0,
+              1,
+              5,
+              3
+            ],
+            "path": [
+              -2,
+              0,
+              1,
+              5,
+              3,
+              -4
+            ],
+            "path_prob": 0.125,
+            "rollout_idxs": [
+              3
+            ]
+          }
+        ]
+      },
+      "rollout_idx": 3
+    }
+  ],
+  "random": [
+    {
+      "info": {
+        "eligible_count": 8,
+        "heuristic": "random",
+        "success_only": true
+      },
+      "rollout_idx": 7
+    },
+    {
+      "info": {
+        "eligible_count": 8,
+        "heuristic": "random",
+        "success_only": true
+      },
+      "rollout_idx": 0
+    },
+    {
+      "info": {
+        "eligible_count": 8,
+        "heuristic": "random",
+        "success_only": true
+      },
+      "rollout_idx": 5
+    }
+  ]
+}

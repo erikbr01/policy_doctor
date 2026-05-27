@@ -1,14 +1,14 @@
 """Golden-snapshot tool for the architecture refactor.
 
-Captures deterministic outputs from three core code paths so we can detect
+Captures deterministic outputs from four core code paths so we can detect
 regressions during the refactor (REFACTOR_PLAN.md §5).
 
-The three anchors:
+The four anchors:
   1. clustering         — policy_doctor.behaviors.clustering.run_clustering
   2. behavior_graph     — policy_doctor.behaviors.behavior_graph.BehaviorGraph.from_cluster_assignments
   3. influence_slice    — policy_doctor.data.structures.GlobalInfluenceMatrix.get_slice
-
-(A fourth anchor, MimicGen seed selection, is deferred — see TODO at bottom.)
+  4. mimicgen_seed      — policy_doctor.mimicgen.heuristics.{BehaviorGraphPathHeuristic,
+                          DiversitySelectionHeuristic, RandomSelectionHeuristic}.select_multiple
 
 Usage:
     python -m tools.refactor.snapshot write        # generate goldens
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -267,6 +268,153 @@ def _influence_slice_compare(actual: Dict[str, Any], expected: Dict[str, Any]) -
 
 
 # ---------------------------------------------------------------------------
+# Anchor 4: MimicGen seed selection
+# ---------------------------------------------------------------------------
+
+
+def _mimicgen_inputs() -> Dict[str, Any]:
+    """Deterministic labels+metadata where every episode succeeds, plus a
+    rollouts HDF5 spec consumed by the heuristics.
+
+    Eight episodes of 8 timesteps each. Labels follow three distinct paths to
+    SUCCESS so multiple heuristics produce distinguishable results.
+    """
+    rng = np.random.default_rng(_SEED + 3)
+    paths = [
+        [0, 0, 1, 1, 2, 2, 3, 3],  # 4 episodes will follow this
+        [0, 0, 4, 4, 2, 2, 3, 3],  # 3 episodes will follow this
+        [0, 0, 1, 1, 5, 5, 3, 3],  # 1 episode will follow this
+    ]
+    assignments = [0, 0, 0, 0, 1, 1, 1, 2]  # episode -> path
+    rng.shuffle(assignments)
+    labels: List[int] = []
+    metadata: List[Dict[str, Any]] = []
+    for ep, path_idx in enumerate(assignments):
+        for t, lab in enumerate(paths[path_idx]):
+            labels.append(int(lab))
+            metadata.append({"rollout_idx": ep, "timestep": t, "success": True})
+    # Synthetic per-episode states/actions for the HDF5 fixture.
+    state_dim, action_dim = 4, 2
+    episodes_data = []
+    for ep in range(len(assignments)):
+        episodes_data.append(
+            {
+                "states": rng.normal(size=(len(paths[0]), state_dim)).astype(np.float32),
+                "actions": rng.normal(size=(len(paths[0]), action_dim)).astype(np.float32),
+                "success": True,
+            }
+        )
+    return {
+        "labels": np.asarray(labels, dtype=np.int32),
+        "metadata": metadata,
+        "episodes_data": episodes_data,
+        "env_meta": {"env_name": "GoldenStub", "type": 1, "env_kwargs": {}},
+    }
+
+
+def _write_rollouts_hdf5(path: Path, inputs: Dict[str, Any]) -> None:
+    import h5py
+
+    with h5py.File(path, "w") as f:
+        data_grp = f.create_group("data")
+        data_grp.attrs["env_args"] = json.dumps(inputs["env_meta"])
+        for ep_idx, ep_data in enumerate(inputs["episodes_data"]):
+            ep_grp = data_grp.create_group(f"demo_{ep_idx}")
+            ep_grp.create_dataset("states", data=ep_data["states"])
+            ep_grp.create_dataset("actions", data=ep_data["actions"])
+            ep_grp.attrs["success"] = bool(ep_data["success"])
+
+
+def _mimicgen_compute(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    from policy_doctor.mimicgen.heuristics import (
+        BehaviorGraphPathHeuristic,
+        DiversitySelectionHeuristic,
+        RandomSelectionHeuristic,
+    )
+
+    # The heuristics read from disk, so materialize the HDF5 to a temp file
+    # for the duration of compute. The file is not part of the golden output.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hdf5_path = Path(tmpdir) / "rollouts.hdf5"
+        _write_rollouts_hdf5(hdf5_path, inputs)
+
+        n = 3
+        common = dict(
+            cluster_labels=inputs["labels"],
+            metadata=inputs["metadata"],
+            rollout_hdf5_path=str(hdf5_path),
+            level="rollout",
+        )
+        per_heuristic: Dict[str, List[Dict[str, Any]]] = {}
+        per_heuristic["behavior_graph_path"] = _summarize_results(
+            BehaviorGraphPathHeuristic(top_k_paths=5, random_seed=_SEED).select_multiple(n=n, **common)
+        )
+        per_heuristic["diversity"] = _summarize_results(
+            DiversitySelectionHeuristic(top_k_paths=10, random_seed=_SEED).select_multiple(n=n, **common)
+        )
+        per_heuristic["random"] = _summarize_results(
+            RandomSelectionHeuristic(random_seed=_SEED).select_multiple(n=n, **common)
+        )
+    return {"selections": per_heuristic}
+
+
+def _summarize_results(results: List[Any]) -> List[Dict[str, Any]]:
+    """Convert a list of SeedSelectionResult into a deterministic dict-only form.
+
+    We pin only the rollout_idx and a canonicalized subset of info — the full
+    info dict may contain heuristic-specific keys, lists, or numpy scalars.
+    """
+    out: List[Dict[str, Any]] = []
+    for r in results:
+        info = dict(r.info)
+        canonical_info: Dict[str, Any] = {}
+        for key, value in sorted(info.items()):
+            canonical_info[key] = _canonicalize(value)
+        out.append({"rollout_idx": int(r.rollout_idx), "info": canonical_info})
+    return out
+
+
+def _canonicalize(value: Any) -> Any:
+    """Recursively convert numpy scalars / arrays into plain Python."""
+    if isinstance(value, dict):
+        return {str(k): _canonicalize(v) for k, v in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_canonicalize(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
+
+
+def _mimicgen_save(out: Dict[str, Any], dst: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    (dst / "selections.json").write_text(
+        json.dumps(out["selections"], sort_keys=True, indent=2)
+    )
+
+
+def _mimicgen_load(dst: Path) -> Dict[str, Any]:
+    return {"selections": json.loads((dst / "selections.json").read_text())}
+
+
+def _mimicgen_compare(actual: Dict[str, Any], expected: Dict[str, Any]) -> List[str]:
+    failures: List[str] = []
+    # Round-trip actual through JSON to normalize numeric precision the same
+    # way the saved version was.
+    actual_json = json.loads(json.dumps(actual["selections"], sort_keys=True))
+    expected_json = expected["selections"]
+    for heuristic in sorted(set(actual_json) | set(expected_json)):
+        if actual_json.get(heuristic) != expected_json.get(heuristic):
+            failures.append(f"mimicgen_seed.{heuristic} selection differs")
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # Anchor registry and driver
 # ---------------------------------------------------------------------------
 
@@ -295,6 +443,14 @@ _ANCHORS: Tuple[Tuple[str, Any, Any, Any, Any, Any], ...] = (
         _influence_slice_save,
         _influence_slice_load,
         _influence_slice_compare,
+    ),
+    (
+        "mimicgen_seed",
+        _mimicgen_inputs,
+        _mimicgen_compute,
+        _mimicgen_save,
+        _mimicgen_load,
+        _mimicgen_compare,
     ),
 )
 
@@ -347,11 +503,6 @@ def main(argv: List[str]) -> int:
         return 0
     return verify_all(args.out)
 
-
-# TODO(phase-0-followup): Add a fourth anchor for MimicGen seed selection
-# (BehaviorGraphPathHeuristic, DiversitySelectionHeuristic, RandomSelectionHeuristic).
-# Requires synthesizing a rollouts HDF5 matching MimicGenSeedTrajectory.from_rollout_hdf5's
-# expected schema (state/action/reward/done datasets + per-demo success attrs).
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main(sys.argv[1:]))

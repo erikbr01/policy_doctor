@@ -2,7 +2,8 @@
   "anchors": [
     "clustering",
     "behavior_graph",
-    "influence_slice"
+    "influence_slice",
+    "mimicgen_seed"
   ],
   "seed": 42
 }
