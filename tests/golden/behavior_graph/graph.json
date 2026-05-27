@@ -1,0 +1,140 @@
+{
+  "level": "rollout",
+  "nodes": {
+    "-2": {
+      "cluster_id": -2,
+      "episode_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "name": "START",
+      "num_episodes": 6,
+      "num_timesteps": 0
+    },
+    "-4": {
+      "cluster_id": -4,
+      "episode_indices": [
+        0,
+        1,
+        2
+      ],
+      "name": "SUCCESS",
+      "num_episodes": 3,
+      "num_timesteps": 0
+    },
+    "-5": {
+      "cluster_id": -5,
+      "episode_indices": [
+        3,
+        4,
+        5
+      ],
+      "name": "FAILURE",
+      "num_episodes": 3,
+      "num_timesteps": 0
+    },
+    "0": {
+      "cluster_id": 0,
+      "episode_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "name": "Behavior 0",
+      "num_episodes": 6,
+      "num_timesteps": 26
+    },
+    "1": {
+      "cluster_id": 1,
+      "episode_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "name": "Behavior 1",
+      "num_episodes": 6,
+      "num_timesteps": 13
+    },
+    "2": {
+      "cluster_id": 2,
+      "episode_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "name": "Behavior 2",
+      "num_episodes": 6,
+      "num_timesteps": 10
+    },
+    "3": {
+      "cluster_id": 3,
+      "episode_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "name": "Behavior 3",
+      "num_episodes": 6,
+      "num_timesteps": 11
+    }
+  },
+  "num_episodes": 6,
+  "transition_counts": {
+    "-2": {
+      "0": 4,
+      "3": 2
+    },
+    "0": {
+      "1": 6,
+      "3": 6
+    },
+    "1": {
+      "2": 6
+    },
+    "2": {
+      "0": 6
+    },
+    "3": {
+      "-4": 3,
+      "-5": 3,
+      "0": 2
+    }
+  },
+  "transition_probs": {
+    "-2": {
+      "0": 0.6666666666666666,
+      "3": 0.3333333333333333
+    },
+    "0": {
+      "1": 0.5,
+      "3": 0.5
+    },
+    "1": {
+      "2": 1.0
+    },
+    "2": {
+      "0": 1.0
+    },
+    "3": {
+      "-4": 0.375,
+      "-5": 0.375,
+      "0": 0.25
+    }
+  }
+}
