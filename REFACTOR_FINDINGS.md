@@ -239,3 +239,41 @@ Important wrinkles found:
 - `uv lock --check` — 224 packages resolved in 6 ms, no drift.
 
 **Plan impact:** Phase 3 closed per spec. Phase 5 inherits one new follow-up: relocate `third_party/influence_visualizer/configs/` into the new experiments / data root and rewire `policy_doctor.paths.iv_task_configs_base()` + `policy_doctor.influence.clustering_io.get_clustering_dir()` to read from there. That can land alongside the broader "single canonical data root" cleanup.
+
+---
+
+## 2026-05-27 — Phase 4 complete — non-Streamlit viz deleted
+
+**Context:** Per Plan §4 / §7 ("Streamlit-only viz"), this phase removed standalone plotting scripts and non-Streamlit render utilities with no live caller (= no import from `policy_doctor/streamlit_app/`, `policy_doctor/curation_pipeline/`, `policy_doctor/influence/`, an active pipeline step, or `tests/`).
+
+**Inventory method:** ripgrep every viz file (scripts/plot_*.py, scripts/render_*.py, scripts/export_*.py, policy_doctor/scripts/plot_*.py, every `policy_doctor/plotting/**/*.py`) against the live-caller surfaces above. Plus the user's seed candidate list from earlier investigation.
+
+**Deleted (16 files):**
+- `scripts/plot_mimicgen_eef_from_result.py` — sole reference was `scripts/test_mimicgen_eef_plots.py` (also dead).
+- `scripts/plot_mimicgen_budget_sweep.py` — zero callers.
+- `scripts/plot_nut_constrained_violins.py` — zero callers.
+- `scripts/render_agent_session.py` — only imported by `scripts/run_e2_agent_transport_mh.py` (itself referenced only from operator docs, not from any live caller surface).
+- `scripts/render_episode_mp4s.py` — zero callers.
+- `scripts/render_mimicgen_playback.py` — zero callers.
+- `scripts/render_twostage_session.py` — zero callers; imported `render_agent_session`.
+- `scripts/export_e1_report.py`, `scripts/export_e2_report.py`, `scripts/export_mimicgen_report.py` — zero callers each.
+- `scripts/test_mimicgen_eef_plots.py` — dev harness for the now-deleted EEF plot script; not invoked from any test runner or pipeline step.
+- `policy_doctor/scripts/plot_curation_data_vs_success.py` — zero callers; only consumer of `plotting/curation_scatter*.py`.
+- `policy_doctor/scripts/plot_comparison.py` — zero callers; only consumer of `plotting/training_curves.py`. (The earlier note that it was "called from plotting/" was wrong; it imports *from* plotting, not the other way.)
+- `policy_doctor/plotting/curation_scatter.py`, `curation_scatter_mpl.py`, `training_curves.py` — all three only reached from the deleted scripts above.
+
+**Edited:** `policy_doctor/plotting/__init__.py` — removed re-exports of `create_training_comparison_plot`, `create_curation_data_vs_success_scatter`, `create_experiment_checkpoint_score_boxplot`, `create_multi_experiment_checkpoint_score_boxplots` (their backing modules are gone).
+
+**Kept on close calls (documented for Phase 5):**
+- `policy_doctor/scripts/compare_policies.py` + `policy_doctor/plotting/policy_comparison.py` — `compare_policies.py` is a Hydra-driven CLI with a config tree under `policy_doctor/configs/comparison/`, was not in the user's deletion candidate list, and is referenced by half a dozen YAML headers. Conservative keep; flag for Phase 5 to decide whether to fold into a pipeline step or excise.
+- `scripts/run_e2_agent_transport_mh.py` — referenced only by docs (`operator_e2_quickstart.md`, `experiments/experiment_e2_critical_findings.md`) and a `policy_doctor.vlm.proposals.server` docstring; not imported by any live surface. Was the only caller of `render_agent_session.py`, so it is now broken at the import level. Not in the user's deletion candidate list; left in place but Phase 5 should either repair or delete it alongside the e2-agent flow.
+- `policy_doctor/plotting/pyvis/__init__.py` — 22-line re-export of two functions from `plotting/plotly/behavior_graph*.py`. No streamlit/pipeline import, but `tests/plotting/test_pyvis.py` (4 tests) covers it. Conservative keep.
+- `policy_doctor/plotting/vlm_montage.py` — live: `streamlit_app/tabs/vlm_annotation.py` calls `plotting.create_scrollable_frame_strip_html` (via `__init__.py` re-export), and `tests/vlm/test_slice_annotation.py` imports it directly.
+- All `policy_doctor/plotting/plotly/*.py` — every file has at least one streamlit tab or `_simplification_pages` consumer (verified per-module).
+
+**Verification:**
+- `./scripts/uv_env.sh analysis pytest tests/golden/ tests/experiment/ tests/test_env_dispatch.py` — 40 passed in 0.96s before deletions, 40 passed in 0.96s after.
+- Smoke imports under `analysis` env: `policy_doctor.streamlit_app.app`, `streamlit_app.demo_app.Home`, all 9 streamlit_app/tabs/* modules, both `_simplification_pages` modules (note: `simplification.py` and `sweep_analysis.py` import cleanly), `components/trajectory_tree_view.py`, `user_study/graph_plot.py`, `user_study/initial_conditions.py`, `policy_doctor.plotting`, `policy_doctor.plotting.plotly`, `policy_doctor.plotting.pyvis` — all OK. `survey_app/Home.py` and `user_study/app_group_{a,b}.py` execute Streamlit-runtime logic at import time (env-var lookups for `mp4_dir`) and fail with `TypeError: argument should be a str ... not 'NoneType'` outside `streamlit run`; this is a pre-existing condition on `refactor/clean-architecture` (reproduces on HEAD before the deletions) and is unrelated to Phase 4.
+- `tests/plotting/test_eef_trajectories.py` has 2 pre-existing failures (`show_mean` kwarg drift); reproduces on HEAD before the deletions. Not introduced by Phase 4 and not in the keep-green suite.
+
+**Plan impact:** Phase 4 closed per spec. Phase 5 inherits two follow-ups: (a) decide the fate of `compare_policies.py` + `policy_comparison.py` (fold into pipeline step vs. delete), and (b) repair or remove the now-broken `scripts/run_e2_agent_transport_mh.py`.

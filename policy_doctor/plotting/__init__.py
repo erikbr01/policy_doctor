@@ -5,7 +5,6 @@
   See plotting.pyvis; requires pip install pyvis.
 """
 
-from policy_doctor.plotting.training_curves import create_training_comparison_plot
 from policy_doctor.plotting.policy_comparison import (
     draw_beta_posterior_samples,
     create_policy_comparison_violin,
@@ -15,11 +14,6 @@ from policy_doctor.plotting.policy_comparison import (
 from policy_doctor.plotting.vlm_montage import (
     create_frame_montage,
     create_scrollable_frame_strip_html,
-)
-from policy_doctor.plotting.curation_scatter import (
-    create_curation_data_vs_success_scatter,
-    create_experiment_checkpoint_score_boxplot,
-    create_multi_experiment_checkpoint_score_boxplots,
 )
 from policy_doctor.plotting.common import (
     EXTRA_COLORS,
@@ -97,14 +91,10 @@ from policy_doctor.plotting.plotly import (
 __all__ = [
     "create_frame_montage",
     "create_scrollable_frame_strip_html",
-    "create_training_comparison_plot",
     "draw_beta_posterior_samples",
     "create_policy_comparison_violin",
     "create_policy_comparison_bar",
     "create_policy_comparison_breakdown",
-    "create_curation_data_vs_success_scatter",
-    "create_experiment_checkpoint_score_boxplot",
-    "create_multi_experiment_checkpoint_score_boxplots",
     "EXTRA_COLORS",
     "LABEL_COLORS",
     "get_label_color",
