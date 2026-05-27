@@ -84,7 +84,7 @@ for task in "${TASKS[@]}"; do
     sub_log="$LOG_DIR/batch_data_support_${task}_${TS}.log"
     echo "[$(date +%T)] $task — batch data_support → $sub_log" | tee -a "$RUN_LOG"
 
-    conda run -n policy_doctor --no-capture-output python scripts/batch_data_support.py \
+    conda run -n policy_doctor --no-capture-output python scripts/dev/batch_data_support.py \
         --task "$task" \
         --radius "$RADIUS" \
         --knn_k "$KNN_K" \

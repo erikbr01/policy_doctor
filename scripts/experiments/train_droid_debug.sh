@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CUPID_DIR="${REPO_ROOT}/third_party/cupid"
 CONFIG_PATH="${CUPID_DIR}/configs/image/droid_debug/diffusion_policy_cnn"
 

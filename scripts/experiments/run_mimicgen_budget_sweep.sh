@@ -61,7 +61,7 @@ SEEDS="${SEEDS:-0 1 2}"
 DATE="${DATE:-apr26}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORKTREE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EXPERIMENT="mimicgen_${TASK}_sweep_${DATE}"
 EXPERIMENT_YAML="${WORKTREE_ROOT}/policy_doctor/configs/experiment/${EXPERIMENT}.yaml"
 

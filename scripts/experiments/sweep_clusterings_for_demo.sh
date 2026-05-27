@@ -74,7 +74,7 @@ for entry in "${TASKS[@]}"; do
         trunk_dir="$TRUNK_ROOT/${task}_${rep_id}"
         if [ ! -f "$trunk_dir/timestep_embeddings.npy" ]; then
             echo "Building trunk for $task/$rep_id ..."
-            python scripts/build_alt_clustering.py \
+            python scripts/experiments/build_alt_clustering.py \
                 "${rep_flags[@]}" \
                 --eval_dir "$eval_dir" \
                 --out_dir "$trunk_dir" \
@@ -116,7 +116,7 @@ sys.exit(0 if steps.index('umap') < steps.index('window') else 1)
                         continue
                     fi
                     echo "  [build] $slug"
-                    python scripts/build_alt_clustering.py \
+                    python scripts/experiments/build_alt_clustering.py \
                         "${rep_flags[@]}" \
                         --eval_dir "$eval_dir" \
                         --out_dir "$out_dir" \
@@ -182,7 +182,7 @@ sys.exit(0 if steps.index('window') < steps.index('umap') else 1)
                         continue
                     fi
                     echo "  [build] $slug"
-                    python scripts/build_alt_clustering.py \
+                    python scripts/experiments/build_alt_clustering.py \
                         "${rep_flags[@]}" \
                         --eval_dir "$eval_dir" \
                         --out_dir "$out_dir" \

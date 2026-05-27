@@ -37,7 +37,7 @@ run_monitor() {
   cd "$CUPID_DATA_ROOT"
   PYTHONPATH="$POLICY_DOCTOR_ROOT:$CUPID_CODE_DIR${PYTHONPATH:+:$PYTHONPATH}" \
   exec conda run -n cupid --no-capture-output \
-    python "$POLICY_DOCTOR_ROOT/scripts/monitor_online.py" \
+    python "$POLICY_DOCTOR_ROOT/scripts/experiments/monitor_online.py" \
       --output_dir "$output_dir" \
       --train_dir "$train_dir" \
       --train_ckpt "$ckpt" \
@@ -59,7 +59,7 @@ run_dagger() {
   cd "$CUPID_DATA_ROOT"
   PYTHONPATH="$POLICY_DOCTOR_ROOT:$CUPID_CODE_DIR${PYTHONPATH:+:$PYTHONPATH}" \
   exec conda run -n cupid --no-capture-output \
-    python "$POLICY_DOCTOR_ROOT/scripts/run_dagger.py" \
+    python "$POLICY_DOCTOR_ROOT/scripts/experiments/run_dagger.py" \
       --task "$task" \
       --output_dir "$output_dir" \
       --train_dir "$train_dir" \

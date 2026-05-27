@@ -20,7 +20,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKTREE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORKTREE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPE_BASE="${WORKTREE_ROOT}/third_party/cupid/data/pipeline_runs"
 LOG="/tmp/run_sweep_ordered.log"
 EXPERIMENT="mimicgen_square_sweep_apr26"
