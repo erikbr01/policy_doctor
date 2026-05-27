@@ -1,0 +1,17 @@
+# Kendama baseline-250 policy-embedding clustering sweep.
+# 250-demo checkpoint rollouts from /mnt/ssdB/erik/rollouts.
+
+rollouts: /mnt/ssdB/erik/rollouts/rollouts_kendama_baseline_250_may22_final
+ckpt: /mnt/ssdB/erik/rollouts/baseline_250_demos.ckpt
+layer: bottleneck_plan_t0
+representation: policy_emb
+sweep_root: data/demo_sweep/kendama_baseline250/run_clustering/clustering/aggregate_first
+task_config: kendama_baseline250
+seed: 42
+batch_size: 128
+device: cuda:0
+
+grid:
+  window_width: [15, 30, 45]
+  stride: [7, 14, 21, 28]
+  n_clusters: [5, 8, 11, 14, 17, 20]

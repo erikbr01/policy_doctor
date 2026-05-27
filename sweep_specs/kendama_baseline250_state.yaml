@@ -1,0 +1,10 @@
+rollouts: /mnt/ssdB/erik/rollouts/rollouts_kendama_baseline_250_may22_final
+representation: state
+sweep_root: data/demo_sweep/kendama_baseline250/run_clustering/clustering/aggregate_first
+task_config: kendama_baseline250
+seed: 42
+
+grid:
+  window_width: [15, 30, 45]
+  stride: [7, 14, 21, 28]
+  n_clusters: [5, 8, 11, 14, 17, 20]

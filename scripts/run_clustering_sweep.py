@@ -169,6 +169,16 @@ def main() -> int:
     args = _parse_args()
     spec = _load_spec(pathlib.Path(args.spec))
 
+    # Kendama rollouts use HDF5 episodes + optional policy ckpt, not cupid eval dirs.
+    if "rollouts" in spec:
+        from scripts.run_kendama_clustering_sweep import run_sweep
+
+        return run_sweep(
+            spec_path=pathlib.Path(args.spec),
+            force=args.force,
+            dry_run=args.dry_run,
+        )
+
     eval_dir = spec["eval_dir"]
     sweep_root = pathlib.Path(spec["sweep_root"])
     sweep_root.mkdir(parents=True, exist_ok=True)
