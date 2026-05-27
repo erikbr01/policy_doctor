@@ -47,6 +47,7 @@ from typing import Any
 import yaml
 from omegaconf import OmegaConf
 
+from policy_doctor._env import run_in_env
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.diffusion_overrides import baseline_diffusion_extra_overrides
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_train_name
@@ -217,7 +218,6 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
             else:
                 launcher = ["python", str(CUPID_ROOT / "train.py")]
             cmd = [
-                "conda", "run", "-n", conda_env, "--no-capture-output",
                 *launcher,
                 "--config-path", config_dir,
                 "--config-name", config_name,
@@ -225,7 +225,7 @@ class TrainOnCombinedDataStep(PipelineStep[dict]):
             ]
             env_vars = {**os.environ, "WANDB_RESUME": "never"}
             print(f"  [train_on_combined_data] conda_env={conda_env}  seed={seed}  output_dir={run_output_dir}")
-            result = subprocess.run(cmd, cwd=str(CUPID_ROOT), env=env_vars)
+            result = run_in_env(conda_env, cmd, cwd=str(CUPID_ROOT), env=env_vars)
             if result.returncode != 0:
                 raise RuntimeError(
                     f"[train_on_combined_data] seed={seed} subprocess failed with exit code {result.returncode}"

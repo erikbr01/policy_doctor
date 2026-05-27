@@ -7,6 +7,7 @@ import subprocess
 
 from omegaconf import OmegaConf
 
+from policy_doctor._env import run_in_env
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_eval_dir, get_train_dir
 from policy_doctor.paths import CUPID_ROOT
@@ -36,11 +37,10 @@ def _call_eval_save_episodes(
         # Dispatch as a subprocess in the specified conda env so that env-specific
         # packages (e.g. pytorch3d in mimicgen_torch2) are available.
         cmd = [
-            "conda", "run", "-n", conda_env, "--no-capture-output",
             "python", str(CUPID_ROOT / "eval_save_episodes.py"),
             *args,
         ]
-        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        result = run_in_env(conda_env, cmd, cwd=str(CUPID_ROOT))
         if result.returncode != 0:
             raise RuntimeError(
                 f"[eval_policies] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"

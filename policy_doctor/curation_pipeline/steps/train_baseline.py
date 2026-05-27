@@ -7,6 +7,7 @@ import subprocess
 
 from omegaconf import OmegaConf
 
+from policy_doctor._env import run_in_env
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.curation_pipeline.diffusion_overrides import baseline_diffusion_extra_overrides
 from policy_doctor.curation_pipeline.paths import expand_seeds, get_train_name
@@ -284,13 +285,12 @@ class TrainBaselineStep(PipelineStep[None]):
         else:
             launcher = ["python", str(CUPID_ROOT / "train.py")]
         cmd = [
-            "conda", "run", "-n", conda_env, "--no-capture-output",
             *launcher,
             "--config-path", config_dir,
             "--config-name", config_name,
             *overrides,
         ]
-        result = subprocess.run(cmd, cwd=str(CUPID_ROOT))
+        result = run_in_env(conda_env, cmd, cwd=str(CUPID_ROOT))
         if result.returncode != 0:
             raise RuntimeError(
                 f"[train_baseline] subprocess (conda_env={conda_env}) failed with exit code {result.returncode}"

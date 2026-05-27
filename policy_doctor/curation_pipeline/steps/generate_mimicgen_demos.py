@@ -76,6 +76,7 @@ import h5py
 import numpy as np
 from omegaconf import OmegaConf
 
+from policy_doctor._env import run_in_env
 from policy_doctor.curation_pipeline.base_step import PipelineStep
 from policy_doctor.mimicgen.eef import extract_eef_xyz_from_hdf5
 from policy_doctor.mimicgen.materializer import RobomimicSeedMaterializer
@@ -526,7 +527,6 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
             seed_idx: int | None = None,
         ) -> list:
             cmd = [
-                "conda", "run", "-n", mimicgen_env, "--no-capture-output",
                 "python", str(_GENERATE_SCRIPT),
                 "--seed_hdf5",          str(s_hdf5),
                 "--output_dir",         str(out_dir),
@@ -688,8 +688,9 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                         f"  [generate_mimicgen_demos] "
                         f"seed {seed_i + 1}/{n_seeds_in_hdf5} pass {pass_num} ..."
                     )
-                    res = subprocess.run(
-                        _build_cmd(seed_i_hdf5, pass_out_dir, trials_per_seed, seed_idx=seed_i)
+                    res = run_in_env(
+                        mimicgen_env,
+                        _build_cmd(seed_i_hdf5, pass_out_dir, trials_per_seed, seed_idx=seed_i),
                     )
                     if res.returncode != 0:
                         # Count only actual attempts, not the requested budget, so that
@@ -788,7 +789,10 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
         else:
             # Single-run path (no success_budget, or only one seed)
             print(f"  [generate_mimicgen_demos] running generation (single run, {num_trials} trials) ...")
-            result = subprocess.run(_build_cmd(seed_hdf5, gen_output_dir, num_trials, seed_idx=0))
+            result = run_in_env(
+                mimicgen_env,
+                _build_cmd(seed_hdf5, gen_output_dir, num_trials, seed_idx=0),
+            )
             if result.returncode != 0:
                 raise RuntimeError(
                     f"[generate_mimicgen_demos] mimicgen subprocess failed "
