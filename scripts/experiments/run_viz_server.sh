@@ -3,7 +3,7 @@
 # Run this BEFORE starting the DAgger runner.
 #
 # Usage:
-#   ./scripts/experiments/run_viz_server.sh [--port 5002] [--fps 30] [--device auto|pygame|spacemouse|keyboard]
+#   ./scripts/experiments/run_viz_server.sh [--port 5002] [--fps 30] [--device pygame|auto|spacemouse|keyboard]
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,8 +12,8 @@ source "${SCRIPT_DIR}/_lib.sh"
 PORT=5002
 FPS=30
 # Demo-friendly default: pygame sees macOS Bluetooth / USB gamepads that
-# `inputs` may miss; viz_server falls back to SpaceMouse, then keyboard.
-DEVICE="auto"
+# `inputs` may miss.
+DEVICE="pygame"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --port)   PORT="$2";   shift 2 ;;
@@ -26,9 +26,10 @@ done
 echo "=== DAgger Viz Server ==="
 echo "  url : http://127.0.0.1:$PORT"
 echo "  fps : $FPS"
+echo "  input: $DEVICE"
 echo ""
 echo "Then in another terminal:"
-echo "  ./scripts/experiments/run_dagger_square_feb5.sh --viz-url http://127.0.0.1:$PORT ..."
+echo "  conda run -n cupid python scripts/run_dagger.py"
 echo ""
 
 CONDA_PYTHON="$(conda run -n cupid which python 2>/dev/null || echo python)"
