@@ -10,7 +10,7 @@ Tracking doc for findings as we work: `REFACTOR_FINDINGS.md` (created at phase s
 
 From the user request, restated as concrete acceptance criteria:
 
-1. **Experiment-centric layout.** Every experiment owns one directory on disk that contains its config and every artifact it consumes or produces. `rsync experiments/<name>/ remote:` must give a fully-runnable experiment on the remote without reaching outside that directory.
+1. **Experiment-centric layout.** Every experiment owns one directory on disk that contains its config and every artifact it consumes or produces. `rsync experiments/<name>/ remote:` must give a fully-runnable experiment on the remote without reaching outside that directory. Multiple Hydra invocations can target the same experiment — `experiment=foo steps=[run_clustering]` then later `experiment=foo steps=[train_curated]` — and accumulate artifacts in one place.
 2. **Single canonical data root.** No more `third_party/cupid/data/...` nested inside a submodule. One root at `<repo_root>/data/`, env-var overridable. The legacy `third_party/cupid/data/` stays on disk (frozen, read-only) but nothing new writes there.
 3. **No date-keyed artifact paths.** `train_date` / `eval_date` removed from configs and code. Runs are identified by experiment name + timestamp.
 4. **`influence_visualizer` removed.** The ~6 live functions absorbed into `policy_doctor/`; the rest deleted.
@@ -45,29 +45,39 @@ $POLICY_DOCTOR_DATA/                       # default <repo_root>/data, override 
         ...
     experiments/
         <experiment_name>/                 # one self-contained experiment
-            manifest.yaml                  # name, created_at, git_sha, env_name, source_dataset_path
-            config/                        # resolved Hydra config snapshot (not a reference)
-                config.yaml                # fully-resolved, including all overrides
-                composed_overrides.yaml    # for traceability
+            manifest.yaml                  # name, created_at, git_sha, baseline_from, …
+            config/
+                canonical.yaml             # symlink → first snapshot
+                snapshot_<timestamp>.yaml  # every Hydra invocation appends one;
+                snapshot_<timestamp>.yaml  # all preserved as an audit log
+                …
             shared/                        # things shared across arms in this experiment
                 baseline_ckpt/             # one copy, referenced by all arms
                 source_dataset.hdf5        # symlink or copy of the source HDF5
-            runs/                          # pipeline runs / experimental arms
-                <run_name>/
-                    <step_name>/
-                        result.json
-                        done               # sentinel
-                        ...artifacts...
+            artifacts/                     # everything the pipeline produces
+                run_clustering/            # shared upstream step (single result, all arms read)
+                compute_infembed/          # shared upstream step
+                mimicgen_random/           # arm (CompositeStep namespace)
+                    select_mimicgen_seed_from_graph/
+                    generate_mimicgen_demos/
+                    train_on_combined_data/
+                    eval_mimicgen_combined/
+                mimicgen_behavior_graph/   # arm
+                mimicgen_diversity/        # arm
+                mimicgen_random__v2/       # only created with --version flag
             logs/
-                pipeline.log
-                <run_name>.log
+                invocation_<timestamp>.log
 ```
 
-**Invariant:** every file an experiment needs to execute lives under `experiments/<name>/` *except* the source HDF5 dataset, which is symlinked from `datasets/`. The `bundle-experiment` CLI dereferences that symlink into a hard copy under `shared/` when packaging for transfer.
+**Versioning behavior:** by default, re-running an arm overwrites in place (per-sub-step `done` sentinels skip unchanged steps). The `--version <tag>` CLI flag forces a new namespaced dir (`<arm>__<tag>/`) so a tweaked rerun can be compared side-by-side with the original.
 
-**Within an experiment:** if multiple arms share a baseline checkpoint, it lives once at `shared/baseline_ckpt/` and each arm's config references it via a relative path. No duplication inside an experiment.
+**Multiple invocations target one experiment:** `experiment-init` creates the experiment dir once. Subsequent `python -m policy_doctor.scripts.run_pipeline experiment=<name> steps=[...]` calls add artifacts. Steps with their `done` sentinel skip; steps that didn't run yet execute. The Hydra invocation IS the unit of work, but the *experiment* is the unit of organization.
 
-**Across experiments:** the same baseline checkpoint is *copied* into each experiment's `shared/` (the user's explicit requirement — portability beats disk).
+**Cross-experiment baseline reuse:** experiment B's config may declare `baseline_from: <experiment_A>`. At `experiment-init` time the helper hard-copies `<exp_A>/shared/baseline_ckpt/` → `<exp_B>/shared/baseline_ckpt/`. Within experiment B, all arms share that single copy.
+
+**Config snapshots are append-only:** every Hydra invocation that targets the experiment writes a new `config/snapshot_<timestamp>.yaml` with the fully resolved config + overrides used. Existing snapshots are never overwritten — this is the experiment's audit log.
+
+**Invariant:** every file an experiment needs to execute lives under `experiments/<name>/` *except* the source HDF5 dataset, which is symlinked from `datasets/`. `experiment-bundle` dereferences the symlink into a hard copy under `shared/` when packaging for transfer.
 
 ### 3.2 Config layout
 
@@ -218,20 +228,39 @@ Each phase ships as a sequence of commits onto `refactor/clean-architecture`. Ph
 
 ---
 
-### Phase 5 — Code dedup and reorganization
+### Phase 5 — Code dedup, scripts→pipeline migration, reorganization
 
 **Scope:**
+
+*Dedup:*
 - HDF5 readers: ensure exactly one canonical reader in `policy_doctor/data/hdf5.py`. Delete or wrap any others.
 - Path resolution: collapse `policy_doctor/paths.py`, the IV path module (now absorbed), and any inline path-construction logic into a single module.
 - Hydra config helpers: consolidate `policy_doctor/curation_pipeline/config.py` and the various ad-hoc YAML loaders.
 - Plotly figure builders: ensure `policy_doctor/plotting/plotly/` is the only home for figure construction. No `st.plotly_chart(go.Figure(...))` inline in render code (this is already a stated rule — enforce it via test/grep).
-- Reorganize `scripts/` into `scripts/experiments/` (user-facing launchers) and `scripts/dev/` (one-off utilities). Delete anything not actively used.
+
+*Scripts-as-pipeline-steps (per user directive):*
+
+`scripts/` currently has ~74 files; many are one-off launchers, sweep orchestrators, or conversion utilities that *should* be pipeline steps. Audit each script and bucket into three groups:
+  - **Convert to pipeline step**: user-facing experiment launchers, sweep orchestrators, dataset conversion (HDF5/LeRobot/DROID → robomimic), report exporters. Each becomes a `PipelineStep` subclass that an experiment can run via `steps=[…]`.
+  - **Keep as `scripts/dev/`**: one-off debug utilities, smoke tests, format validators (e.g. `check_gemini_tool_image.py`).
+  - **Keep as `scripts/setup/`**: environment bootstrap (`uv_env.sh`, etc.).
+  - **Delete**: dead viz scripts already handled in Phase 4, anything with no callers and no recent edits.
+
+Sweep semantics: a "sweep" becomes a `CompositeStep` whose sub-steps iterate over a parameter grid declared in YAML, not a shell script.
+
+*Config field cleanup:*
+- Rename `conda_env` → `uv_env` in every config + the YAMLs that set them.
+- Update the dispatcher in `policy_doctor/_env.py` to read the new key.
+
+*Layout cleanup:*
+- Reorganize `scripts/` into `scripts/experiments/` (kept launchers), `scripts/dev/` (one-off utilities), `scripts/setup/` (bootstrap).
 
 **Exit criteria:**
 - Static analysis pass: no two modules with overlapping responsibility (judged by maintainer review).
+- `scripts/` has <30 files, each justified by category.
 - All tests green.
 
-**Risk:** low-medium. Most changes are local renames.
+**Risk:** medium. Scripts-to-pipeline migration is large surface; mitigated by golden snapshots + per-script verification.
 
 ---
 
