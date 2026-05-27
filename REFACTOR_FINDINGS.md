@@ -212,3 +212,30 @@ Important wrinkles found:
 - `iv.clustering_results.get_clustering_dir` resolves relative to `Path(__file__).parent / "configs" / task_config / "clustering"` — i.e., the iv-package directory. The new function in `policy_doctor.influence.clustering_io` must resolve to `iv_task_configs_base() / task_config / "clustering"` to preserve the on-disk location of historical clustering runs.
 
 **Plan impact:** none. Inventory confirms the original "~6 live functions" estimate in the plan; the actual surface is 5 live functions + 2 streamlit-only extracts + 1 streamlit-only relocation.
+
+---
+
+## 2026-05-27 — Phase 3 complete — `influence_visualizer` package removed
+
+**Context:** Phase 3B migration committed green (40/40 tests). This entry closes Phase 3 after deleting the legacy iv code.
+
+**What shipped:**
+- `policy_doctor/influence/` package with 6 submodules: `clustering_io`, `loader`, `lazy_hdf5`, `path_helpers` (lightweight seed-path helpers split out of the heavy loader), `annotations`, `frames`. `loader.py` is a near-verbatim copy of the iv `data_loader.py`; `clustering_io.py`, `lazy_hdf5.py`, `annotations.py`, `frames.py` are extracts of the iv functions live code actually used. `InfluenceDataLoader`, `SampleData`, `TrajectoryData`, `create_mock_influence_data` were not migrated — nothing outside iv consumed them.
+- `policy_doctor/streamlit_app/frame_player.py` — the one Streamlit-tinted helper (`frame_player`) extracted from `iv.render_frames`.
+- 14 call sites retargeted: 6 pipeline steps, 4 streamlit modules + 2 streamlit tabs, 2 scripts, 1 data helper, 1 influence-loader shim. Two test files updated to point at the new modules (`tests/vlm/test_cluster_classification.py`, `tests/integration/test_fingerprint_episode_ends.py`); one test deleted (`tests/integration/test_compare_iv_vs_policy_doctor.py` — its sole purpose was IV-vs-PD comparison, which is moot once IV is gone).
+- `third_party/influence_visualizer/` — all 38 python files plus `app.py`, `notebooks/`, `notes/`, `scripts/`, `tests/`, `plotting/`, `pyproject.toml`, and `README.md` were `git rm -r`'d. The `configs/` subdirectory was kept on disk (~108 MB of saved clustering runs, curation YAMLs, and task configs); live code reaches it via `policy_doctor.paths.iv_task_configs_base()` and the new `policy_doctor.influence.clustering_io.get_clustering_dir()` resolves there. Relocating those assets to a non-`third_party/` home is Phase 5 / Phase 6 work and explicitly deferred — moving them now would invalidate every existing experiment YAML.
+
+**Surprises:**
+- The iv `data_loader.py` is enormous (2346 lines) but most of it is the `InfluenceDataLoader` convenience wrapper and `InfluenceData` accessor methods. Trimming to the live surface (`load_influence_data` + helpers + dataclasses) brought it down to ~1845 lines.
+- iv's `clustering_results.get_clustering_dir(task_config)` resolved to `Path(__file__).parent / "configs" / ...`, i.e. the iv-package directory. The new implementation uses `iv_task_configs_base()` instead so the on-disk location is preserved without referencing iv's now-gone `__file__`.
+- The TaskCreate task tracker reminders fired about half-a-dozen times during this work; treated them as no-ops since the worktree-local TaskCreate state isn't visible to the wider system.
+- `tests/integration/test_fingerprint_episode_ends.py` had a setUp that hard-required `influence_visualizer` (via try/except import + `self.skipTest`). That setUp was rewritten to drop the iv probe; only the pure-PD `test_policy_doctor_load_dataset_episode_ends_matches_reference` survives and exercises `policy_doctor.data.dataset_episode_ends` + `policy_doctor.curation.config.compute_dataset_fingerprint`.
+- The legacy conda setup scripts (`scripts/install_policy_doctor_env.sh`, `scripts/create_cupid_torch25.sh`) reference `pip install -e third_party/influence_visualizer` and will fail post-deletion. They were already scheduled for retirement in Phase 1 (now folded into Phase 6 cleanup); leaving them broken does not regress anything currently tested.
+
+**Verification:**
+- `./scripts/uv_env.sh analysis pytest tests/golden/ tests/experiment/ tests/test_env_dispatch.py` — 40 passed in 0.97s after the deletion commit.
+- `grep -rn "from influence_visualizer\|import influence_visualizer" policy_doctor/ tests/ scripts/` — zero hits.
+- `grep -rn "influence_visualizer" third_party/cupid/` — 5 hits, all comments / docstrings (e.g. `sampler.py:162`, `CLAUDE.md:53,66`, `train_policies.sh:47,136`). Marked Bucket D in the Phase 3A inventory; deferred to Phase 6.
+- `uv lock --check` — 224 packages resolved in 6 ms, no drift.
+
+**Plan impact:** Phase 3 closed per spec. Phase 5 inherits one new follow-up: relocate `third_party/influence_visualizer/configs/` into the new experiments / data root and rewire `policy_doctor.paths.iv_task_configs_base()` + `policy_doctor.influence.clustering_io.get_clustering_dir()` to read from there. That can land alongside the broader "single canonical data root" cleanup.
