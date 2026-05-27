@@ -10,6 +10,11 @@ outputs/
 .hydra/
 .cache/
 
+# uv-managed venvs (one per env: analysis, cupid, mimicgen, robocasa).
+# Selected at runtime via UV_PROJECT_ENVIRONMENT; see scripts/uv_env.sh.
+.venv/
+.venvs/
+
 # Local secrets and tooling state
 .env
 .claude/

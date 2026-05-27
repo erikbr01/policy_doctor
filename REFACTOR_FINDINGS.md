@@ -49,7 +49,21 @@ Format per entry:
 
 ---
 
-## 2026-05-27 — Phase 0 — MimicGen seed-selection anchor added, Phase 0 closed
+## 2026-05-27 — Phase 1 — uv analysis env online, goldens pass
+
+**Context:** First Phase-1 milestone — establish a uv-managed `analysis` env and prove the goldens reproduce inside it.
+
+**Finding:**
+- Rewrote `pyproject.toml` to declare a core dependency set plus an `analysis` optional-deps group. Bumped `requires-python` from 3.9 → 3.10 (matches all four target envs).
+- uv resolved 177 packages cleanly on macOS / Python 3.12; sync took ~2 min cold. Notable resolutions: numpy 2.0.2, torch 2.12.0, scikit-learn latest. No special handling needed.
+- Added `scripts/uv_env.sh` as the `conda run -n` replacement. Per-env venvs at `.venvs/<env>/` selected via `UV_PROJECT_ENVIRONMENT`. The wrapper auto-syncs on first use.
+- All four golden anchors pass under `./scripts/uv_env.sh analysis pytest tests/golden/` in 0.9s (warm) / 29s (cold venv).
+- `.gitignore` extended to ignore `.venvs/`.
+- uv.lock committed (~4300 lines) per uv best practice for reproducible installs.
+
+**Decision / action:** Sim extras (`cupid`, `mimicgen`, `robocasa`) will be added in follow-up commits. Each can be verified independently and probably can't be fully tested on macOS (CUDA-pinned torch wheels, mujoco compat). Will validate analysis-extra parity on a Linux box if/when one is in scope.
+
+**Plan impact:** none. Phase 1 progressing per plan.
 
 **Context:** Follow-up to the previous entry. Added the fourth golden anchor.
 
