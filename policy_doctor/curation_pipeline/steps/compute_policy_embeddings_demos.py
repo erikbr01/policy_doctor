@@ -104,8 +104,11 @@ class ComputePolicyEmbeddingsDemosStep(PipelineStep[Dict[str, List[str]]]):
         overwrite = bool(OmegaConf.select(cfg, "policy_emb_demos_overwrite") or False)
         dataset_path_override = OmegaConf.select(attribution, "dataset_path")
         conda_env = (
-            OmegaConf.select(cfg, "policy_emb_demos_conda_env")
+            OmegaConf.select(cfg, "policy_emb_demos_uv_env")
+            or OmegaConf.select(cfg, "policy_emb_demos_conda_env")
+            or OmegaConf.select(attribution, "uv_env")
             or OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.uv_env_train")
             or OmegaConf.select(cfg, "data_source.conda_env_train")
         )
 

@@ -59,7 +59,8 @@ class EvalMimicgenCombinedStep(PipelineStep[dict]):
             or "data/outputs/eval_save_episodes"
         )
         conda_env: str = (
-            OmegaConf.select(cfg, "data_source.conda_env_train")
+            OmegaConf.select(cfg, "data_source.uv_env_train")
+            or OmegaConf.select(cfg, "data_source.conda_env_train")
             or "mimicgen_torch2"
         )
 

@@ -98,10 +98,12 @@ class TrainBaselineStep(PipelineStep[None]):
         compile_ = bool(OmegaConf.select(baseline, "compile") or False)
 
         # Determine training dispatch mode.
-        # Always use subprocess when a conda_env is specified — the pipeline orchestrator runs
+        # Always use subprocess when a uv_env is specified — the pipeline orchestrator runs
         # in the policy_doctor env, which does not have cupid's training packages installed.
         conda_env = (
-            OmegaConf.select(baseline, "conda_env")
+            OmegaConf.select(baseline, "uv_env")
+            or OmegaConf.select(baseline, "conda_env")
+            or OmegaConf.select(cfg, "data_source.uv_env_train")
             or OmegaConf.select(cfg, "data_source.conda_env_train")
         )
         use_subprocess = bool(conda_env)

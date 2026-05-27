@@ -26,7 +26,7 @@ data_source:
   policy_stack: diffusion_transformer_hybrid_image
   attribution_stack: null
   visualization: artifact_agnostic
-  conda_env_train: robocasa
-  conda_env_datagen: robocasa
+  uv_env_train: robocasa
+  uv_env_datagen: robocasa
   robocasa_submodule: true
   mimicgen_submodule: false

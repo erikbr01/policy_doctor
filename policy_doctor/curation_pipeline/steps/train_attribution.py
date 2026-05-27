@@ -71,7 +71,9 @@ class TrainAttributionStep(PipelineStep[None]):
         if finalize_on_train is None:
             finalize_on_train = True
         conda_env = (
-            OmegaConf.select(attribution, "conda_env")
+            OmegaConf.select(attribution, "uv_env")
+            or OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.uv_env_train")
             or OmegaConf.select(cfg, "data_source.conda_env_train")
         )
 

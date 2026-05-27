@@ -14,8 +14,8 @@ config_dir: configs/image/robocasa_lerobot_atomic/diffusion_policy_transformer
 config_name: config.yaml
 policy: diffusion_transformer_hybrid_image
 
-# Conda env for training — triggers subprocess dispatch in train_baseline step.
-conda_env: robocasa
+# uv env for training — triggers subprocess dispatch in train_baseline step.
+uv_env: robocasa
 
 seeds: [0, 1, 2]
 num_epochs: 800

@@ -20,8 +20,8 @@ data_source:
   policy_stack: diffusion_unet_lowdim
   attribution_stack: trak_infembed
   visualization: artifact_agnostic
-  conda_env_train: mimicgen_torch2
-  conda_env_datagen: mimicgen_torch2
+  uv_env_train: mimicgen_torch2
+  uv_env_datagen: mimicgen_torch2
   robocasa_submodule: false
   mimicgen_submodule: true
 

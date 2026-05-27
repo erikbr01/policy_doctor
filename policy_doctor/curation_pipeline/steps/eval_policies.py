@@ -85,7 +85,9 @@ class EvalPoliciesStep(PipelineStep[None]):
         if eval_as_train_seed is None:
             eval_as_train_seed = True
         conda_env = (
-            OmegaConf.select(evaluation, "conda_env")
+            OmegaConf.select(evaluation, "uv_env")
+            or OmegaConf.select(evaluation, "conda_env")
+            or OmegaConf.select(cfg, "data_source.uv_env_train")
             or OmegaConf.select(cfg, "data_source.conda_env_train")
         )
 

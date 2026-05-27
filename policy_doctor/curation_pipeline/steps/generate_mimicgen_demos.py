@@ -491,10 +491,11 @@ class GenerateMimicgenDemosStep(PipelineStep[dict]):
                 "failed_eef_xyz": [],
             }
 
-        # --- Dispatch to mimicgen conda env ---
+        # --- Dispatch to mimicgen uv env ---
         # Allow config override so different worktrees can use different envs.
         mimicgen_env = (
-            OmegaConf.select(self.cfg, "data_source.conda_env_datagen")
+            OmegaConf.select(self.cfg, "data_source.uv_env_datagen")
+            or OmegaConf.select(self.cfg, "data_source.conda_env_datagen")
             or _MIMICGEN_CONDA_ENV_DEFAULT
         )
 

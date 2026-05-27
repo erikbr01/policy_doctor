@@ -1,13 +1,20 @@
 """Centralized helper for running pipeline steps in a target env.
 
 Replaces the previous ``subprocess.run(["conda", "run", "-n", <env>, ...])``
-pattern. Each step's config still specifies ``conda_env: <name>`` (or
-``data_source.conda_env_train``); this helper translates those names to the
+pattern. Each step's config specifies ``uv_env: <name>`` (or
+``data_source.uv_env_train``); this helper translates those names to the
 corresponding uv extra and dispatches via ``scripts/uv_env.sh``.
 
-The ``conda_env`` field name is preserved in YAML for backward compatibility
-with existing configs. It will be renamed to ``uv_env`` as part of Phase 5
-cleanup.
+Phase 5 renamed the YAML field from ``conda_env`` to ``uv_env``. Step config
+selectors still accept the legacy ``conda_env*`` keys as a fallback so
+external configs that haven't been migrated keep resolving.
+
+The stored value may be either:
+
+* A historical conda env name (``policy_doctor``, ``mimicgen_torch2``,
+  ``cupid_torch25``, ``robocasa``, ...) — translated via ``_ENV_NAME_MAP``.
+* A uv extra name directly (``analysis``, ``cupid``, ``mimicgen``,
+  ``robocasa``) — passed through unchanged.
 """
 
 from __future__ import annotations
@@ -16,9 +23,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-# Historical conda env names → new uv extra names. Anything not in this map
+# Historical conda env names → uv extra names. Anything not in this map
 # falls through unchanged so the existing extras (`analysis`, `cupid`,
-# `mimicgen`, `robocasa`) work without translation.
+# `mimicgen`, `robocasa`) work without translation. The legacy names are
+# retained here so YAMLs that still use ``conda_env: <legacy_name>`` keep
+# resolving via the backward-compat selector chain in each pipeline step.
 _ENV_NAME_MAP: dict[str, str] = {
     "policy_doctor": "analysis",
     "policy_doctor_dagger": "analysis",

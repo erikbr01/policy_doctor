@@ -22,7 +22,7 @@ data_source:
   policy_stack: diffusion_unet_lowdim
   attribution_stack: trak_infembed
   visualization: artifact_agnostic
-  conda_env_train: policy_doctor
-  conda_env_datagen: robocasa
+  uv_env_train: policy_doctor
+  uv_env_datagen: robocasa
   robocasa_submodule: true
   mimicgen_submodule: false

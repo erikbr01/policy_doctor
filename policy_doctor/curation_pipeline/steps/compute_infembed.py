@@ -71,7 +71,9 @@ class ComputeInfembedStep(PipelineStep[None]):
         overwrite = OmegaConf.select(attribution, "overwrite") or False
         model_keys = OmegaConf.select(attribution, "model_keys") or "model."
         conda_env = (
-            OmegaConf.select(attribution, "conda_env")
+            OmegaConf.select(attribution, "uv_env")
+            or OmegaConf.select(attribution, "conda_env")
+            or OmegaConf.select(cfg, "data_source.uv_env_train")
             or OmegaConf.select(cfg, "data_source.conda_env_train")
         )
 
