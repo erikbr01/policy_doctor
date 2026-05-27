@@ -343,3 +343,76 @@ The shell wrappers (`run_*.sh`, `train_*.sh`, `sweep_*.sh`) under `scripts/exper
 
 ### Plan impact
 - Phase 5 — partial close. Mechanical pieces landed (rename + scripts reorg + documentation of remaining work). Path-resolution dedup deferred to Phase 5/2 (cascade-blocked). HDF5 reader dedup deferred pending test fixtures. Pipeline-step promotion (the "everything is a pipeline" directive) explicitly carved out as Phase-5b with an inventory above so it can be picked up independently of the other phases.
+
+## 2026-05-27 — Phase 6 complete — PR ready
+
+The refactor branch is ready for review. Three Phase 6 commits closed out the loose ends:
+
+| Commit | Subject |
+|--------|---------|
+| `154ef7c` | refactor(phase-6): delete legacy conda env yamls + setup scripts |
+| `db361b2` | refactor(phase-6): rewrite CLAUDE.md, README.md, deploy/README.md for new uv + experiment-centric world |
+| (this commit) | refactor(phase-6): final smoke test passes; refactor branch ready for review |
+
+### Full commit chain ahead of `main`
+
+```
+(phase 6) refactor(phase-6): final smoke test passes; refactor branch ready for review
+db361b2   refactor(phase-6): rewrite CLAUDE.md, README.md, deploy/README.md ...
+154ef7c   refactor(phase-6): delete legacy conda env yamls + setup scripts
+d6df25b   refactor(phase-5): document deferred dedup/pipeline-migration scope
+1b16eed   refactor(phase-5): reorganize scripts/ into experiments/dev/setup
+73527ec   refactor(phase-5): rename conda_env → uv_env in configs + dispatch sites
+fe345cf   refactor(phase-4): delete deprecated non-Streamlit viz
+c20f18a   refactor(phase-3): delete third_party/influence_visualizer/ Python package
+4fe04a3   refactor(phase-3): absorb influence_visualizer into policy_doctor.influence
+860130f   refactor(phase-2): experiment-bundle CLI
+c05b395   refactor(phase-2): seed_dir/ckpt_dir helpers + experiment-init CLI
+3f53955   refactor(phase-2): bridge CurationPipeline ↔ Experiment
+8f0cd18   refactor(phase-2): add policy_doctor.experiment foundation
+9571632   refactor(plan): incorporate Phase 2 design decisions and scripts-as-pipeline directive
+d935bb8   refactor(phase-1): mark phase 1 substantially complete; fold yaml cleanup into phase 6
+89b27a2   refactor(phase-1): migrate pipeline subprocess dispatch to uv via _env helper
+4bd8c09   refactor(phase-1): add cupid/mimicgen/robocasa sim extras + workspace
+ec413d0   refactor(phase-1): uv_env.sh --setup exits cleanly when no command given
+17f15aa   refactor(phase-1): uv analysis env replaces policy_doctor conda env
+c8ef8b1   refactor(phase-0): add fourth golden anchor for MimicGen seed selection
+c0a0066   refactor(phase-0): golden-snapshot tool and three correctness anchors
+930918f   refactor(phase-0): add plan and findings doc
+```
+
+### Test state at PR time
+
+- `./scripts/uv_env.sh analysis pytest tests/golden/ tests/experiment/ tests/test_env_dispatch.py` — **40 passed**.
+  - `tests/golden/` (4): goldens for clustering, behavior graph, MimicGen seed selection.
+  - `tests/experiment/` (25): `test_bundle_cli` (3), `test_cli` (5), `test_experiment` (12), `test_pipeline_integration` (5).
+  - `tests/test_env_dispatch.py` (11): uv-based env-dispatch helper.
+
+### End-to-end CLI smoke tests (Phase 6)
+
+- `python -m policy_doctor.scripts.experiment_init smoke_test` — created `data/experiments/smoke_test/{manifest.yaml,config/,shared/,artifacts/,logs/}`.
+- `python -m policy_doctor.scripts.experiment_bundle smoke_test --out /tmp/smoke.tar.gz` — emitted the tarball (0.0 MB; empty experiment).
+- `py_compile` of all three Streamlit entry points (`policy_doctor/streamlit_app/app.py`, `demo_app/Home.py`, `survey_app/Home.py`) — clean.
+
+### What you can do on this branch today
+
+- `./scripts/uv_env.sh analysis --setup` then run the 40-test suite.
+- Create + bundle experiments via the new CLIs.
+- Run the curation pipeline; steps that need a different env (training, MimicGen) dispatch through `policy_doctor._env.run_in_env` (uv-based, no conda).
+- Use the absorbed `policy_doctor.influence` package (loader, clustering_io, frames, annotations, lazy_hdf5, path_helpers) — no `third_party/influence_visualizer` dependency.
+- Launch all three Streamlit apps via the `analysis` env.
+
+### Deferred work — ordered by priority for follow-up PRs
+
+1. **(highest)** Strip `train_date` / `eval_date` from configs and migrate pipeline step path construction to use `Experiment.seed_dir()` / `ckpt_dir()`. The experiment-centric layer (`policy_doctor.experiment`) is in place and tested (`tests/experiment/test_pipeline_integration.py`), but pipeline steps still build paths from the legacy `data/outputs/train/<date>/...` convention internally. Until that lands, the experiment layer is opt-in for new code; existing pipeline runs keep the old layout. Cascade-blocks the path-resolution dedup below.
+2. **Path-resolution dedup** — `policy_doctor.paths`, `policy_doctor/curation_pipeline/paths.py`, `policy_doctor/influence/path_helpers.py`, `policy_doctor/experiment/paths.py` carry overlapping responsibilities. Collapse once #1 lands.
+3. **Phase-5b: scripts → pipeline migration.** Inventory in the previous findings entry. High-leverage starting point: `monitor_*`, `run_dagger`, `build_*` (already invoked from `scripts/experiments/_lib.sh`, i.e. they're orchestration glue, not research drivers).
+4. **Linux validation of `cupid` / `mimicgen` / `robocasa` extras.** They're locked in `pyproject.toml` + `uv.lock` but the heavy transitive sim deps (`free-mujoco-py`, legacy `dm-control` chain) have only been validated on macOS in `--setup` mode; need a Linux x86_64 + Python 3.10 box to confirm `pytest tests/cupid/` and `tests/mimicgen/` still pass end-to-end.
+5. **Docs migration under `docs/`.** 12 files still contain `conda activate` / `conda run -n` recipes: `kendama_retraining.md`, `mimicgen_pipeline_speedup_plan.md`, `experiment_log_failure_targeting_may11.md`, `operator_e2_quickstart.md`, `mimicgen_seed_selection_apr23.md`, `DAGGER_GUIDE.md`, `droid_robot_setup.md`, `data_support.md`, `constrained_generation_results.md`, `monitoring.md`, `experiments/experiment_e2_agent_proposals.md`, `experiments/pi05_libero_behavior_graphs.md`. None of these are referenced from the rewritten top-level docs as the canonical source. Migrate incrementally as each doc gets touched again.
+6. **HDF5 reader dedup** — inventoried in Phase 5; deferred pending HDF5 test fixtures.
+7. **`infembed` package relocation.** Currently editable-installed from `third_party/cupid/third_party/infembed/`. Once Phase-5b lands and cupid/influence boundaries are crisper, infembed can move to a top-level `third_party/infembed/` or be promoted into `policy_doctor.influence`.
+8. **`.gitleaks.toml` cleanup.** Three orphan entries (`environment_policy_doctor.yaml`, `environment_mimicgen_torch2.yaml`, `environment_robocasa.yaml`) in the allowlist now reference non-existent files. Harmless but stale.
+9. **String-only conda mentions in source.** `policy_doctor/paths.py:30` and `tests/support/mimicgen_seed/pipeline.py:7,81` contain comment / error-message strings that mention `environment_*.yaml` and `conda activate <env>`. Code is functionally correct (uv-based); only the prose is stale.
+
+### Plan impact
+- Phase 6 — **closed**. Refactor branch (`refactor/clean-architecture`) is at 23 commits ahead of `main` and is ready for the user to open the PR. The deferred items above are intentional follow-ups, not blockers.
