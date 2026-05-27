@@ -4,216 +4,185 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+All commands run from the project root (the directory containing `pyproject.toml`) via the `uv_env.sh` dispatcher — there is no `conda activate` step.
+
 ```bash
-# Tests — run from project root with matching conda env active
-python run_tests.py --suite policy_doctor   # orchestration, data, behaviors, VLM (policy_doctor env)
-python run_tests.py --suite cupid           # diffusion_policy integration (cupid env)
-python run_tests.py --suite mimicgen        # MimicGen seeds (mimicgen env)
+# One-time: provision a uv-managed venv per extra (analysis | cupid | mimicgen | robocasa)
+./scripts/uv_env.sh analysis --setup
 
-# Shell wrappers (handle conda activation automatically):
-./scripts/run_tests_policy_doctor.sh
-./scripts/run_tests_cupid.sh
-./scripts/run_tests_mimicgen.sh
+# Tests — the canonical 40-test golden / experiment / env-dispatch suite
+./scripts/uv_env.sh analysis pytest tests/golden/ tests/experiment/ tests/test_env_dispatch.py
 
-# Run a single test module
-conda activate policy_doctor && python -m unittest tests.behaviors.test_behavior_graph -v
+# Other test slices
+./scripts/uv_env.sh analysis pytest tests/                  # full analysis-side suite
+./scripts/uv_env.sh cupid    pytest tests/cupid/            # diffusion_policy integration
+./scripts/uv_env.sh mimicgen pytest tests/mimicgen/         # MimicGen seeds + sim
 
 # Pipeline (Hydra entry point)
-python -m policy_doctor.scripts.run_pipeline steps=[run_clustering] task_config=transport_mh_jan28
-python -m policy_doctor.scripts.run_pipeline +experiment=trak_filtering_mar13_p96 \
-  steps=[run_clustering,run_curation_config,train_curated,eval_curated]
-python -m policy_doctor.scripts.run_pipeline steps=[eval_policies] dry_run=true train_date=jan28 eval_date=jan28
+./scripts/uv_env.sh analysis python -m policy_doctor.scripts.run_pipeline \
+    steps=[run_clustering] task_config=transport_mh_jan28
+./scripts/uv_env.sh analysis python -m policy_doctor.scripts.run_pipeline \
+    +experiment=trak_filtering_mar13_p96 \
+    steps=[run_clustering,run_curation_config,train_curated,eval_curated]
 
-# MimicGen full experiment (select seed → generate → train → eval for all arms)
-python -m policy_doctor.scripts.run_pipeline \
-  data_source=mimicgen_square \
-  experiment=mimicgen_square_pipeline_apr23
+# Experiments — create a self-contained on-disk experiment dir
+./scripts/uv_env.sh analysis python -m policy_doctor.scripts.experiment_init <name> \
+    [--baseline-from <other>]
+./scripts/uv_env.sh analysis python -m policy_doctor.scripts.experiment_bundle <name> \
+    --out /tmp/<name>.tar.gz
 
-# MimicGen ablations reusing an existing run_dir (run in same run_dir as main experiment)
-python -m policy_doctor.scripts.run_pipeline \
-  data_source=mimicgen_square \
-  experiment=mimicgen_square_ablations_apr23 \
-  steps=[mimicgen_random_20,mimicgen_behavior_graph_20]
+# MimicGen full experiment (select seed -> generate -> train -> eval for all arms)
+./scripts/uv_env.sh mimicgen python -m policy_doctor.scripts.run_pipeline \
+    data_source=mimicgen_square \
+    experiment=mimicgen_square_pipeline_apr23
 
-# MimicGen variance sweep (standalone, no pipeline — ablates generation knobs on D0)
-./scripts/run_variance_sweep.sh       # generates to /tmp/mimicgen_variance_sweep/
-./scripts/run_variance_sweep_finish.sh  # re-runs last arm + plots all
-
-# Plot EEF trajectories from a variance run result.json
-conda activate policy_doctor && python scripts/plot_mimicgen_eef_from_result.py \
-  --result /tmp/mimicgen_variance_sweep/A_baseline/result.json \
-  --out_dir /tmp/out/A_baseline
-
-# Training (bypasses pipeline, wraps cupid/train.py)
+# Training (bypasses pipeline)
+./scripts/uv_env.sh cupid    python third_party/cupid/train.py --config-name=...
+./scripts/uv_env.sh mimicgen python third_party/cupid/train.py --config-name=...
+# Wrapper scripts forward extra args as Hydra overrides:
 ./scripts/experiments/train_robomimic_square.sh --compile --tf32
-./scripts/experiments/train_robomimic_square.sh --num-gpus 2 --compile --tf32
-./scripts/experiments/train_mimicgen_square.sh --compile training.device=cuda:1
-./scripts/experiments/train_robocasa_atomic.sh OpenCabinet
+./scripts/experiments/train_mimicgen_square.sh  --compile training.device=cuda:1
+./scripts/experiments/train_robocasa_atomic.sh  OpenCabinet
 
-# Attribution
-python -m policy_doctor.scripts.run_pipeline steps=[train_attribution] \
-  attribution.tf32=false attribution.compile=false train_date=jan18 eval_date=jan28
+# Runtime monitoring — classify policy behavior per-timestep
+./scripts/uv_env.sh analysis python scripts/experiments/monitor_online.py \
+    --output_dir /tmp/out --train_dir <dir> --train_ckpt best \
+    --infembed_fit <pt> --infembed_npz <npz> --clustering_dir <dir> \
+    --episodes_dir <eval_dir>/episodes        # required when clustering level is "rollout"
 
-# Runtime monitoring — classify policy behavior per-timestep (policy_doctor env)
-# Run from third_party/cupid/ (diffusion_policy must be on PYTHONPATH)
-python ../../scripts/monitor_online.py \
-  --output_dir /tmp/out --train_dir <dir> --train_ckpt best \
-  --infembed_fit <pt> --infembed_npz <npz> --clustering_dir <dir> \
-  --episodes_dir <eval_dir>/episodes   # required when clustering level is "rollout"
-
-# Offline monitoring of a saved rollout pkl or HDF5 demo
-python scripts/monitor_offline.py \
-  --episode <pkl> --checkpoint <ckpt> \
-  --infembed_fit <pt> --infembed_npz <npz> --clustering_dir <dir>
-
-# Streamlit app
-conda activate policy_doctor && streamlit run policy_doctor/streamlit_app/app.py
+# Streamlit apps
+./scripts/uv_env.sh analysis streamlit run policy_doctor/streamlit_app/app.py
+./scripts/uv_env.sh analysis streamlit run policy_doctor/streamlit_app/demo_app/Home.py
+./scripts/uv_env.sh analysis streamlit run policy_doctor/streamlit_app/user_study/Home.py
 ```
 
 ## Architecture
 
-### Conda environment split
+### uv workspace + per-extra venvs
 
-The codebase uses two torch-2 conda environments. The legacy `cupid` / `cupid_torch2` / `mimicgen` envs (PyTorch 1.12, MuJoCo 2.3) have been retired.
+The repo is a single uv workspace (`pyproject.toml` + `uv.lock`). Each extra under `[project.optional-dependencies]` maps to one venv under `.venvs/<extra>/`:
 
-| Env | Use for |
-|-----|---------|
-| `policy_doctor` | Analysis, clustering, pipeline orchestration, Streamlit, InfEmbed attribution, runtime monitoring, TRAK featurization. The default analysis env — anything that doesn't touch the simulator. |
-| `mimicgen_torch2` | **Primary training/eval/sim env**: clone of `policy_doctor` + robosuite 1.4.1 + robomimic 0.3.0 + mimicgen 1.0.0. Use for `train.py`, `eval_save_episodes.py`, and all MimicGen generation. |
-| `cupid_torch25` | **torch 2.5.1+cu124** upgrade; fixes the torch 2.4.x TensorAlias AOT-autograd bug so `obs_encoder` can be compiled — full `torch.compile` gives **1.19× fwd+bwd** vs eager. See `scripts/create_cupid_torch25.sh`. |
+| Extra | Role |
+|-------|------|
+| `analysis` | Default env. Orchestration, clustering, behavior graph, Streamlit, InfEmbed post-processing, runtime monitoring, TRAK featurization. No simulator deps. |
+| `cupid` | robomimic 0.2.0 + robosuite 1.2.0 + mujoco 3.2.6. For diffusion-policy training, `eval_save_episodes`, TRAK / InfEmbed online steps. |
+| `mimicgen` | robosuite 1.4.1 + robomimic 0.3.0 + mimicgen 1.0.0 + mujoco 3.3.7. For MimicGen generation and MimicGen-trained policies. |
+| `robocasa` | robosuite 1.5.2 + robocasa for kitchen-sim tasks. |
+| `dev` | pytest + tooling. Added implicitly by `uv_env.sh --setup`. |
 
-Bootstrap with `./scripts/setup_torch2_envs.sh` (creates `policy_doctor` from `environment_policy_doctor.yaml`, clones to `mimicgen_torch2`, adds sim deps).
+`scripts/uv_env.sh <extra> <cmd...>` exports `UV_PROJECT_ENVIRONMENT=.venvs/<extra>` and execs `uv run --no-sync <cmd>`. First-use auto-syncs; pass `--setup` to (re)create the env without running anything. The legacy `scripts/setup/uv_env.sh` is the canonical path; `scripts/uv_env.sh` is a symlink.
+
+Pipeline steps that need a different env (e.g. `train_curated` shells out to `cupid`, `generate_mimicgen_demos` to `mimicgen`) dispatch through `policy_doctor/_env.py::run_in_env`, which builds the right `uv run --extra <name>` command line.
 
 ### Three-package layout
 
-`third_party/cupid` and `third_party/influence_visualizer` are editable installs alongside the main `policy_doctor` package:
+`third_party/cupid` is the only remaining editable workspace member; `third_party/influence_visualizer` was absorbed into `policy_doctor.influence` in Phase 3.
 
-- **`policy_doctor/`** — attribution analysis, data structures, clustering, behavior graph, curation logic, Hydra pipeline orchestration, Streamlit UI
-- **`third_party/cupid/`** — diffusion policy training workspace (`train.py`), TRAK (`train_trak_diffusion.py`), InfEmbed (`compute_infembed_embeddings.py`), `eval_save_episodes.py`; packaged as `cupid-workspace`
-- **`third_party/influence_visualizer/`** — data loading from disk (HDF5, TRAK results), clustering persistence, Streamlit render helpers
+- **`policy_doctor/`** — attribution analysis, data structures, clustering, behavior graph, curation logic, Hydra pipeline orchestration, experiment layer, Streamlit UI, influence-data loaders.
+- **`third_party/cupid/`** — diffusion policy training workspace (`train.py`), TRAK (`train_trak_diffusion.py`), InfEmbed (`compute_infembed_embeddings.py`), `eval_save_episodes.py`. Packaged as `cupid-workspace`.
 
-### Path resolution: REPO_ROOT vs PROJECT_ROOT
+### Experiment layer (`policy_doctor.experiment`)
 
-`policy_doctor.paths` exposes several roots:
+The experiment-centric artifact layout is the new canonical on-disk shape. Each named experiment is a self-contained directory under `<repo>/data/experiments/<name>/` (override via `$POLICY_DOCTOR_DATA`):
 
-- `PACKAGE_ROOT` = `policy_doctor/policy_doctor/` (where configs, curation_pipeline live)
-- `PROJECT_ROOT` = `policy_doctor/` (pyproject.toml, tests/, scripts/)
-- `REPO_ROOT` = `third_party/cupid` when that directory exists — **training, eval, and attribution scripts resolve `data/outputs/...` from here**, not `PROJECT_ROOT`
-- `DATA_SOURCE_ROOT` = `PROJECT_ROOT/data/source/` — local HDF5 datasets (gitignored; symlink or pass absolute path to `baseline.diffusion_dataset_path`)
+```
+data/experiments/<name>/
+    manifest.yaml          # name, created_at, baseline_from, free-form keys
+    config/                # snapshot_<utc>.yaml + canonical.yaml symlink to the first one
+    shared/                # baseline_ckpt, source datasets (hard-copied on bundle)
+    artifacts/<step>/      # one dir per pipeline step
+        seed_<seed>/       # one dir per training seed
+            <ckpt>/        # one dir per eval checkpoint
+    logs/<label>_<utc>.log # per-invocation logs
+```
 
-Consequence: pipeline run directories default to `third_party/cupid/data/pipeline_runs/<run_name>/` and checkpoints under `third_party/cupid/data/outputs/train/...`.
+CLI surface:
 
-Training artifact path pattern: `data/outputs/train/<train_date>/<train_date>_train_<policy>_<task>_<seed>/` (see `curation_pipeline/paths.py:get_train_dir`).
+- `python -m policy_doctor.scripts.experiment_init <name> [--baseline-from <other>]` creates the skeleton and hard-copies an upstream baseline checkpoint.
+- `python -m policy_doctor.scripts.experiment_bundle <name> --out <tar.gz>` dereferences symlinks under `shared/` and tarballs the dir for cross-machine transfer.
+
+`Experiment.step_dir`, `seed_dir`, `ckpt_dir` are the canonical path helpers. `append_config_snapshot` records the resolved Hydra config per invocation. The `CurationPipeline` bridge (`policy_doctor/curation_pipeline/`) accepts an `Experiment` and routes its artifacts into `artifacts/`.
+
+**Deferred:** pipeline steps still construct internal paths from `train_date`/`eval_date` in the legacy `data/outputs/train/<date>/...` layout. The experiment layer is in place but not yet wired into every step — the migration is the #1 follow-up after this refactor lands.
+
+### Path resolution
+
+`policy_doctor.paths` exposes:
+
+- `PACKAGE_ROOT` = `policy_doctor/policy_doctor/`
+- `PROJECT_ROOT` = repo root
+- `REPO_ROOT` = `third_party/cupid` when that directory exists — training / eval / attribution still resolve `data/outputs/...` from here
+- `DATA_SOURCE_ROOT` = `<PROJECT_ROOT>/data/source/`
+- `data_root()` (in `policy_doctor.experiment.paths`) = `$POLICY_DOCTOR_DATA` or `<PROJECT_ROOT>/data/`; `experiment_dir(name)` returns `data_root()/experiments/<name>/`.
 
 ### Attribution methods
 
-Both TRAK and InfEmbed compute pairwise influence between rollout (test) samples and training demonstrations:
+Both TRAK and InfEmbed compute pairwise influence between rollout (test) samples and training demonstrations.
 
-**TRAK** (`train_trak_diffusion.py`):
-1. Offline: `traker.featurize()` computes per-sample gradients and projects them to `proj_dim` (default 2048) via random Johnson-Lindenstrauss projection — this is the cacheable low-dim projection
-2. Offline: `traker.finalize_features()` approximates the (regularized) Hessian from the projected gradients
-3. Online: `traker.score()` computes projected gradients for test samples and dots them against the cached Hessian-inverse-weighted train projections
-4. Output: `(num_train_samples, num_test_samples)` influence matrix; called "TRAK scores"
+**TRAK** (`train_trak_diffusion.py`): `traker.featurize()` projects per-sample grads via Johnson-Lindenstrauss to `proj_dim` (default 2048); `finalize_features()` approximates the regularized Hessian; `score()` dots test-sample projections against the cached Hessian-inverse-weighted train projections. Output: `(num_train_samples, num_test_samples)` influence matrix.
 
-**InfEmbed** (`compute_infembed_embeddings.py`):
-1. Offline: `ArnoldiEmbedder.fit()` uses Arnoldi iteration to find the `arnoldi_dim` (default 200) dominant eigenvectors of the Gauss-Newton Hessian of the training loss — this approximates `H^{-1/2}` and is the cacheable Hessian factor
-2. Online: `ArnoldiEmbedder.predict()` projects gradients of any sample (train or rollout) into the `projection_dim` (default 100) embedding space using the fitted Hessian factor
-3. Output: per-sample embeddings in R^100; influence between two samples ≈ dot product of their embeddings
-4. Both use JL-style dimensionality reduction — TRAK at the projection step; InfEmbed implicitly via the Arnoldi truncation
+**InfEmbed** (`compute_infembed_embeddings.py`): `ArnoldiEmbedder.fit()` finds the `arnoldi_dim` (default 200) dominant eigenvectors of the Gauss-Newton Hessian — this approximates `H^{-1/2}` and is the cacheable factor. `predict()` projects gradients into the `projection_dim` (default 100) space. Influence ≈ dot product of embeddings.
 
-The InfEmbed fit (`infembed_fit.pt`) and TRAK projections are both disk-cached — only the predict step needs to run for new samples.
+Both fits are disk-cached; only `predict`/`score` needs to run for new samples. `infembed` is installed as a workspace member (`third_party/cupid/third_party/infembed/`).
 
 ### Influence matrix and data structures
 
-The core data structure is `GlobalInfluenceMatrix` (`policy_doctor/data/structures.py`): a `(num_rollout_samples, num_demo_samples)` float32 matrix where each cell is the scalar influence of one training demo sample on one rollout sample. Access via `get_slice(r_lo, r_hi, d_lo, d_hi)` — never index directly, as the backing store may be a memmap.
+`GlobalInfluenceMatrix` (`policy_doctor/data/structures.py`) is a `(num_rollout_samples, num_demo_samples)` float32 matrix. Access via `get_slice(r_lo, r_hi, d_lo, d_hi)` — never index directly, as the backing store may be memmapped. `get_local_matrix(rollout_idx, demo_idx)` returns a `LocalInfluenceMatrix` for one trajectory pair.
 
-Episodes are represented as `EpisodeInfo` (index, num_samples, sample_start_idx, sample_end_idx, success). Global indices in the matrix are contiguous across episodes; per-episode offsets are stored in `sample_start_idx`/`sample_end_idx`.
-
-`GlobalInfluenceMatrix.get_local_matrix(rollout_idx, demo_idx)` returns a `LocalInfluenceMatrix` for one trajectory pair.
+Episodes are `EpisodeInfo(index, num_samples, sample_start_idx, sample_end_idx, success)`. Global indices in the matrix are contiguous; per-episode offsets are stored in `sample_start_idx` / `sample_end_idx`.
 
 ### Behavior graph and clustering
 
-The clustering → behavior graph pipeline:
+`policy_doctor/computations/embeddings.py` extracts per-timestep embeddings by summing the influence matrix along one axis. `policy_doctor/behaviors/clustering.py::reduce_dimensions()` runs UMAP (default) or PCA; `run_clustering()` runs HDBSCAN / GMM / KMeans. `policy_doctor/behaviors/behavior_graph.py::BehaviorGraph.from_cluster_assignments()` builds a Markov chain from run-length-collapsed cluster sequences per episode. Nodes: behavioral clusters + START/SUCCESS/FAILURE/END. `compute_values()` solves linear Bellman equations to assign V-values.
 
-1. **Embeddings**: `policy_doctor/computations/embeddings.py` extracts per-timestep embeddings from the influence matrix by summing along one axis. The result is `(num_rollout_samples, num_demo_samples)` — each row is a rollout timestep embedded in "demo influence space"
-2. **Dimensionality reduction**: `policy_doctor/behaviors/clustering.py` → `reduce_dimensions()` (UMAP or PCA, default UMAP to 2D)
-3. **Clustering**: `run_clustering()` runs HDBSCAN / GMM / KMeans on the (optionally normalized) embeddings; returns per-timestep `cluster_labels` and 2D `coords`
-4. **Behavior graph**: `policy_doctor/behaviors/behavior_graph.py` → `BehaviorGraph.from_cluster_assignments()` builds a Markov chain from run-length-collapsed cluster sequences per episode. Nodes: behavioral clusters + START/SUCCESS/FAILURE/END. Edges: transition counts and probabilities. `compute_values()` solves linear Bellman equations to assign V-values to each node
+### Influence package (`policy_doctor.influence`)
 
-The graph is used for two things: visualization (Streamlit, Pyvis) and slice search — `get_rollout_slices_for_paths()` extracts the raw timestep spans from episodes that follow a given path through the graph.
+Absorbed from the former `third_party/influence_visualizer` in Phase 3. Loads HDF5 demos and TRAK results, persists clusterings, and supplies the Streamlit-side data helpers. Public surface: `loader.py`, `clustering_io.py`, `annotations.py`, `frames.py`, `lazy_hdf5.py`, `path_helpers.py`.
 
 ### Pipeline step system
 
-`policy_doctor/curation_pipeline/pipeline.py` orchestrates steps in `ALL_STEPS` order. Each step:
-- Inherits from `PipelineStep` (`base_step.py`)
-- Writes `<run_dir>/<step_name>/done` as a sentinel on completion
-- Writes `<run_dir>/<step_name>/result.json` with its outputs (e.g. clustering dir paths)
-- `skip_if_done=true` (default) means re-running resumes from the last incomplete step
-- Steps that invoke the sim stack (`train_attribution`, `compute_infembed`, `train_curated`, etc.) shell out to `conda run -n cupid` to use the correct environment
+`policy_doctor/curation_pipeline/pipeline.py` orchestrates steps in `ALL_STEPS` order. Each `PipelineStep`:
 
-**`CompositeStep`** (`base_step.py`) groups a fixed sub-step sequence under one namespace:
-- Sub-steps write to `<run_dir>/<composite_name>/<sub_step_name>/`; resumability is per-sub-step
-- Sub-steps can still read sibling top-level step results (e.g. `run_clustering/`) via `parent_run_dir`, which is transparently set to the top-level run root
-- Subclasses declare `sub_step_classes` (ordered list) and `cfg_overrides` (dotpath→value applied before any sub-step)
+- Writes `<run_dir>/<step_name>/done` as a completion sentinel.
+- Writes `<run_dir>/<step_name>/result.json` with its outputs.
+- Respects `skip_if_done=true` (default) to resume from the last incomplete step.
+- Shells out via `policy_doctor._env.run_in_env(extra, cmd)` for steps that need a different uv env (e.g. `train_curated` in `cupid`, `generate_mimicgen_demos` in `mimicgen`).
+
+`CompositeStep` groups a fixed sub-step sequence under one namespace (sub-steps land in `<run_dir>/<composite_name>/<sub_step>/`). Sub-steps still read sibling top-level results via `parent_run_dir`.
 
 ### MimicGen trajectory generation pipeline
 
-The MimicGen experiment tests whether behavior-graph-guided seed selection improves generated data quality. The pipeline compares three heuristics, all sharing upstream `run_clustering` results:
+Tests whether behavior-graph-guided seed selection improves generated data quality. Three heuristics share upstream `run_clustering`:
 
-**Seed selection heuristics** (`policy_doctor/mimicgen/heuristics.py`):
-- `BehaviorGraphPathHeuristic` — ranks paths to SUCCESS by probability, returns rollouts matching the highest-probability path (proposed method)
-- `DiversitySelectionHeuristic` — takes one rollout per path before moving to the next, maximizing behavioral diversity across seeds
-- `RandomSelectionHeuristic` — uniform random from eligible (successful) rollouts (baseline)
+- `BehaviorGraphPathHeuristic` (proposed) — ranks paths to SUCCESS by probability.
+- `DiversitySelectionHeuristic` — one rollout per path before moving to the next.
+- `RandomSelectionHeuristic` (baseline) — uniform from eligible (successful) rollouts.
 
-**Sub-step sequence per arm** (implemented as `CompositeStep` in `steps/mimicgen_arm.py`):
-1. `select_mimicgen_seed_from_graph` — uses behavior graph to pick N seed rollouts; materializes `seed.hdf5`
-2. `generate_mimicgen_demos` — runs MimicGen in `mimicgen_torch2` env; auto-wires to `seed.hdf5` from prior step
-3. `train_on_combined_data` — merges original + generated HDF5, trains policy in `mimicgen_torch2` env
-4. `eval_mimicgen_combined` — evaluates the retrained policy
-
-**Run directory layout** with multiple arms sharing a run:
-```
-<run_dir>/
-    run_clustering/               # shared upstream result
-    mimicgen_random/              # CompositeStep arm: random heuristic
-        select_mimicgen_seed_from_graph/
-        generate_mimicgen_demos/
-        train_on_combined_data/
-    mimicgen_behavior_graph/      # CompositeStep arm: BG heuristic
-    mimicgen_diversity/           # CompositeStep arm: diversity heuristic
-```
-
-**Adding a new arm**: subclass `CompositeStep`, set `name`, `sub_step_classes = _SUB_STEPS`, and `cfg_overrides`, then register in `pipeline.py`'s `ALL_STEPS` and `_build_step_registry()`.
-
-**MimicGen generation parameters** live in `policy_doctor/configs/mimicgen/<task>.yaml` (e.g. `square_d0.yaml`, `square_d1.yaml`). Key variance knobs: `action_noise`, `subtask_term_offset_range`, `nn_k`, `interpolate_from_last_target_pose`, `fix_initial_object_poses`, `object_pose_ranges` (per-object, per-axis offset from seed pose).
+Sub-step sequence per arm (`policy_doctor/curation_pipeline/steps/mimicgen_arm.py`): `select_mimicgen_seed_from_graph` → `generate_mimicgen_demos` → `train_on_combined_data` → `eval_mimicgen_combined`. Multiple arms share a run by writing to `mimicgen_<heuristic>/` under the same run dir. Generation knobs live in `policy_doctor/configs/mimicgen/<task>.yaml`.
 
 ### Streamlit / visualization separation
 
-Strict separation (enforced in `third_party/cupid/CLAUDE.md` and followed throughout):
-- **`render_*.py`** files contain all Streamlit UI (buttons, sliders, `st.*`) and data preprocessing
-- **`policy_doctor/plotting/`** contains pure functions that accept preprocessed data and return `plotly.Figure` objects — no Streamlit imports
-- Plotting functions are exported from `policy_doctor/plotting/__init__.py`
-- Never import Streamlit in plotting modules; never create Plotly figures inside render functions
+Strict separation, enforced throughout:
+
+- `render_*.py` files contain all Streamlit UI (`st.*`) and data preprocessing.
+- `policy_doctor/plotting/` contains pure functions that accept preprocessed data and return `plotly.Figure` objects — no Streamlit imports.
+- Plotting functions are exported from `policy_doctor/plotting/__init__.py`.
+
+Streamlit is the only viz surface that ships with the repo. Three apps live under `policy_doctor/streamlit_app/`: `app.py` (main analysis UI), `demo_app/Home.py` (researcher graph explorer), `user_study/Home.py` and `survey_app/Home.py` (participant survey app). The non-Streamlit viz scripts were removed in Phase 4.
 
 ### Data support (`policy_doctor/behaviors/data_support.py`)
 
-Per-cluster diagnostic that measures how well each behavior-graph node is supported by the training distribution. Joint UMAP fit on demo + rollout windows + BallTree over demo points; metric registry (count-in-radius, kNN distance, KDE log-density, binary coverage) with per-cluster summary stats. Scoped to `influence_source == "policy_emb"` clusterings only. Writes `data_support.json` next to `cluster_labels.npy`; surfaced as a "Data support" color mode in the Streamlit graph demo. Full documentation in `docs/data_support.md`.
+Per-cluster diagnostic that measures how well each behavior-graph node is supported by the training distribution. Joint UMAP fit on demo + rollout windows, BallTree over demo points, metric registry (count-in-radius, kNN distance, KDE log-density, binary coverage). Scoped to `influence_source == "policy_emb"` clusterings. Writes `data_support.json` next to `cluster_labels.npy`. Full docs: `docs/data_support.md`.
 
 ### Runtime monitoring (`policy_doctor/monitoring/`)
 
-Assigns each policy timestep to a behavior graph node in real time. Full documentation in `docs/monitoring.md`.
-
-Component layers: `InfEmbedStreamScorer` → `FittedModelAssigner` / `NearestCentroidAssigner` → `StreamMonitor` → `TrajectoryClassifier` → `MonitoredPolicy`. The scorer, assigner and graph all run in `policy_doctor`.
-
-`FittedModelAssigner` requires `clustering_models.pkl` in the clustering directory (saved by `run_clustering` step). If absent, `NearestCentroidAssigner` is used as a fallback (nearest centroid in raw embedding space). When clustering level is `"rollout"` (the default), pass `--episodes_dir` to both online/offline scripts so window-mean embeddings can be computed from `metadata.yaml`.
-
-`infembed` is installed as a package in `policy_doctor` via `pip install -e third_party/cupid/third_party/infembed`.
+Assigns each policy timestep to a behavior graph node in real time. Layers: `InfEmbedStreamScorer` → `FittedModelAssigner` / `NearestCentroidAssigner` → `StreamMonitor` → `TrajectoryClassifier` → `MonitoredPolicy`. `FittedModelAssigner` requires `clustering_models.pkl` in the clustering dir; otherwise falls back to `NearestCentroidAssigner`. When clustering level is `"rollout"`, pass `--episodes_dir` so window-mean embeddings can be computed. Full docs: `docs/monitoring.md`.
 
 ### Hydra config layout
 
-- Base config: `policy_doctor/configs/config.yaml` — sets defaults for `data_source`, `pipeline/config`, `vlm/defaults`, and `experiment: null`
-- Task/simulator profile: `data_source` group (`cupid_robomimic`, `mimicgen_square`, `robocasa_layout`)
-- MimicGen generation params: `mimicgen` group (`square_d0`, `square_d1`, `coffee`, `threading`) — load with `mimicgen=square_d1` or inline under `mimicgen_datagen:` in experiment YAML
-- Robomimic-specific slices: `policy_doctor/configs/robomimic/` (tasks, baseline, evaluation, attribution, curation_filtering, curation_selection)
-- Experiment presets: `policy_doctor/configs/experiment/` — selected with `+experiment=name` (the `+` is needed when adding a new defaults group not present in the base config)
-- Attribution compile/tf32 flags live in YAML (`attribution.tf32`, `attribution.compile`), not CLI flags like training scripts
+- Base: `policy_doctor/configs/config.yaml` — sets defaults for `data_source`, `pipeline/config`, `vlm/defaults`, `experiment: null`.
+- `data_source` group (`cupid_robomimic`, `mimicgen_square`, `robocasa_layout`).
+- `mimicgen` group (`square_d0`, `square_d1`, `coffee`, `threading`) — load with `mimicgen=square_d1`.
+- Robomimic-specific slices: `policy_doctor/configs/robomimic/` (tasks, baseline, evaluation, attribution, curation_filtering, curation_selection).
+- Experiment presets: `policy_doctor/configs/experiment/` — select with `+experiment=name`.
+- Attribution `tf32` / `compile` flags live in YAML (`attribution.tf32`, `attribution.compile`), not CLI flags like training scripts.

@@ -715,16 +715,14 @@ gcloud compute ssh user-study-test --zone us-west1-a \
 
 ## Local development (no Docker)
 
-Run either app directly from the worktree:
+Run either app directly from the worktree via the uv `analysis` env:
 
 ```bash
-conda activate policy_doctor
-
 # Survey app (randomized A/B):
-streamlit run policy_doctor/streamlit_app/survey_app/Home.py
+./scripts/uv_env.sh analysis streamlit run policy_doctor/streamlit_app/survey_app/Home.py
 
 # Graph demo (with analytics page):
-streamlit run policy_doctor/streamlit_app/demo_app/Home.py
+./scripts/uv_env.sh analysis streamlit run policy_doctor/streamlit_app/demo_app/Home.py
 ```
 
 Both apps discover clusterings under `third_party/` and MP4s under `/tmp/study_mp4s/`.
