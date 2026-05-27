@@ -40,11 +40,21 @@ case "$ENV_NAME" in
     *) echo "Unknown env-name: $ENV_NAME" >&2; usage ;;
 esac
 
-# Ensure the env exists; recreate if missing or if --setup was passed.
-if [[ "${1:-}" == "--setup" ]] || [[ ! -d "$UV_PROJECT_ENVIRONMENT" ]]; then
-    shift || true
-    # Dev extras (pytest, ruff) always come along — they're tiny.
+# --setup: just (re)create the env and exit.
+if [[ "${1:-}" == "--setup" ]]; then
+    shift
+    (cd "$REPO_ROOT" && uv sync --extra "$ENV_NAME" --extra dev)
+    if [[ $# -eq 0 ]]; then
+        exit 0
+    fi
+elif [[ ! -d "$UV_PROJECT_ENVIRONMENT" ]]; then
+    # First use: sync silently to stderr, then run the command.
     (cd "$REPO_ROOT" && uv sync --extra "$ENV_NAME" --extra dev) >&2
+fi
+
+if [[ $# -eq 0 ]]; then
+    echo "No command given; pass --setup to (re)create the env, or supply a command to run." >&2
+    exit 2
 fi
 
 exec uv run --no-sync "$@"
