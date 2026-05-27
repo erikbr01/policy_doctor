@@ -22,7 +22,7 @@ import yaml
 import policy_doctor
 
 _REPO_ROOT = Path(policy_doctor.__file__).resolve().parent.parent
-_BUILDER = _REPO_ROOT / "scripts" / "build_alt_clustering.py"
+_BUILDER = _REPO_ROOT / "scripts" / "experiments" / "build_alt_clustering.py"
 
 
 def _make_eval_dir(tmp: Path, n_episodes: int = 3, ep_len: int = 20) -> Path:
