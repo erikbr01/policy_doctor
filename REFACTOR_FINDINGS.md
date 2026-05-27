@@ -70,6 +70,25 @@ Format per entry:
 
 **Plan impact:** Recorded in plan §6 risk table as a "Mujoco / robosuite / mimicgen don't install cleanly under uv" mitigation that did partially bite. Doesn't change phase shape.
 
+---
+
+## 2026-05-27 — Phase 1 — Dispatch helper landed, Phase 1 substantially complete
+
+**Context:** Five pipeline step files used to do `subprocess.run(["conda", "run", "-n", env, "--no-capture-output", "python", ...])` to dispatch training/eval/generation into the right env.
+
+**Finding:**
+- Added `policy_doctor/_env.py` exposing `resolve_uv_extra(env_name)` and `run_in_env(env_name, cmd, **kwargs)`. The historical conda names (`mimicgen_torch2`, `cupid_torch2`, `cupid_torch25`, `policy_doctor`, `policy_doctor_dagger`) map to new uv extras (`mimicgen`, `cupid`, `cupid`, `analysis`, `analysis`); unmapped names pass through unchanged so direct extras (`analysis`, `cupid`, `mimicgen`, `robocasa`) work without translation.
+- Migrated the five dispatch sites mechanically. Each file lost the inline `"conda", "run", "-n", env, "--no-capture-output"` prefix and gained the helper import. Behavior is preserved: `cwd`, `env`, `check`, return-code inspection, dry-run paths, in-process branches all untouched.
+- Config field names (`conda_env`, `data_source.conda_env_train`, `baseline.conda_env`) kept as-is for backward compatibility — Phase 5 cleanup will rename to `uv_env` and update YAML files in one mechanical pass.
+- 11 unit tests for the helper + 4 golden replays = 15 tests pass in 0.91s.
+
+**Decision / action:**
+- Phase 1 is functionally complete on Mac: analysis env validated end-to-end, sim extras defined + locked but deferred validation to Linux, all programmatic dispatch routed through the uv wrapper.
+- Two pieces remain *not* in this commit set: (1) delete `environment_*.yaml` and `scripts/setup_torch2_envs.sh` / `scripts/create_cupid_torch25.sh`, (2) update README/CLAUDE.md/docs/*.md to drop `conda activate` references. These are docs/cleanup and can land at Phase 6 alongside the other doc work, after Linux validation of sim extras confirms uv is the canonical path.
+- Marking Phase 1 task complete; Phase 1 tail (yaml deletion + docs) gets folded into Phase 6.
+
+**Plan impact:** Phase 6 scope slightly expanded: now also owns yaml deletion + docs touchup. Worth a note in the plan.
+
 **Context:** First Phase-1 milestone — establish a uv-managed `analysis` env and prove the goldens reproduce inside it.
 
 **Finding:**

@@ -235,12 +235,14 @@ Each phase ships as a sequence of commits onto `refactor/clean-architecture`. Ph
 
 ---
 
-### Phase 6 — Documentation and merge to `main`
+### Phase 6 — Documentation, conda cleanup, and merge to `main`
 
 **Scope:**
 - Update `CLAUDE.md` to reflect new layout (env names, paths, commands).
 - Update `README.md` with `uv sync --extra analysis` quickstart.
 - Update `deploy/README.md` if any deploy paths changed.
+- Touch up `conda activate` references across `docs/*.md` and test docstrings.
+- **From Phase 1 tail (deferred):** Delete `environment_*.yaml`, `scripts/setup_torch2_envs.sh`, `scripts/create_cupid_torch25.sh` once sim extras are validated on a Linux box.
 - Final smoke test: deploy the Streamlit stack to a staging env (or local Docker compose) and click through both Group A and Group B flows.
 - Open PR `refactor/clean-architecture` → `main`. Squash-merge if small, or merge with phase commits preserved if useful for archaeology.
 
