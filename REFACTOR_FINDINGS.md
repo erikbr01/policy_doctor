@@ -277,3 +277,69 @@ Important wrinkles found:
 - `tests/plotting/test_eef_trajectories.py` has 2 pre-existing failures (`show_mean` kwarg drift); reproduces on HEAD before the deletions. Not introduced by Phase 4 and not in the keep-green suite.
 
 **Plan impact:** Phase 4 closed per spec. Phase 5 inherits two follow-ups: (a) decide the fate of `compare_policies.py` + `policy_comparison.py` (fold into pipeline step vs. delete), and (b) repair or remove the now-broken `scripts/run_e2_agent_transport_mh.py`.
+
+---
+
+## Phase 5 — deferred
+
+Phase 5 covered the safe/mechanical pieces (conda_env→uv_env rename across configs + dispatch sites; scripts/ reorganization into experiments/dev/setup with a back-compat symlink at `scripts/uv_env.sh`). The bigger ambitions — code dedup and "everything is a pipeline" — were scoped out of this session because each touches surfaces we can't validate without live data, and one of them is cascade-blocked on Phase 2. Recording them here so they aren't lost.
+
+### Path-resolution dedup (cascade-blocked on Phase 2)
+
+Four path-resolution modules coexist today:
+
+- `policy_doctor/paths.py` — `PACKAGE_ROOT`, `PROJECT_ROOT`, `REPO_ROOT`, `DATA_SOURCE_ROOT`. The canonical top-level surface.
+- `policy_doctor/curation_pipeline/paths.py` — `get_train_dir`, `get_eval_dir`, `get_train_name`. Encodes the `train_date`/`eval_date`/seed naming convention.
+- `policy_doctor/influence/path_helpers.py` — checkpoint-discovery helpers absorbed from the deleted `influence_visualizer` package.
+- `policy_doctor/experiment/paths.py` — the new Phase-2 `seed_dir`/`ckpt_dir`/etc. helpers built on top of the `Experiment` bundle.
+
+The four modules carry overlapping responsibilities (locating train dirs, eval dirs, checkpoints under different conventions). Reconciling them is a Phase-2-cascade question: stripping `train_date`/`eval_date` from the naming scheme (planned for Phase 2 continuation) collapses `curation_pipeline/paths.py` into `experiment/paths.py`, at which point `path_helpers.py` can probably also be folded in. Until that happens, deduplicating prematurely would force two migrations.
+
+**Phase 5/2 disposition:** revisit when path migration lands. Until then, the four modules stay; add an inline `See also` comment in each `paths.py` pointing at the others when a new contributor needs to find the right helper.
+
+### HDF5 reader dedup (size-of-change vs. test data)
+
+`h5py.File(...)` calls and HDF5-locating helpers are scattered across:
+
+- `policy_doctor/influence/loader.py` — two `h5py.File` opens (one in `_load_low_dim_demos_into_episodes` around line 1018; one for image datasets around line 1742). The historical fat loader from `influence_visualizer`.
+- `policy_doctor/influence/lazy_hdf5.py` — `_LazyHDF5Reader` (single `h5py.File` open at line 49). Lazy-open wrapper for memory-bounded reads.
+- `policy_doctor/data/adapters.py` — path-discovery only (no `h5py` opens); searches known MimicGen/RoboCasa HDF5 locations under `repo_root`.
+- `policy_doctor/data/dataset_episode_ends.py` — references HDF5 via path only (delegates to upstream loader).
+- `policy_doctor/mimicgen/{combine_datasets,eef,failure_targeting,heuristics,materializer,seed_trajectory}.py` — six modules each calling `h5py.File` for MimicGen-specific reads (seed selection, EEF extraction, dataset combination).
+- `policy_doctor/curation_pipeline/steps/{generate_mimicgen_demos,train_on_combined_data}.py` — pipeline steps that touch HDF5 directly (seed materialization, combined-data writes).
+- `policy_doctor/monitoring/trajectory_classifier.py` — single `h5py.File` open for episode metadata.
+
+The duplication is roughly: (1) "locate the right HDF5 for this task" (in `data/adapters.py` + `influence/path_helpers.py` + ad-hoc paths in the mimicgen modules), and (2) "open + iterate demos with the cupid layout assumption" (in `influence/loader.py`, the six mimicgen modules, and at least two pipeline steps). A clean refactor would extract a small `policy_doctor/data/hdf5_io.py` with `open_demos(path) -> Iterator[(demo_key, demo_group)]` and a `locate_dataset_for(task)` helper. The size of the change requires HDF5 files we don't have checked into the repo to test against; deferring until at least one of the dev environments has a live fixture wired up.
+
+**Phase 5 disposition:** list above is the inventory. Deferred to a follow-up that pairs with adding HDF5 test fixtures (Phase 6 docs work could surface a lightweight one).
+
+### "Everything is a pipeline" — scripts/experiments/ launchers to promote to `PipelineStep`
+
+The directive was to convert ad-hoc launchers into `PipelineStep` subclasses so the orchestration layer (sentinel files, resumability, `dry_run`, config-driven dispatch via `_env.run_in_env`) covers everything. Inventory of candidates currently sitting in `scripts/experiments/` (post-reorg):
+
+- `monitor_online.py` — runtime monitoring driver; should become a `RunMonitorOnlineStep` (consumes `train_dir`/`clustering_dir`, writes per-rollout classification outputs). Already invoked from `scripts/experiments/_lib.sh`; promotion would let the pipeline run it as part of an eval flow.
+- `monitor_offline.py` — offline counterpart of the above. Same step contract.
+- `run_dagger.py` / `run_dagger_robocasa.py` — DAgger driver; pairs with `build_dagger_dataset.py` (which is the "build" half). One composite `RunDaggerStep` that materializes the dataset then invokes the driver.
+- `run_e2_agent.py` / `run_e2_agent_transport_mh.py` / `run_e2_sim.py` — e2 (proposal/agent/sim) trio; current launch is via `run_e2_*.sh` shell wrappers. Step would need to model the three-process topology (sim ↔ agent ↔ proposal server).
+- `run_e1_*.py` (gemini, multi_model, sweep_eval, transport_r512_qwen) — VLM eval sweeps; natural composite under a `RunE1SweepStep` that fans out over models.
+- `run_clustering_sweep.py` — k/window sweep launcher; arguably a thin wrapper around `run_clustering` repeated, so the step would be more of a sweep harness than a new primitive.
+- `build_alt_clustering.py` / `build_k_sweep_clusterings.py` — alternative-clustering builders; depend on the upstream `run_clustering` result. Composite `BuildAlternativeClusteringsStep` over a config grid.
+- `build_dagger_dataset.py` — dataset-builder for the DAgger flow; absorb into `RunDaggerStep` as a sub-step.
+- `build_droid_zarr_cache.py` — DROID zarr cache builder; should be a `BuildDroidZarrCacheStep` that the DROID training step depends on.
+- `gen_rollouts_hdf5.py` — rollout → HDF5 generator; closest to existing `eval_save_episodes` and could be folded into `EvalPoliciesStep` as a `write_hdf5: true` option rather than its own step.
+- `cluster_kendama_policy_embeddings.py` / `cluster_kendama_rollouts.py` / `cluster_pi05_libero.py` / `sweep_pi05_clustering.py` — task-specific clustering drivers. The kendama and pi05 ones encode the same `run_clustering` shape with different inputs; a `RunClusteringStep` that already accepts `influence_source: policy_emb | rollout | ...` could subsume them with a small config extension.
+- `aggregate_sweep_results.py` — post-sweep aggregator; would be the canonical `AggregateSweepStep` sentinel-tracked artifact.
+- `rerun_evals_with_episode_lengths.py` — repair script for legacy eval dirs without `episode_lengths.npy`; one-shot, probably stays as a script.
+- `markov_rnn_experiment.py` / `markov_rnn_jan28.py` / `run_window_sweep.py` / `run_encoder_k_sweep.py` / `run_head_to_head.py` / `run_policy_emb_sweep.py` / `run_k_sweep_evals.py` — research experiment drivers; promotion to pipeline steps is lower priority than the "core orchestration" ones above. Tag for Phase-5b.
+- `enqueue_session.py` — session queue helper; not a pipeline step (it's a scheduler-side helper). Leave as a script.
+
+The shell wrappers (`run_*.sh`, `train_*.sh`, `sweep_*.sh`) under `scripts/experiments/` are not in this list — they're the CLI surface that drives the Python launchers. Once a Python launcher becomes a `PipelineStep`, the corresponding shell wrapper either disappears (replaced by `python -m policy_doctor.scripts.run_pipeline steps=[...]`) or becomes a thin convenience that supplies fixed Hydra overrides.
+
+**Phase 5/Phase-5b disposition:** this is the bulk of "Phase 5b". Each promotion is independent and can be ordered by impact; the `monitor_*`/`run_dagger`/`build_*` cluster is the highest-leverage starting point because those are already invoked from inside `_lib.sh` (i.e. they're orchestration glue, not research drivers).
+
+### Verification
+- `./scripts/uv_env.sh analysis pytest tests/golden/ tests/experiment/ tests/test_env_dispatch.py` — 40 passed at the start of Phase 5; 40 passed after Sub-task A (config rename); 40 passed after Sub-task B (scripts reorg). No regressions introduced.
+- `./scripts/uv_env.sh` (legacy path, now a symlink) and `./scripts/setup/uv_env.sh` (canonical path) both resolve to the same `UV_PROJECT_ENVIRONMENT` and dispatch `uv run` correctly.
+
+### Plan impact
+- Phase 5 — partial close. Mechanical pieces landed (rename + scripts reorg + documentation of remaining work). Path-resolution dedup deferred to Phase 5/2 (cascade-blocked). HDF5 reader dedup deferred pending test fixtures. Pipeline-step promotion (the "everything is a pipeline" directive) explicitly carved out as Phase-5b with an inventory above so it can be picked up independently of the other phases.
