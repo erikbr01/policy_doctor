@@ -89,6 +89,29 @@ Format per entry:
 
 **Plan impact:** Phase 6 scope slightly expanded: now also owns yaml deletion + docs touchup. Worth a note in the plan.
 
+---
+
+## 2026-05-27 — Phase 2 — Foundation: `policy_doctor.experiment` module
+
+**Context:** Phase 2 begins. Smallest viable starting commit: the new module that everything else will build on. Zero existing code touched.
+
+**Finding:**
+- `policy_doctor/experiment/paths.py` exposes `data_root()`, `datasets_dir()`, `experiments_dir()`, `experiment_dir(name)`. All lazy so `POLICY_DOCTOR_DATA` env-var changes (pytest `monkeypatch.setenv`) are picked up per call.
+- `policy_doctor/experiment/experiment.py` defines the `Experiment` frozen dataclass with:
+  - Path properties (`manifest_path`, `config_dir`, `shared_dir`, `artifacts_dir`, `logs_dir`).
+  - `create(name, *, baseline_from=None, manifest_extras=None)` factory that builds the skeleton, writes the manifest, and hard-copies the baseline checkpoint from another experiment if `baseline_from` is set.
+  - `load(name)` factory for resuming an existing experiment.
+  - `append_config_snapshot(resolved_config)` — append-only Hydra snapshot writer; first one symlinked as `canonical.yaml`.
+  - `step_dir(name, *, version=None)` — returns/creates the artifacts dir for a step; `version="v2"` produces `<name>__v2/` for side-by-side reruns.
+  - `update_manifest(**updates)`, `open_log(label)`.
+- 12 unit tests, all pass. Goldens still pass. 27 tests / 0.92s.
+
+**Decision / action:**
+- Module ships standalone. Nothing imports it yet — that's the next commit.
+- Validation note: `Experiment.create` rejects names with `/`, `..`, or leading `.`. Cheap defense against path-escape bugs in CLIs.
+
+**Plan impact:** none. Next Phase-2 commit will be the PipelineStep base-class refactor.
+
 **Context:** First Phase-1 milestone — establish a uv-managed `analysis` env and prove the goldens reproduce inside it.
 
 **Finding:**
