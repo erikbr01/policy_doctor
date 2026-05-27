@@ -145,6 +145,35 @@ class Experiment:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def seed_dir(
+        self,
+        step_name: str,
+        seed: int | str,
+        *,
+        version: Optional[str] = None,
+    ) -> Path:
+        """Return ``<step_dir>/seed_<seed>/`` for a per-seed sub-artifact.
+
+        Most pipeline steps run per-seed; this is the canonical place to
+        write each seed's outputs.
+        """
+        d = self.step_dir(step_name, version=version) / f"seed_{seed}"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def ckpt_dir(
+        self,
+        step_name: str,
+        seed: int | str,
+        ckpt: str,
+        *,
+        version: Optional[str] = None,
+    ) -> Path:
+        """Return ``<step_dir>/seed_<seed>/<ckpt>/`` — eval outputs per checkpoint."""
+        d = self.seed_dir(step_name, seed, version=version) / ckpt
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def open_log(self, label: str = "invocation") -> Path:
         """Return a new per-invocation log file path."""
         ts = _now_timestamp()
