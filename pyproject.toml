@@ -47,6 +47,49 @@ analysis = [
     "ipython>=8.0",
 ]
 
+# cupid: robomimic + diffusion-policy training and InfEmbed/TRAK attribution.
+# Distinguishing pin: robosuite 1.2.0 + robomimic 0.2.0 + mujoco 3.2.6.
+#
+# Legacy sim deps (dm-control, dm-env, dm-tree, egl-probe, glfw, labmaze,
+# pybullet-svl, free-mujoco-py, r3m) are pulled transitively by robomimic
+# 0.2.0 / robosuite 1.2.0. Some have broken build metadata under modern
+# setuptools and only install successfully on Linux x86_64 / Python 3.10
+# (the original conda env target). See REFACTOR_FINDINGS.md.
+cupid = [
+    "policy-doctor[analysis]",
+    "robosuite==1.2.0",
+    "robomimic==0.2.0",
+    "mujoco==3.2.6",
+    "cupid-workspace",
+    "infembed",
+]
+
+# mimicgen: MimicGen data generation + MimicGen-trained policies.
+# Distinguishing pin: robosuite 1.4.1 + robomimic 0.3.0 + mimicgen 1.0.0.
+mimicgen = [
+    "policy-doctor[analysis]",
+    "robosuite==1.4.1",
+    "robomimic==0.3.0",
+    "mujoco==3.3.7",
+    "mimicgen",                 # source: git (NVlabs/mimicgen) — see [tool.uv.sources]
+    "gym==0.26.2",
+    "cupid-workspace",
+    "infembed",
+]
+
+# robocasa: RoboCasa manipulation tasks.
+# Distinguishing pin: robosuite 1.5.2 + robomimic 0.3.0 + mujoco 3.3.7
+# + mink/qpsolvers for IK.
+robocasa = [
+    "policy-doctor[analysis]",
+    "robosuite==1.5.2",
+    "robomimic==0.3.0",
+    "mujoco==3.3.7",
+    "mink==0.0.5",
+    "qpsolvers==4.8.2",
+    "quadprog==0.1.13",
+]
+
 dev = [
     "pytest>=8.0",
     "pytest-timeout>=2.0",
@@ -67,3 +110,31 @@ policy_doctor = ["configs/**/*.yaml", "configs/**/*.yml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 60
+
+# uv workspace members: editable installs alongside policy_doctor.
+# cupid-workspace and infembed live under third_party/ and are pulled in by
+# the cupid/mimicgen extras only.
+[tool.uv.workspace]
+members = [
+    "third_party/cupid",
+    "third_party/cupid/third_party/infembed",
+]
+
+[tool.uv.sources]
+cupid-workspace = { workspace = true }
+infembed = { workspace = true }
+# mimicgen is published on GitHub only (NVlabs); pin to current main HEAD.
+# To bump, update the rev here and re-run `uv lock --upgrade-package mimicgen`.
+mimicgen = { git = "https://github.com/NVlabs/mimicgen.git" }
+
+# The three sim extras are mutually incompatible (different robosuite /
+# robomimic / mujoco pins). Declaring them as a conflict set lets uv resolve
+# each one in isolation rather than failing because they can't coexist.
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cupid" },
+        { extra = "mimicgen" },
+        { extra = "robocasa" },
+    ],
+]
