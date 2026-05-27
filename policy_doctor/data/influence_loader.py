@@ -99,11 +99,12 @@ def load_influence_data(
     Otherwise raises RuntimeError (for a standalone repo, implement a native loader here).
     """
     try:
-        from influence_visualizer.data_loader import load_influence_data as iv_load
+        from policy_doctor.influence.loader import load_influence_data as iv_load
     except ImportError as e:
         raise RuntimeError(
-            "Influence data loading requires influence_visualizer. "
-            "Install it or implement a native loader in policy_doctor.data.influence_loader."
+            "Influence data loading requires policy_doctor.influence.loader "
+            "(which in turn pulls in diffusion_policy). Install the cupid extra "
+            "(`uv sync --extra cupid`) or stub a native loader in policy_doctor.data.influence_loader."
         ) from e
 
     data = iv_load(

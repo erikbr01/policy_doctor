@@ -1,4 +1,8 @@
-"""Behavior graph: transitions between behavioral clusters. Ported from influence_visualizer."""
+"""Behavior graph: transitions between behavioral clusters.
+
+Originally ported from the legacy ``influence_visualizer.behavior_graph`` module
+(removed in the Phase 3 refactor); this is now the canonical implementation.
+"""
 
 import heapq
 from collections import defaultdict

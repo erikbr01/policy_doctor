@@ -171,10 +171,14 @@ def _dedupe_resolved_paths(paths: list[pathlib.Path]) -> list[pathlib.Path]:
 
 
 def _iv_configs_root() -> pathlib.Path:
-    """``influence_visualizer/configs`` next to the installed ``clustering_results`` module."""
-    import influence_visualizer.clustering_results as _cr
+    """Task-configs root that the migrated clustering-io module reads from.
 
-    return pathlib.Path(_cr.__file__).resolve().parent / "configs"
+    Equivalent to the legacy ``influence_visualizer/configs`` location; resolved
+    via :func:`policy_doctor.paths.iv_task_configs_base`.
+    """
+    from policy_doctor.paths import iv_task_configs_base
+
+    return iv_task_configs_base()
 
 
 def iv_configs_roots() -> list[pathlib.Path]:
@@ -187,8 +191,8 @@ def iv_configs_roots() -> list[pathlib.Path]:
 
 
 def clustering_roots_for_task(task_config: str) -> list[pathlib.Path]:
-    """Per-task ``clustering`` directories (union of package path and repo ``influence_visualizer/configs``)."""
-    from influence_visualizer.clustering_results import get_clustering_dir as iv_get_clustering_dir
+    """Per-task ``clustering`` directories (union of package path and repo task-configs)."""
+    from policy_doctor.influence.clustering_io import get_clustering_dir as iv_get_clustering_dir
 
     candidates = [
         iv_get_clustering_dir(task_config),
@@ -245,8 +249,8 @@ def discover_clustering_task_keys() -> list[str]:
 
 
 def clustering_results_dir_for_task(task_config: str) -> pathlib.Path:
-    """Primary hint path for clustering (first existing root, else canonical IV path)."""
-    from influence_visualizer.clustering_results import get_clustering_dir
+    """Primary hint path for clustering (first existing root, else canonical task-configs path)."""
+    from policy_doctor.influence.clustering_io import get_clustering_dir
 
     roots = clustering_roots_for_task(task_config)
     if roots:
@@ -259,6 +263,6 @@ expected_iv_clustering_dir = clustering_results_dir_for_task
 
 def get_clustering_dir(task_config: str, name: str) -> pathlib.Path:
     """Get the path to a clustering result directory."""
-    from influence_visualizer.clustering_results import get_clustering_dir as _get_iv
+    from policy_doctor.influence.clustering_io import get_clustering_dir as _get_iv
 
     return _get_iv(task_config) / name

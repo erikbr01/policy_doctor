@@ -53,7 +53,7 @@ def _render_annotated_frame_height_capped(
     previews are readable. Large frames are shrunk to fit that box. ``max_upscale``
     limits pathological tiny inputs.
     """
-    from influence_visualizer.plotting import create_annotated_frame
+    from policy_doctor.influence.frames import create_annotated_frame
     from PIL import Image
 
     if frame is None:
@@ -120,7 +120,7 @@ def render_cluster_episode_browser(
             st.caption(f"Debug: data type = `{type(data).__name__}`")
             return
 
-    from influence_visualizer.render_frames import frame_player
+    from policy_doctor.streamlit_app.frame_player import frame_player
 
     episode_cluster_map = build_episode_cluster_map(
         cluster_labels, metadata, representation, level
@@ -191,7 +191,7 @@ def render_cluster_episode_browser(
 
         episode_annotations: List[Dict[str, Any]] = []
         if annotations:
-            from influence_visualizer.render_annotation import get_episode_annotations
+            from policy_doctor.influence.annotations import get_episode_annotations
 
             ann_split = "rollout" if level == "rollout" else demo_split
             try:

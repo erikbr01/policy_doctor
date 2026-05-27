@@ -160,3 +160,55 @@ The MimicGen golden captures three semantically distinct outcomes that any refac
 **Decision / action:** Phase 0 complete. Goldens are 12 files, ~10 KB total. Replay runs in <1s under pytest. `tools/refactor/snapshot.py` is now the canonical regression check; every phase boundary must pass `pytest tests/golden/`.
 
 **Plan impact:** none.
+
+---
+
+## 2026-05-27 — Phase 3 — Inventory of live `influence_visualizer` imports
+
+**Context:** Phase 3 begins. Catalog every external use of `influence_visualizer` outside `third_party/influence_visualizer/` itself so we know exactly what must migrate before iv can be deleted.
+
+**Finding:** 19 external import sites, falling into four buckets.
+
+*Bucket A — live pipeline / scripts (must migrate):*
+
+| Symbol | Call sites |
+|---|---|
+| `influence_visualizer.clustering_results.save_clustering_result` | `policy_doctor/curation_pipeline/steps/run_clustering.py:40`, `policy_doctor/streamlit_app/tabs/clustering.py:852`, `scripts/sweep_pi05_clustering.py:40`, `scripts/cluster_pi05_libero.py:27` |
+| `influence_visualizer.clustering_results.get_clustering_dir` | `policy_doctor/curation_pipeline/steps/annotate_slices_vlm.py:59`, `policy_doctor/streamlit_app/tabs/vlm_annotation.py:37`, `policy_doctor/streamlit_app/config_io.py:175,191,249,262` |
+| `influence_visualizer.data_loader.get_eval_dir_for_seed` | `policy_doctor/curation_pipeline/steps/{run_clustering,annotate_slices_vlm,validate_cluster_coherence_vlm,select_mimicgen_seed_from_graph,compute_data_support,compare}.py` (6 sites) |
+| `influence_visualizer.data_loader.get_train_dir_for_seed` | `policy_doctor/data/clustering_embeddings.py:213` |
+| `influence_visualizer.data_loader.load_influence_data` | `policy_doctor/data/influence_loader.py:102` (delegation wrapper used by `run_curation_config` step and `clustering_embeddings` precomputation) |
+
+*Bucket B — Streamlit UI imports (lazy, inside function bodies):*
+
+| Symbol | Call sites | Disposition |
+|---|---|---|
+| `influence_visualizer.render_annotation.load_annotations` | `streamlit_app/tabs/clustering.py:784` | pure-data: migrate to `policy_doctor.influence.annotations` |
+| `influence_visualizer.render_annotation.get_episode_annotations` | `streamlit_app/clustering_browse.py:194` | pure-data: migrate to `policy_doctor.influence.annotations` |
+| `influence_visualizer.render_frames.frame_player` | `streamlit_app/clustering_browse.py:123` | streamlit UI — leave in streamlit_app, relocate to `policy_doctor.streamlit_app.frame_player` |
+| `influence_visualizer.plotting.create_annotated_frame` | `streamlit_app/clustering_browse.py:56` | pure PIL (no streamlit): migrate to `policy_doctor.influence.frames` |
+
+*Bucket C — test-only comparison hooks (delete with the comparison tests):*
+
+| Symbol | Call sites |
+|---|---|
+| `influence_visualizer.clustering_results.load_clustering_result_from_path`, `.load_embeddings_reduced` | `tests/integration/test_compare_iv_vs_policy_doctor.py`, `tests/vlm/test_cluster_classification.py` |
+| `influence_visualizer.data_loader.load_influence_data` | `tests/integration/{test_compare_iv_vs_policy_doctor,test_fingerprint_episode_ends}.py` |
+| `influence_visualizer.behavior_value_loader.*` | `tests/integration/test_compare_iv_vs_policy_doctor.py` (4 sites) |
+| `influence_visualizer.render_learning.*`, `influence_visualizer.render_heatmaps.get_split_data` | `tests/integration/test_compare_iv_vs_policy_doctor.py` (4 sites) |
+| `influence_visualizer.curation_config.compute_dataset_fingerprint` | `tests/integration/test_fingerprint_episode_ends.py` (2 sites) |
+
+These tests' entire purpose is to assert PD matches IV — once IV is removed the comparison is moot. They self-skip when iv is unavailable today; we delete them in Phase 3B because the comparison subject is going away.
+
+*Bucket D — comments / doc strings (no functional impact):*
+
+`third_party/cupid/diffusion_policy/common/sampler.py:162`, `third_party/cupid/scripts/train/train_policies.sh:47,136`, `third_party/cupid/CLAUDE.md:53,66`, `policy_doctor/behaviors/behavior_graph.py:1` — all are explanatory text; will be cleaned up in Phase 6 docs.
+
+**Decision / action:** Bucket A drives the migration plan. Bucket B carves out two small extracts (`annotations.py`, `frames.py`) plus a one-file relocation (`frame_player` to streamlit_app). Bucket C tests get deleted alongside the iv directory. Bucket D is just text.
+
+Important wrinkles found:
+- Two parallel partial ports already exist in `policy_doctor/data/`: `path_utils.py` has `get_eval_dir_for_seed` / `get_train_dir_for_seed`, and `clustering_loader.py` has most of the clustering-load surface except `save_clustering_result` and `load_embeddings_reduced`. The new `policy_doctor/influence/clustering_io.py` will *re-export* from `clustering_loader` and add the missing functions, then call sites consolidate on `policy_doctor.influence`.
+- `policy_doctor/data/influence_loader.load_influence_data` is a thin shim that delegates to iv's `load_influence_data`. After migration, the shim's lazy import flips to `policy_doctor.influence.loader`. The heavy iv function itself depends on `diffusion_policy` + `hydra` and will move verbatim (along with the helpers it calls: `get_checkpoint_path`, `load_checkpoint_config`, `build_demo_sample_infos`, `build_rollout_sample_infos`, `load_influence_matrix`, `find_trak_experiment`, `create_image_dataset_from_config`, `get_task_loaders`, plus `SampleInfo` / `EpisodeInfo` / `InfluenceData` dataclasses and the two `TaskLoader` classes).
+- `iv.clustering_results.get_clustering_dir` resolves relative to `Path(__file__).parent / "configs" / task_config / "clustering"` — i.e., the iv-package directory. The new function in `policy_doctor.influence.clustering_io` must resolve to `iv_task_configs_base() / task_config / "clustering"` to preserve the on-disk location of historical clustering runs.
+
+**Plan impact:** none. Inventory confirms the original "~6 live functions" estimate in the plan; the actual surface is 5 live functions + 2 streamlit-only extracts + 1 streamlit-only relocation.

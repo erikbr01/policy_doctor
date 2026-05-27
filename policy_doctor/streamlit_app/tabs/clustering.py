@@ -781,7 +781,7 @@ def _render_visualizations(
                 try:
                     from pathlib import Path
 
-                    from influence_visualizer.render_annotation import load_annotations
+                    from policy_doctor.influence.annotations import load_annotations
 
                     ap = Path(config.annotation_file)
                     if not ap.is_absolute():
@@ -849,7 +849,7 @@ def _render_export(config: VisualizerConfig, task_stem: str) -> None:
         n_clusters = int(len(set(labels) - {-1}))
         name = f"{experiment_name}_kmeans_k{n_clusters}"
         try:
-            from influence_visualizer.clustering_results import save_clustering_result
+            from policy_doctor.influence.clustering_io import save_clustering_result
 
             result_dir = save_clustering_result(
                 task_config=task_config,

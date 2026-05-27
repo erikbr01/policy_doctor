@@ -311,7 +311,7 @@ class ComputeDataSupportStep(PipelineStep[Dict[str, Any]]):
             layer = _layer_for_clustering(manifest, cfg)
             seed_str = str(seed)
 
-            from influence_visualizer.data_loader import get_eval_dir_for_seed
+            from policy_doctor.influence.path_helpers import get_eval_dir_for_seed
             eval_dir_base = get_eval_dir(
                 eval_output_dir, eval_date, eval_task, eval_policy, 0,
                 train_ckpt=OmegaConf.select(evaluation, "train_ckpt") or "latest",

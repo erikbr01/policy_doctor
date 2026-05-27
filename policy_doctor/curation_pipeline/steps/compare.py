@@ -23,7 +23,7 @@ class CompareStep(PipelineStep[Dict[str, Any]]):
     name = "compare"
 
     def compute(self) -> Dict[str, Any]:
-        from influence_visualizer.data_loader import get_eval_dir_for_seed
+        from policy_doctor.influence.path_helpers import get_eval_dir_for_seed
         from policy_doctor.curation_pipeline.paths import get_train_name
         from policy_doctor.curation_pipeline.config import load_baseline_config
 

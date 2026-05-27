@@ -37,7 +37,7 @@ def run_sweep(suite: str, eval_dir: pathlib.Path, iv_configs: pathlib.Path) -> N
     )
     from policy_doctor.data.clustering_loader import save_clustering_models
     from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
-    from influence_visualizer.clustering_results import save_clustering_result
+    from policy_doctor.influence.clustering_io import save_clustering_result
 
     task_config = f"pi05_{suite}"
     clust_root = iv_configs / task_config / "clustering"

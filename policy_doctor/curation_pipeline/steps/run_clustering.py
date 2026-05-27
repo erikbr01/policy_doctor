@@ -37,8 +37,8 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
         )
         from policy_doctor.data.clustering_loader import save_clustering_models
         from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
-        from influence_visualizer.clustering_results import save_clustering_result
-        from influence_visualizer.data_loader import get_eval_dir_for_seed
+        from policy_doctor.influence.clustering_io import save_clustering_result
+        from policy_doctor.influence.path_helpers import get_eval_dir_for_seed
 
         cfg = self.cfg
 

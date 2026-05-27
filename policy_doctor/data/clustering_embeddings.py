@@ -210,7 +210,7 @@ def extract_trak_slice_windows(
     exp_date: str = "default",
 ) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
     from policy_doctor.data.influence_loader import load_influence_data
-    from influence_visualizer.data_loader import get_train_dir_for_seed
+    from policy_doctor.influence.path_helpers import get_train_dir_for_seed
 
     eval_dir_str = str(eval_dir_abs)
     if train_dir_base:

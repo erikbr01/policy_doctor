@@ -24,7 +24,7 @@ from policy_doctor.behaviors.clustering import (
 )
 from policy_doctor.data.clustering_loader import save_clustering_models
 from policy_doctor.data.slice_representations import PolicyEmbeddingRepresentation, SliceWindowParams
-from influence_visualizer.clustering_results import save_clustering_result
+from policy_doctor.influence.clustering_io import save_clustering_result
 
 
 def main() -> None:

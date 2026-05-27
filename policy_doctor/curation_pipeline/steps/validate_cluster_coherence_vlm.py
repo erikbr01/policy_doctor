@@ -55,7 +55,7 @@ class ValidateClusterCoherenceVLMStep(PipelineStep[Dict[str, Any]]):
         return None
 
     def compute(self) -> Dict[str, Any]:
-        from influence_visualizer.data_loader import get_eval_dir_for_seed
+        from policy_doctor.influence.path_helpers import get_eval_dir_for_seed
 
         from policy_doctor.vlm import get_vlm_backend
         from policy_doctor.vlm.cluster_classification import run_cluster_coherence_classification

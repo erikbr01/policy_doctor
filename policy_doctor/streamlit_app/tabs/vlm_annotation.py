@@ -34,7 +34,7 @@ def _list_clustering_safe(task_config_name: str) -> List[str]:
 
 
 def _clustering_path(task_config_name: str, name: str) -> pathlib.Path:
-    from influence_visualizer.clustering_results import get_clustering_dir as iv_clustering_dir
+    from policy_doctor.influence.clustering_io import get_clustering_dir as iv_clustering_dir
 
     return iv_clustering_dir(task_config_name) / name
 

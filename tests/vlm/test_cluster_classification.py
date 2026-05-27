@@ -599,28 +599,16 @@ class TestClaudeBackendRegistered(unittest.TestCase):
 # save/load embeddings_reduced
 # ---------------------------------------------------------------------------
 
-def _have_load_embeddings_reduced() -> bool:
-    try:
-        from influence_visualizer.clustering_results import load_embeddings_reduced  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-@unittest.skipUnless(
-    _have_load_embeddings_reduced(),
-    "load_embeddings_reduced not available in this influence_visualizer install",
-)
 class TestEmbeddingsReducedPersistence(unittest.TestCase):
     def test_save_and_load(self):
-        from influence_visualizer.clustering_results import (
+        from policy_doctor.influence.clustering_io import (
             load_embeddings_reduced,
             save_clustering_result,
         )
 
         with tempfile.TemporaryDirectory() as td:
             tdir = pathlib.Path(td)
-            import influence_visualizer.clustering_results as cr_mod
+            import policy_doctor.influence.clustering_io as cr_mod
             orig = cr_mod.get_clustering_dir
 
             def _tmp_dir(task_config):
@@ -632,10 +620,10 @@ class TestEmbeddingsReducedPersistence(unittest.TestCase):
                 labels = np.zeros(10, dtype=np.int64)
                 meta = [{"rollout_idx": i, "window_start": 0, "window_end": 3} for i in range(10)]
                 result_dir = save_clustering_result(
-                    "test_task",
                     "test_run",
                     labels,
                     meta,
+                    task_config="test_task",
                     algorithm="kmeans",
                     scaling="none",
                     influence_source="infembed",
@@ -652,7 +640,7 @@ class TestEmbeddingsReducedPersistence(unittest.TestCase):
                 cr_mod.get_clustering_dir = orig
 
     def test_load_returns_none_when_absent(self):
-        from influence_visualizer.clustering_results import load_embeddings_reduced
+        from policy_doctor.influence.clustering_io import load_embeddings_reduced
         with tempfile.TemporaryDirectory() as td:
             result = load_embeddings_reduced(pathlib.Path(td))
             self.assertIsNone(result)

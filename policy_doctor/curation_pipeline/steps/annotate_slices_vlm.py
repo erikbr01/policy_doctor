@@ -54,9 +54,9 @@ class AnnotateSlicesVLMStep(PipelineStep[Dict[str, Any]]):
         return None
 
     def compute(self) -> Dict[str, Any]:
-        from influence_visualizer.data_loader import get_eval_dir_for_seed
+        from policy_doctor.influence.path_helpers import get_eval_dir_for_seed
 
-        from influence_visualizer.clustering_results import get_clustering_dir as iv_clustering_dir
+        from policy_doctor.influence.clustering_io import get_clustering_dir as iv_clustering_dir
         from policy_doctor.vlm import get_vlm_backend
         from policy_doctor.vlm.annotate import run_slice_annotation_for_eval, write_annotations_jsonl
         from policy_doctor.vlm.prompts import (

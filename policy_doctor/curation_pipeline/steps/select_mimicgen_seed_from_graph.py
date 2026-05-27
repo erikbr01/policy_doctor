@@ -83,7 +83,7 @@ def _resolve_rollouts_hdf5(
     removed — it did not respect runtime ``evaluation.train_date`` overrides and could
     silently point to a different experiment's rollouts.
     """
-    from influence_visualizer.data_loader import get_eval_dir_for_seed
+    from policy_doctor.influence.path_helpers import get_eval_dir_for_seed
     from policy_doctor.curation_pipeline.paths import get_eval_dir
 
     clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
