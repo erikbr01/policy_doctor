@@ -68,4 +68,14 @@ if [[ $# -eq 0 ]]; then
     exit 2
 fi
 
+# Prepend the venv's lib/ to LD_LIBRARY_PATH so that pip-installed native
+# libraries (e.g. libtbb.so from the tbb package, TBB_INTERFACE_VERSION 12180)
+# take precedence over older system copies (e.g. /usr/lib libtbb.so, version
+# 12050 which numba rejects). This mirrors what `uv run` does internally and
+# ensures subprocesses spawned by the command see the same library search path.
+VENV_LIB="${UV_PROJECT_ENVIRONMENT}/lib"
+if [[ -d "$VENV_LIB" ]]; then
+    export LD_LIBRARY_PATH="${VENV_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+
 exec uv run --no-sync "$@"
