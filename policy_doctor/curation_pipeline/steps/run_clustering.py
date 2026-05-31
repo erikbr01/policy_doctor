@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 if "NUMBA_THREADING_LAYER" not in os.environ:
-    os.environ["NUMBA_THREADING_LAYER"] = "omp"
+    os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 
 import pathlib
 from typing import Dict
@@ -14,7 +14,6 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from policy_doctor.curation_pipeline.base_step import PipelineStep
-from policy_doctor.curation_pipeline.paths import get_eval_dir
 from policy_doctor.data.clustering_embeddings import (
     extract_infembed_slice_windows,
     extract_trak_slice_windows,
@@ -42,28 +41,20 @@ class RunClusteringStep(PipelineStep[Dict[str, str]]):
 
         cfg = self.cfg
 
-        # Resolve eval_dir_base: prefer explicit override, then evaluation config.
-        clustering_eval_dir_override = OmegaConf.select(cfg, "clustering_eval_dir")
-        if clustering_eval_dir_override:
-            eval_dir_base = clustering_eval_dir_override
-        else:
-            evaluation = OmegaConf.select(cfg, "evaluation") or {}
-            eval_date = (
-                OmegaConf.select(evaluation, "train_date")
-                or OmegaConf.select(cfg, "evaluation.eval_date")
-                or OmegaConf.select(cfg, "train_date")
+        # Resolve eval_dir_base from the explicit clustering_eval_dir config key.
+        # Checked in priority order: CLI/experiment override → evaluation sub-config.
+        # Date-keyed path derivation was removed as part of the clean-architecture refactor.
+        eval_dir_base = (
+            OmegaConf.select(cfg, "clustering_eval_dir")
+            or OmegaConf.select(cfg, "evaluation.clustering_eval_dir")
+        )
+        if not eval_dir_base:
+            raise ValueError(
+                "clustering_eval_dir is not set. Add it to your evaluation config "
+                "(e.g. policy_doctor/configs/robomimic/evaluation/low_dim/<task>.yaml) "
+                "pointing to the eval_save_episodes directory that contains the "
+                "infembed_embeddings.npz files for the reference seed."
             )
-            eval_task = OmegaConf.select(evaluation, "task")
-            eval_policy = OmegaConf.select(evaluation, "policy")
-            eval_output_dir = OmegaConf.select(evaluation, "eval_output_dir") or "data/outputs/eval_save_episodes"
-            if eval_date and eval_task and eval_policy:
-                eval_dir_base = get_eval_dir(eval_output_dir, eval_date, eval_task, eval_policy, 0)
-            else:
-                raise ValueError(
-                    "Cannot resolve eval_dir for clustering: set evaluation.train_date, "
-                    "evaluation.task, and evaluation.policy in the Hydra config. "
-                    "The task_config YAML fallback has been removed."
-                )
         print(f"  eval_dir_base: {eval_dir_base}")
 
         train_dir_base = OmegaConf.select(cfg, "clustering_train_dir")

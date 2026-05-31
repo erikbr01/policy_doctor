@@ -45,6 +45,8 @@ analysis = [
     "anthropic>=0.30",
     "seaborn>=0.13",
     "ipython>=8.0",
+    "flask>=2.0",
+    "tbb>=2021.6",
 ]
 
 # cupid: robomimic + diffusion-policy training and InfEmbed/TRAK attribution.

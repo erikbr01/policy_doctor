@@ -15,3 +15,7 @@ device: cuda:0
 # Output: data/outputs/eval_save_episodes/${eval_date}/${train_name}/${train_ckpt}
 eval_output_dir: data/outputs/eval_save_episodes
 train_output_dir: data/outputs/train
+
+# Direct path to the eval_save_episodes dir (reference seed 0) used by run_clustering.
+# Note: infembed embeddings only exist for seed 0; seeds 1/2 will fail if attempted.
+clustering_eval_dir: data/outputs/eval_save_episodes/jan26/jan26_train_diffusion_unet_lowdim_lift_mh_0/latest

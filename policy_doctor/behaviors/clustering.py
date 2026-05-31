@@ -4,7 +4,7 @@ import os
 from typing import List, Dict, Any, Tuple, Literal
 
 if "NUMBA_THREADING_LAYER" not in os.environ:
-    os.environ["NUMBA_THREADING_LAYER"] = "omp"
+    os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 
 import numpy as np
 

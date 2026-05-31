@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 if "NUMBA_THREADING_LAYER" not in os.environ:
-    os.environ["NUMBA_THREADING_LAYER"] = "omp"
+    os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 
 import pathlib
 import time

@@ -13,3 +13,7 @@ device: cuda:0
 
 eval_output_dir: data/outputs/eval_save_episodes
 train_output_dir: data/outputs/train
+
+# Direct path to the eval_save_episodes dir (reference seed 0) used by run_clustering.
+# Replaces date-keyed path derivation per clean-architecture refactor.
+clustering_eval_dir: data/outputs/eval_save_episodes/jan28/jan28_train_diffusion_unet_lowdim_transport_mh_0/latest
